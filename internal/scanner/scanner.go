@@ -12,6 +12,7 @@ const (
 	TypeApk
 	TypeHomebrewBottle
 	TypePacman
+	TypeSysext
 )
 
 // String returns the string representation of PackageType
@@ -27,6 +28,8 @@ func (pt PackageType) String() string {
 		return "brew"
 	case TypePacman:
 		return "pacman"
+	case TypeSysext:
+		return "sysext"
 	default:
 		return "unknown"
 	}

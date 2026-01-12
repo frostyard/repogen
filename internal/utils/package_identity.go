@@ -20,6 +20,8 @@ func PackageIdentity(pkg models.Package, pkgType scanner.PackageType) string {
 		return fmt.Sprintf("%s:%s:%s:%s", pkg.Name, pkg.Version, release, pkg.Architecture)
 	case scanner.TypeHomebrewBottle:
 		return fmt.Sprintf("%s:%s", pkg.Name, pkg.Version)
+	case scanner.TypeSysext:
+		return fmt.Sprintf("%s:%s:%s", pkg.Name, pkg.Version, pkg.Architecture)
 	default:
 		return fmt.Sprintf("%s:%s", pkg.Name, pkg.Version)
 	}

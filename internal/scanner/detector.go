@@ -82,5 +82,13 @@ func DetectPackageType(path string) (PackageType, error) {
 		return TypeHomebrewBottle, nil
 	}
 
+	// Check for systemd-sysext images (.raw, .raw.zst, .raw.xz, .raw.gz)
+	if strings.HasSuffix(basename, ".raw") ||
+		strings.HasSuffix(basename, ".raw.zst") ||
+		strings.HasSuffix(basename, ".raw.xz") ||
+		strings.HasSuffix(basename, ".raw.gz") {
+		return TypeSysext, nil
+	}
+
 	return TypeUnknown, nil
 }

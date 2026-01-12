@@ -15,6 +15,7 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 - **Alpine/APK** (.apk packages)
 - **Arch Linux/Pacman** (.pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz)
 - **Homebrew** (bottle files)
+- **systemd-sysext** (.raw, .raw.zst, .raw.xz, .raw.gz)
 
 ## Features
 
@@ -66,11 +67,13 @@ repogen generate -v
 ### Incremental Mode
 
 Incremental mode allows you to add new packages to an existing repository without regenerating everything from scratch. This is useful when:
+
 - You have a large repository and only want to add new package versions
 - You're syncing from S3 and don't want to download all package files locally
 - You want faster repository updates
 
 **How It Works:**
+
 1. Reads existing metadata files (Packages, trust.db, repomd.xml, etc.) from the output directory
 2. Adds only new packages without removing existing ones
 3. Errors if a package with the same name+version already exists (conflict detection)
@@ -153,7 +156,25 @@ repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
 aws s3 sync ./repo s3://my-bucket/repo
 ```
 
+#### systemd-sysext Repository
+
+```bash
+# Sync only SHA256SUMS metadata files
+aws s3 sync s3://my-bucket/repo/ext ./repo/ext \
+  --exclude "*.raw" \
+  --exclude "*.raw.zst" \
+  --exclude "*.raw.xz" \
+  --exclude "*.raw.gz"
+
+# Add new extensions
+repogen generate --input-dir ./new-extensions --output-dir ./repo --incremental
+
+# Sync back (without --delete to preserve existing extensions)
+aws s3 sync ./repo s3://my-bucket/repo
+```
+
 **Important Notes:**
+
 - Incremental mode will error if a package with the same name+version already exists (conflict detection)
 - If metadata files don't exist, it falls back to normal mode automatically
 - Package files from existing metadata don't need to be present locally
@@ -385,6 +406,71 @@ brew tap username/repo https://github.com/username/repo
 brew install package-name
 ```
 
+### systemd-sysext Repository
+
+systemd-sysext repositories are designed to work with systemd-sysupdate for automatic system extension updates.
+
+**Filename Format:**
+
+Sysext files must follow a strict naming convention:
+
+```
+NAME_VERSION_ARCH.raw[.COMPRESSION]
+```
+
+Where:
+
+- `NAME`: Extension name (must not contain underscores)
+- `VERSION`: Version string (must not contain underscores)
+- `ARCH`: Architecture (e.g., x86-64, arm64; must not contain underscores)
+- `COMPRESSION`: Optional compression suffix (`.zst`, `.xz`, or `.gz`)
+
+Examples:
+
+- `docker_24.0.5_x86-64.raw.zst`
+- `nvidia_550.54.14_arm64.raw.xz`
+
+**Generated Structure:**
+
+```
+repo/
+└── ext/
+    └── docker/
+        ├── SHA256SUMS                      # Checksum file for systemd-sysupdate
+        ├── docker_24.0.5_x86-64.raw.zst
+        └── docker_25.0.0_x86-64.raw.zst
+```
+
+**Using with systemd-sysupdate:**
+
+Create a transfer configuration file at `/etc/sysupdate.d/50-docker.conf`:
+
+```ini
+[Transfer]
+Verify=false
+
+[Source]
+Type=url-file
+Path=http://your-server.com/repo/ext/docker/
+MatchPattern=docker_@v_@a.raw.zst
+
+[Target]
+Type=regular-file
+Path=/var/lib/extensions/
+MatchPattern=docker_@v_@a.raw \
+             docker_@v_@a.raw.zst
+```
+
+Then run:
+
+```bash
+# Check for updates
+systemd-sysupdate list
+
+# Download and apply updates
+systemd-sysupdate update
+```
+
 ## GPG Key Setup
 
 ### Generate GPG Key for Signing
@@ -418,6 +504,7 @@ openssl genrsa -aes256 -out private.pem 2048
 ### Debian Repository Format
 
 Repogen generates Debian repositories following the standard format:
+
 - **InRelease**: Cleartext signed Release file (preferred by modern apt). For unsigned repositories, contains the same content as Release file without signature wrapper.
 - **Release**: Contains metadata and checksums of all index files
 - **Release.gpg**: Detached signature of Release file (only for signed repositories)
@@ -425,6 +512,7 @@ Repogen generates Debian repositories following the standard format:
 - **pool/**: Organized by first letter of package name
 
 Key fields in Packages file:
+
 - Package, Version, Architecture
 - Filename (relative to repo root)
 - Size, MD5sum, SHA1, SHA256, SHA512
@@ -433,11 +521,13 @@ Key fields in Packages file:
 ### RPM Repository Format
 
 Repogen generates RPM repositories compatible with yum/dnf:
+
 - **repomd.xml**: Master index with checksums of metadata files
 - **primary.xml.gz**: Core package information and dependencies
 - Minimal metadata (primary only) for simplicity
 
 The generated repositories can be consumed by:
+
 - yum (RHEL/CentOS 7 and earlier)
 - dnf (RHEL/CentOS 8+, Fedora)
 - zypper (openSUSE)
@@ -445,6 +535,7 @@ The generated repositories can be consumed by:
 ### Alpine Repository Format
 
 Repogen generates Alpine repositories in the apk v2 format:
+
 - **APKINDEX.tar.gz**: Contains DESCRIPTION and APKINDEX files
 - **APKINDEX**: Letter:value format package metadata
   - C: Checksum (Q1 prefix + base64 SHA1)
@@ -459,6 +550,7 @@ Repogen generates Alpine repositories in the apk v2 format:
 ### Pacman Repository Format
 
 Repogen generates Pacman (Arch Linux) repositories:
+
 - **Database file** (e.g., `myrepo.db.tar.zst`): Tarball containing package metadata
 - **desc files**: Package information in Pacman format within the database
 - **Package files**: `.pkg.tar.zst`, `.pkg.tar.xz`, or `.pkg.tar.gz`
@@ -473,6 +565,7 @@ Repogen generates Pacman (Arch Linux) repositories:
 ### Homebrew Tap Format
 
 Repogen generates Homebrew taps with:
+
 - **Formula/**: Ruby formula files auto-generated from bottles
 - **bottles/**: Binary packages
 - Multi-architecture support (arm64, x86_64)
@@ -589,6 +682,7 @@ make test-packages-docker
 ```
 
 This creates:
+
 - `test/fixtures/debs/repogen-test_1.0.0_amd64.deb`
 - `test/fixtures/rpms/repogen-test-1.0.0-1.x86_64.rpm`
 - `test/fixtures/apks/repogen-test-1.0.0-r0.apk`
@@ -598,6 +692,7 @@ This creates:
 ### Integration Tests
 
 Integration tests use Docker to:
+
 1. Generate repositories with test packages
 2. Spin up distribution-specific containers
 3. Configure package managers to use test repositories
@@ -605,6 +700,7 @@ Integration tests use Docker to:
 5. Verify successful installation
 
 **Tested Distributions:**
+
 - **Debian**: Debian Bookworm and Trixie containers
 - **RPM**: Fedora latest container
 - **Alpine**: Alpine latest container
@@ -627,6 +723,7 @@ go test -v -short ./...
 ### Test Output
 
 Integration tests verify:
+
 - ✓ Repository structure (all expected files present)
 - ✓ Metadata files (Release, Packages, APKINDEX, repomd.xml)
 - ✓ Package manager can read repository metadata
@@ -634,6 +731,7 @@ Integration tests verify:
 - ✓ Installed binaries execute successfully
 
 Example output:
+
 ```
 === RUN   TestIntegration
 === RUN   TestIntegration/Debian
@@ -672,7 +770,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: "1.23"
 
       - name: Build test packages
         run: make test-packages-docker
@@ -725,6 +823,7 @@ apt install repogen-test
 ### Debian Trixie requires InRelease files
 
 Even with `[trusted=yes]`, Debian Trixie expects InRelease files to exist. Repogen now automatically generates InRelease files for all repositories:
+
 - **Signed repositories**: InRelease contains cleartext signature
 - **Unsigned repositories**: InRelease contains Release content (no signature)
 
@@ -768,12 +867,14 @@ MIT License.
 ### Creating a Release
 
 See **[RELEASING.md](RELEASING.md)** for detailed instructions on:
+
 - Preparing and creating releases
 - What happens during the automated release workflow
 - Deploying the generated repository archive to S3 or web servers
 - Troubleshooting common issues
 
 Quick start:
+
 ```bash
 # Run tests
 make test
@@ -792,7 +893,7 @@ git push origin v1.0.0
 ### CI/CD Workflows
 
 - **Test Workflow** (`.github/workflows/test.yml`): Runs on PRs and pushes to main
-- **Release Workflow** (`.github/workflows/release.yml`): Runs on version tags (v*.*.*)
+- **Release Workflow** (`.github/workflows/release.yml`): Runs on version tags (v*.*.\*)
 
 The release workflow generates a `repogen-repository-VERSION.zip` archive containing a complete repository that you can extract and deploy to S3, GitHub Pages, or any web server.
 

@@ -12,6 +12,7 @@ import (
 	"github.com/ralt/repogen/internal/generator/homebrew"
 	"github.com/ralt/repogen/internal/generator/pacman"
 	"github.com/ralt/repogen/internal/generator/rpm"
+	"github.com/ralt/repogen/internal/generator/sysext"
 	"github.com/ralt/repogen/internal/models"
 	"github.com/ralt/repogen/internal/scanner"
 	"github.com/ralt/repogen/internal/signer"
@@ -173,6 +174,8 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 			if csErr == nil {
 				pkg.SHA256Sum = checksums.SHA256
 			}
+		case scanner.TypeSysext:
+			pkg, parseErr = sysext.ParsePackage(scanned.Path)
 		default:
 			logrus.Warnf("Unknown package type: %s", scanned.Type)
 			continue
@@ -219,6 +222,7 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	generators[scanner.TypeApk] = apk.NewGenerator(rsaSigner, config.RSAKeyName)
 	generators[scanner.TypePacman] = pacman.NewGenerator(gpgSigner)
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
+	generators[scanner.TypeSysext] = sysext.NewGenerator()
 
 	for pkgType, newPackages := range packagesByType {
 		gen, ok := generators[pkgType]
