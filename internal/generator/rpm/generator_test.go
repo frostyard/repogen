@@ -22,24 +22,30 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	outputDir := filepath.Join(tmpDir, "output")
-	os.MkdirAll(inputDir, 0755)
-	os.MkdirAll(outputDir, 0755)
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatalf("Failed to create input dir: %v", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("Failed to create output dir: %v", err)
+	}
 
 	gen := NewGenerator(nil)
 	config := &models.RepositoryConfig{
-		OutputDir:      outputDir,
-		Version:        "40",
-		DistroVariant:  "fedora",
-		Arches:         []string{"x86_64"},
+		OutputDir:     outputDir,
+		Version:       "40",
+		DistroVariant: "fedora",
+		Arches:        []string{"x86_64"},
 	}
 
 	// Step 1: Create initial repo with package A
 	initialPkg := filepath.Join(inputDir, "pkga-1.0-1.x86_64.rpm")
-	os.WriteFile(initialPkg, []byte("fake rpm package A"), 0644)
+	if err := os.WriteFile(initialPkg, []byte("fake rpm package A"), 0644); err != nil {
+		t.Fatalf("Failed to write initial package: %v", err)
+	}
 
 	packagesA := []models.Package{
 		{
@@ -71,7 +77,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 2: Simulate S3 sync - keep only repodata, remove package files
 	packagesDir := filepath.Join(outputDir, "40", "x86_64", "Packages")
-	os.RemoveAll(packagesDir)
+	_ = os.RemoveAll(packagesDir)
 
 	// Verify package A is gone (simulating S3 scenario)
 	if _, err := os.Stat(pkgAPath); !os.IsNotExist(err) {
@@ -80,7 +86,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 3: Create new package B
 	newPkg := filepath.Join(inputDir, "pkgb-1.0-1.x86_64.rpm")
-	os.WriteFile(newPkg, []byte("fake rpm package B"), 0644)
+	_ = os.WriteFile(newPkg, []byte("fake rpm package B"), 0644)
 
 	// Step 4: Parse existing metadata (simulating incremental mode)
 	existingPackages, err := gen.ParseExistingMetadata(config)

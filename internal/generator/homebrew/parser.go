@@ -45,7 +45,7 @@ func parseFormula(path string) ([]models.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var packages []models.Package
 
@@ -92,7 +92,7 @@ func parseFormula(path string) ([]models.Package, error) {
 
 				// Reset for next bottle
 				url = ""
-				sha256 = ""
+				// sha256 will be overwritten by next match
 			}
 		}
 	}

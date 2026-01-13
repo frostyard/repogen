@@ -32,7 +32,7 @@ func DetectPackageType(path string) (PackageType, error) {
 	if err != nil {
 		return TypeUnknown, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read first 512 bytes for magic byte detection
 	header := make([]byte, 512)

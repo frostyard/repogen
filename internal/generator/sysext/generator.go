@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ralt/repogen/internal/generator"
@@ -55,6 +56,11 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		if err := g.generateForExtension(ctx, config, extName, pkgs); err != nil {
 			return fmt.Errorf("failed to generate for extension %s: %w", extName, err)
 		}
+	}
+
+	// Generate index file listing all extensions
+	if err := g.generateIndex(config, extPackages); err != nil {
+		return fmt.Errorf("failed to generate index: %w", err)
 	}
 
 	logrus.Info("systemd-sysext repository generated successfully")
@@ -170,6 +176,32 @@ CurrentSymlink=%s.raw
 	return nil
 }
 
+// generateIndex creates an index file listing all available extensions.
+// The index is a simple newline-separated list of extension names.
+func (g *Generator) generateIndex(config *models.RepositoryConfig, extPackages map[string][]models.Package) error {
+	extDir := filepath.Join(config.OutputDir, "ext")
+	if err := utils.EnsureDir(extDir); err != nil {
+		return err
+	}
+
+	// Collect extension names and sort them for consistent output
+	var names []string
+	for name := range extPackages {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Write index file (one extension name per line)
+	indexPath := filepath.Join(extDir, "index")
+	indexContent := strings.Join(names, "\n") + "\n"
+	if err := utils.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
+		return err
+	}
+
+	logrus.Debugf("Generated index file with %d extensions", len(names))
+	return nil
+}
+
 // ValidatePackages checks if packages are valid for this generator
 func (g *Generator) ValidatePackages(packages []models.Package) error {
 	if g.baseURL == "" {
@@ -241,7 +273,7 @@ func parseSHA256SUMS(sha256sumsPath, extDir, extName string) ([]models.Package, 
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var packages []models.Package
 	scanner := bufio.NewScanner(f)

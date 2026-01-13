@@ -95,7 +95,7 @@ func TestParsePackage(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			filePath := filepath.Join(tmpDir, tt.filename)
 			err = os.WriteFile(filePath, []byte("fake sysext content"), 0644)
@@ -141,21 +141,31 @@ func TestGeneratorGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	outputDir := filepath.Join(tmpDir, "output")
-	os.MkdirAll(inputDir, 0755)
-	os.MkdirAll(outputDir, 0755)
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatalf("Failed to create input dir: %v", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("Failed to create output dir: %v", err)
+	}
 
 	// Create test sysext files
 	ext1 := filepath.Join(inputDir, "myext_1.0_x86-64.raw")
 	ext2 := filepath.Join(inputDir, "myext_2.0_x86-64.raw.zst")
 	ext3 := filepath.Join(inputDir, "other_1.0_x86-64.raw")
 
-	os.WriteFile(ext1, []byte("sysext content v1"), 0644)
-	os.WriteFile(ext2, []byte("sysext content v2 compressed"), 0644)
-	os.WriteFile(ext3, []byte("other ext content"), 0644)
+	if err := os.WriteFile(ext1, []byte("sysext content v1"), 0644); err != nil {
+		t.Fatalf("Failed to write ext1: %v", err)
+	}
+	if err := os.WriteFile(ext2, []byte("sysext content v2 compressed"), 0644); err != nil {
+		t.Fatalf("Failed to write ext2: %v", err)
+	}
+	if err := os.WriteFile(ext3, []byte("other ext content"), 0644); err != nil {
+		t.Fatalf("Failed to write ext3: %v", err)
+	}
 
 	gen := NewGenerator("https://example.com/repo")
 	config := &models.RepositoryConfig{
@@ -268,6 +278,24 @@ func TestGeneratorGenerate(t *testing.T) {
 	if !strings.Contains(transferStr, "CurrentSymlink=myext.raw") {
 		t.Errorf("Transfer file missing CurrentSymlink, got: %s", transferStr)
 	}
+
+	// Verify index file exists and contains correct extensions
+	indexPath := filepath.Join(outputDir, "ext", "index")
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		t.Errorf("index file not created")
+	}
+
+	indexContent, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("Failed to read index file: %v", err)
+	}
+
+	indexStr := string(indexContent)
+	// Index should be sorted alphabetically
+	expectedIndex := "myext\nother\n"
+	if indexStr != expectedIndex {
+		t.Errorf("index file content = %q, want %q", indexStr, expectedIndex)
+	}
 }
 
 func TestIncrementalMode(t *testing.T) {
@@ -275,11 +303,13 @@ func TestIncrementalMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	outputDir := filepath.Join(tmpDir, "output")
-	os.MkdirAll(inputDir, 0755)
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatalf("Failed to create input dir: %v", err)
+	}
 
 	gen := NewGenerator("https://example.com/repo")
 	config := &models.RepositoryConfig{
@@ -288,7 +318,9 @@ func TestIncrementalMode(t *testing.T) {
 
 	// Step 1: Create initial repo with v1.0
 	ext1 := filepath.Join(inputDir, "myext_1.0_x86-64.raw")
-	os.WriteFile(ext1, []byte("sysext content v1"), 0644)
+	if err := os.WriteFile(ext1, []byte("sysext content v1"), 0644); err != nil {
+		t.Fatalf("Failed to write ext1: %v", err)
+	}
 
 	packagesV1 := []models.Package{
 		{Name: "myext", Version: "1.0", Architecture: "x86-64", Filename: ext1, SHA256Sum: "abc123"},
@@ -322,7 +354,7 @@ func TestIncrementalMode(t *testing.T) {
 
 	// Step 3: Add new version
 	ext2 := filepath.Join(inputDir, "myext_2.0_x86-64.raw.zst")
-	os.WriteFile(ext2, []byte("sysext content v2"), 0644)
+	_ = os.WriteFile(ext2, []byte("sysext content v2"), 0644)
 
 	packagesV2 := []models.Package{
 		{Name: "myext", Version: "2.0", Architecture: "x86-64", Filename: ext2, SHA256Sum: "def456"},
@@ -348,6 +380,77 @@ func TestIncrementalMode(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(updatedContent)), "\n")
 	if len(lines) != 2 {
 		t.Errorf("Updated SHA256SUMS should have 2 lines, got %d: %s", len(lines), updatedContent)
+	}
+
+	// Verify index file still contains myext
+	indexPath := filepath.Join(outputDir, "ext", "index")
+	indexContent, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("Failed to read index file: %v", err)
+	}
+	if string(indexContent) != "myext\n" {
+		t.Errorf("Index file content = %q, want %q", string(indexContent), "myext\n")
+	}
+}
+
+func TestIndexUpdatedWithNewExtension(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "repogen-test-sysext-index-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	inputDir := filepath.Join(tmpDir, "input")
+	outputDir := filepath.Join(tmpDir, "output")
+	_ = os.MkdirAll(inputDir, 0755)
+
+	gen := NewGenerator("https://example.com/repo")
+	config := &models.RepositoryConfig{
+		OutputDir: outputDir,
+	}
+
+	// Step 1: Create initial repo with one extension
+	ext1 := filepath.Join(inputDir, "alpha_1.0_x86-64.raw")
+	_ = os.WriteFile(ext1, []byte("alpha content"), 0644)
+
+	packagesAlpha := []models.Package{
+		{Name: "alpha", Version: "1.0", Architecture: "x86-64", Filename: ext1, SHA256Sum: "abc123"},
+	}
+
+	err = gen.Generate(context.Background(), config, packagesAlpha)
+	if err != nil {
+		t.Fatalf("Initial generation failed: %v", err)
+	}
+
+	// Verify initial index
+	indexPath := filepath.Join(outputDir, "ext", "index")
+	initialIndex, _ := os.ReadFile(indexPath)
+	if string(initialIndex) != "alpha\n" {
+		t.Errorf("Initial index = %q, want %q", string(initialIndex), "alpha\n")
+	}
+
+	// Step 2: Add a new extension (beta) that comes before alpha alphabetically
+	ext2 := filepath.Join(inputDir, "beta_1.0_x86-64.raw")
+	_ = os.WriteFile(ext2, []byte("beta content"), 0644)
+
+	// Parse existing and combine with new
+	existingPackages, _ := gen.ParseExistingMetadata(config)
+
+	packagesBeta := []models.Package{
+		{Name: "beta", Version: "1.0", Architecture: "x86-64", Filename: ext2, SHA256Sum: "def456"},
+	}
+	allPackages := append(existingPackages, packagesBeta...)
+
+	err = gen.Generate(context.Background(), config, allPackages)
+	if err != nil {
+		t.Fatalf("Incremental generation failed: %v", err)
+	}
+
+	// Verify index is updated and sorted
+	updatedIndex, _ := os.ReadFile(indexPath)
+	expectedIndex := "alpha\nbeta\n"
+	if string(updatedIndex) != expectedIndex {
+		t.Errorf("Updated index = %q, want %q", string(updatedIndex), expectedIndex)
 	}
 }
 

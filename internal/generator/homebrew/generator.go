@@ -236,7 +236,9 @@ func toClassName(name string) string {
 	// Title case each word
 	words := strings.Fields(name)
 	for i, word := range words {
-		words[i] = strings.Title(strings.ToLower(word))
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+		}
 	}
 
 	// Join without spaces

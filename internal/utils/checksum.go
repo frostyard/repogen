@@ -26,7 +26,7 @@ func CalculateChecksums(path string) (*Checksum, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Get file info for size
 	info, err := f.Stat()

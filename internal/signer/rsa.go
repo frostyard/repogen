@@ -37,12 +37,14 @@ func NewAlpineRSASigner(keyPath, passphrase string) (*AlpineRSASigner, error) {
 
 	// Check if key is encrypted
 	var privateKey *rsa.PrivateKey
+	//nolint:staticcheck // SA1019: Legacy PEM encryption support for older RSA keys
 	if x509.IsEncryptedPEMBlock(block) {
 		if passphrase == "" {
 			return nil, fmt.Errorf("key is encrypted but no passphrase provided")
 		}
 
 		// Decrypt the PEM block
+		//nolint:staticcheck // SA1019: Legacy PEM encryption support for older RSA keys
 		decryptedData, err := x509.DecryptPEMBlock(block, []byte(passphrase))
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt key: %w", err)

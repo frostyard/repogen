@@ -23,12 +23,16 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	outputDir := filepath.Join(tmpDir, "output")
-	os.MkdirAll(inputDir, 0755)
-	os.MkdirAll(outputDir, 0755)
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatalf("Failed to create input dir: %v", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("Failed to create output dir: %v", err)
+	}
 
 	gen := NewGenerator(nil, "")
 	config := &models.RepositoryConfig{
@@ -38,7 +42,9 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 1: Create initial repo with package A
 	initialPkg := filepath.Join(inputDir, "pkga-1.0-r1.apk")
-	os.WriteFile(initialPkg, []byte("fake apk package A"), 0644)
+	if err := os.WriteFile(initialPkg, []byte("fake apk package A"), 0644); err != nil {
+		t.Fatalf("Failed to write initial package: %v", err)
+	}
 
 	packagesA := []models.Package{
 		{
@@ -70,7 +76,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	files, _ := os.ReadDir(archDir)
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".apk") {
-			os.Remove(filepath.Join(archDir, file.Name()))
+			_ = os.Remove(filepath.Join(archDir, file.Name()))
 		}
 	}
 
@@ -81,7 +87,9 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 3: Create new package B
 	newPkg := filepath.Join(inputDir, "pkgb-1.0-r1.apk")
-	os.WriteFile(newPkg, []byte("fake apk package B"), 0644)
+	if err := os.WriteFile(newPkg, []byte("fake apk package B"), 0644); err != nil {
+		t.Fatalf("Failed to write new package: %v", err)
+	}
 
 	// Step 4: Parse existing metadata (simulating incremental mode)
 	existingPackages, err := gen.ParseExistingMetadata(config)

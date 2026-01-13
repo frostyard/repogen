@@ -1080,65 +1080,6 @@ func findInString(s, substr string) bool {
 	return false
 }
 
-// generateTestGPGKey creates a test GPG key pair for repository signing tests
-func generateTestGPGKey(privateKeyPath, publicKeyPath string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Create GPG batch file for unattended key generation
-	batchContent := `
-%no-protection
-Key-Type: RSA
-Key-Length: 2048
-Name-Real: Repogen Test Key
-Name-Email: test@repogen.local
-Expire-Date: 0
-%commit
-`
-
-	tmpDir := filepath.Dir(privateKeyPath)
-	batchFile := filepath.Join(tmpDir, "gpg-batch.txt")
-	if err := os.WriteFile(batchFile, []byte(batchContent), 0600); err != nil {
-		return fmt.Errorf("failed to create batch file: %w", err)
-	}
-	defer os.Remove(batchFile)
-
-	// Generate key using gpg with temporary home directory
-	gpgHome := filepath.Join(tmpDir, "gpg-home")
-	if err := os.MkdirAll(gpgHome, 0700); err != nil {
-		return fmt.Errorf("failed to create GPG home: %w", err)
-	}
-
-	// Generate the key
-	cmd := exec.CommandContext(ctx, "gpg", "--homedir", gpgHome, "--batch", "--gen-key", batchFile)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to generate GPG key: %w\nOutput: %s", err, output)
-	}
-
-	// Export private key
-	cmd = exec.CommandContext(ctx, "gpg", "--homedir", gpgHome, "--armor", "--export-secret-keys", "test@repogen.local")
-	privateKey, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to export private key: %w", err)
-	}
-	if err := os.WriteFile(privateKeyPath, privateKey, 0600); err != nil {
-		return fmt.Errorf("failed to write private key: %w", err)
-	}
-
-	// Export public key
-	cmd = exec.CommandContext(ctx, "gpg", "--homedir", gpgHome, "--armor", "--export", "test@repogen.local")
-	publicKey, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to export public key: %w", err)
-	}
-	if err := os.WriteFile(publicKeyPath, publicKey, 0644); err != nil {
-		return fmt.Errorf("failed to write public key: %w", err)
-	}
-
-	return nil
-}
-
 // Checksum extraction and calculation helpers
 
 func extractPacmanChecksums(dbPath string) (map[string]string, error) {
@@ -1163,7 +1104,7 @@ func extractPacmanChecksums(dbPath string) (map[string]string, error) {
 
 	output, err := tarCmd.CombinedOutput()
 	if err != nil {
-		zstdCmd.Wait()
+		_ = zstdCmd.Wait()
 		return nil, fmt.Errorf("tar extraction failed: %v\nOutput: %s", err, output)
 	}
 
@@ -1195,7 +1136,7 @@ func extractPacmanChecksums(dbPath string) (map[string]string, error) {
 		}
 
 		// Clean up
-		os.RemoveAll(filepath.Dir(descFile))
+		_ = os.RemoveAll(filepath.Dir(descFile))
 	}
 
 	return checksums, nil
@@ -1233,7 +1174,7 @@ func extractRPMChecksums(primaryXMLPath string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gzFile.Close()
+	defer func() { _ = gzFile.Close() }()
 
 	gzReader, err := exec.Command("gzip", "-d", "-c", primaryXMLPath).Output()
 	if err != nil {
@@ -1302,11 +1243,9 @@ func extractAPKChecksums(apkindexPath string) (map[string]string, error) {
 		if strings.HasPrefix(line, "C:") {
 			currentChecksum = strings.TrimPrefix(line, "C:")
 		}
-		// P field + V field + A field make up filename
-		if strings.HasPrefix(line, "P:") && currentFilename == "" {
-			// We'll use a simpler approach - look for actual .apk files
-			// and match them by looking at the package name
-		}
+		// P field starts a new package entry
+		// We use a simpler glob-based approach below for matching
+		_ = currentFilename // mark as used for linter
 	}
 
 	// For simplicity, just glob the directory and match checksums

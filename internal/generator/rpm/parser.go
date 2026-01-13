@@ -28,7 +28,7 @@ func ParsePackage(path string) (*models.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read RPM header
 	rpm, err := rpmutils.ReadRpm(f)
@@ -262,13 +262,13 @@ func parsePrimaryXML(archDir string) ([]models.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	data, err := io.ReadAll(gz)
 	if err != nil {

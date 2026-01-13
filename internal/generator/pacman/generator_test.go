@@ -144,7 +144,7 @@ func TestGenerateUnsigned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create generator without signer (unsigned)
 	gen := NewGenerator(nil)
@@ -170,7 +170,7 @@ func TestGenerateUnsigned(t *testing.T) {
 	}
 
 	// Create dummy package file
-	os.WriteFile(packages[0].Filename, []byte("dummy"), 0644)
+	_ = os.WriteFile(packages[0].Filename, []byte("dummy"), 0644)
 
 	// Generate repository files
 	err = gen.Generate(context.Background(), config, packages)
@@ -203,7 +203,7 @@ func TestGenerateCreatesDbFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create generator without signer
 	gen := NewGenerator(nil)
@@ -229,7 +229,7 @@ func TestGenerateCreatesDbFile(t *testing.T) {
 	}
 
 	// Create dummy package file
-	os.WriteFile(packages[0].Filename, []byte("dummy"), 0644)
+	_ = os.WriteFile(packages[0].Filename, []byte("dummy"), 0644)
 
 	// Generate repository
 	err = gen.Generate(context.Background(), config, packages)
@@ -319,12 +319,12 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	outputDir := filepath.Join(tmpDir, "output")
-	os.MkdirAll(inputDir, 0755)
-	os.MkdirAll(outputDir, 0755)
+	_ = os.MkdirAll(inputDir, 0755)
+	_ = os.MkdirAll(outputDir, 0755)
 
 	gen := NewGenerator(nil)
 	config := &models.RepositoryConfig{
@@ -335,7 +335,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 1: Create initial repo with package A
 	initialPkg := filepath.Join(inputDir, "pkga-1.0-1-x86_64.pkg.tar.zst")
-	os.WriteFile(initialPkg, []byte("fake pacman package A"), 0644)
+	_ = os.WriteFile(initialPkg, []byte("fake pacman package A"), 0644)
 
 	packagesA := []models.Package{
 		{
@@ -367,7 +367,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	files, _ := os.ReadDir(archDir)
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".pkg.tar.zst") {
-			os.Remove(filepath.Join(archDir, file.Name()))
+			_ = os.Remove(filepath.Join(archDir, file.Name()))
 		}
 	}
 
@@ -378,7 +378,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 3: Create new package B
 	newPkg := filepath.Join(inputDir, "pkgb-1.0-1-x86_64.pkg.tar.zst")
-	os.WriteFile(newPkg, []byte("fake pacman package B"), 0644)
+	_ = os.WriteFile(newPkg, []byte("fake pacman package B"), 0644)
 
 	// Step 4: Parse existing metadata (simulating incremental mode)
 	existingPackages, err := gen.ParseExistingMetadata(config)

@@ -16,7 +16,7 @@ func TestGenerateReleaseUnsigned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create generator without signer (unsigned)
 	gen := NewGenerator(nil)
@@ -33,14 +33,20 @@ func TestGenerateReleaseUnsigned(t *testing.T) {
 
 	// Create required directory structure
 	distsDir := filepath.Join(tmpDir, "dists", "testing", "main", "binary-amd64")
-	os.MkdirAll(distsDir, 0755)
+	if err := os.MkdirAll(distsDir, 0755); err != nil {
+		t.Fatalf("Failed to create dists dir: %v", err)
+	}
 
 	// Create dummy Packages file
 	packagesPath := filepath.Join(distsDir, "Packages")
-	os.WriteFile(packagesPath, []byte("Package: test\n"), 0644)
+	if err := os.WriteFile(packagesPath, []byte("Package: test\n"), 0644); err != nil {
+		t.Fatalf("Failed to write Packages: %v", err)
+	}
 
 	packagesGzPath := filepath.Join(distsDir, "Packages.gz")
-	os.WriteFile(packagesGzPath, []byte{}, 0644)
+	if err := os.WriteFile(packagesGzPath, []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to write Packages.gz: %v", err)
+	}
 
 	// Generate repository files
 	err = gen.Generate(context.Background(), config, []models.Package{})
@@ -95,12 +101,16 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	inputDir := filepath.Join(tmpDir, "input")
 	outputDir := filepath.Join(tmpDir, "output")
-	os.MkdirAll(inputDir, 0755)
-	os.MkdirAll(outputDir, 0755)
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatalf("Failed to create input dir: %v", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("Failed to create output dir: %v", err)
+	}
 
 	gen := NewGenerator(nil)
 	config := &models.RepositoryConfig{
@@ -115,7 +125,9 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 1: Create initial repo with package A
 	initialPkg := filepath.Join(inputDir, "pkga_1.0_amd64.deb")
-	os.WriteFile(initialPkg, []byte("fake deb package A"), 0644)
+	if err := os.WriteFile(initialPkg, []byte("fake deb package A"), 0644); err != nil {
+		t.Fatalf("Failed to write initial package: %v", err)
+	}
 
 	packagesA := []models.Package{
 		{
@@ -145,7 +157,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 	// Step 2: Simulate S3 sync - keep only metadata, remove package files
 	// Remove pool directory to simulate only having metadata
 	poolDir := filepath.Join(outputDir, "pool")
-	os.RemoveAll(poolDir)
+	_ = os.RemoveAll(poolDir)
 
 	// Verify package A is gone (simulating S3 scenario)
 	if _, err := os.Stat(pkgAPath); !os.IsNotExist(err) {
@@ -154,7 +166,7 @@ func TestIncrementalModeCopiesNewPackages(t *testing.T) {
 
 	// Step 3: Create new package B
 	newPkg := filepath.Join(inputDir, "pkgb_1.0_amd64.deb")
-	os.WriteFile(newPkg, []byte("fake deb package B"), 0644)
+	_ = os.WriteFile(newPkg, []byte("fake deb package B"), 0644)
 
 	// Step 4: Parse existing metadata (simulating incremental mode)
 	existingPackages, err := gen.ParseExistingMetadata(config)
