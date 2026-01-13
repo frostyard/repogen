@@ -265,6 +265,9 @@ func TestGeneratorGenerate(t *testing.T) {
 	if !strings.Contains(transferStr, "Path=/var/lib/extensions.d/") {
 		t.Errorf("Transfer file missing correct target path, got: %s", transferStr)
 	}
+	if !strings.Contains(transferStr, "CurrentSymlink=myext.raw") {
+		t.Errorf("Transfer file missing CurrentSymlink, got: %s", transferStr)
+	}
 }
 
 func TestIncrementalMode(t *testing.T) {

@@ -158,7 +158,8 @@ MatchPattern=%s_@v_@a.raw.zst \
              %s_@v_@a.raw.xz \
              %s_@v_@a.raw.gz \
              %s_@v_@a.raw
-`, sourceURL, extName, extName, extName, extName, extName, extName, extName, extName)
+CurrentSymlink=%s.raw
+`, sourceURL, extName, extName, extName, extName, extName, extName, extName, extName, extName)
 
 	transferPath := filepath.Join(extDir, extName+".transfer")
 	if err := utils.WriteFile(transferPath, []byte(transferContent), 0644); err != nil {
