@@ -437,13 +437,36 @@ repo/
 └── ext/
     └── docker/
         ├── SHA256SUMS                      # Checksum file for systemd-sysupdate
+        ├── docker.transfer                 # systemd-sysupdate transfer configuration
         ├── docker_24.0.5_x86-64.raw.zst
         └── docker_25.0.0_x86-64.raw.zst
 ```
 
+**Note:** The `--base-url` flag is required when generating sysext repositories. This is used to generate the `.transfer` configuration files with the correct source URL.
+
+```bash
+repogen generate \
+  --input-dir ./extensions \
+  --output-dir ./repo \
+  --base-url https://example.com/repo
+```
+
 **Using with systemd-sysupdate:**
 
-Create a transfer configuration file at `/etc/sysupdate.d/50-docker.conf`:
+Repogen generates a `.transfer` file for each extension that can be copied to `/etc/sysupdate.d/`:
+
+```bash
+# Copy the generated transfer file
+sudo cp repo/ext/docker/docker.transfer /etc/sysupdate.d/50-docker.conf
+
+# Check for updates
+systemd-sysupdate list
+
+# Download and apply updates
+systemd-sysupdate update
+```
+
+The generated transfer file looks like:
 
 ```ini
 [Transfer]
@@ -451,24 +474,19 @@ Verify=false
 
 [Source]
 Type=url-file
-Path=http://your-server.com/repo/ext/docker/
-MatchPattern=docker_@v_@a.raw.zst
+Path=https://example.com/repo/ext/docker/
+MatchPattern=docker_@v_@a.raw.zst \
+             docker_@v_@a.raw.xz \
+             docker_@v_@a.raw.gz \
+             docker_@v_@a.raw
 
 [Target]
 Type=regular-file
 Path=/var/lib/extensions/
-MatchPattern=docker_@v_@a.raw \
-             docker_@v_@a.raw.zst
-```
-
-Then run:
-
-```bash
-# Check for updates
-systemd-sysupdate list
-
-# Download and apply updates
-systemd-sysupdate update
+MatchPattern=docker_@v_@a.raw.zst \
+             docker_@v_@a.raw.xz \
+             docker_@v_@a.raw.gz \
+             docker_@v_@a.raw
 ```
 
 ## GPG Key Setup

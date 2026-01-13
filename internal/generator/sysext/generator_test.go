@@ -157,7 +157,7 @@ func TestGeneratorGenerate(t *testing.T) {
 	os.WriteFile(ext2, []byte("sysext content v2 compressed"), 0644)
 	os.WriteFile(ext3, []byte("other ext content"), 0644)
 
-	gen := NewGenerator()
+	gen := NewGenerator("https://example.com/repo")
 	config := &models.RepositoryConfig{
 		OutputDir: outputDir,
 	}
@@ -228,6 +228,43 @@ func TestGeneratorGenerate(t *testing.T) {
 			t.Errorf("SHA256SUMS should use two spaces between hash and filename: %q", line)
 		}
 	}
+
+	// Verify transfer files exist
+	myextTransfer := filepath.Join(myextDir, "myext.transfer")
+	otherTransfer := filepath.Join(otherDir, "other.transfer")
+
+	if _, err := os.Stat(myextTransfer); os.IsNotExist(err) {
+		t.Errorf("myext.transfer not created")
+	}
+	if _, err := os.Stat(otherTransfer); os.IsNotExist(err) {
+		t.Errorf("other.transfer not created")
+	}
+
+	// Verify transfer file content
+	transferContent, err := os.ReadFile(myextTransfer)
+	if err != nil {
+		t.Fatalf("Failed to read myext.transfer: %v", err)
+	}
+
+	transferStr := string(transferContent)
+	if !strings.Contains(transferStr, "[Transfer]") {
+		t.Error("Transfer file missing [Transfer] section")
+	}
+	if !strings.Contains(transferStr, "[Source]") {
+		t.Error("Transfer file missing [Source] section")
+	}
+	if !strings.Contains(transferStr, "[Target]") {
+		t.Error("Transfer file missing [Target] section")
+	}
+	if !strings.Contains(transferStr, "https://example.com/repo/ext/myext/") {
+		t.Errorf("Transfer file missing correct source URL, got: %s", transferStr)
+	}
+	if !strings.Contains(transferStr, "myext_@v_@a.raw") {
+		t.Errorf("Transfer file missing pattern with version/arch placeholders, got: %s", transferStr)
+	}
+	if !strings.Contains(transferStr, "Path=/var/lib/extensions.d/") {
+		t.Errorf("Transfer file missing correct target path, got: %s", transferStr)
+	}
 }
 
 func TestIncrementalMode(t *testing.T) {
@@ -241,7 +278,7 @@ func TestIncrementalMode(t *testing.T) {
 	outputDir := filepath.Join(tmpDir, "output")
 	os.MkdirAll(inputDir, 0755)
 
-	gen := NewGenerator()
+	gen := NewGenerator("https://example.com/repo")
 	config := &models.RepositoryConfig{
 		OutputDir: outputDir,
 	}
@@ -312,7 +349,7 @@ func TestIncrementalMode(t *testing.T) {
 }
 
 func TestValidatePackages(t *testing.T) {
-	gen := NewGenerator()
+	gen := NewGenerator("https://example.com/repo")
 
 	tests := []struct {
 		name     string
@@ -350,5 +387,22 @@ func TestValidatePackages(t *testing.T) {
 				t.Errorf("ValidatePackages() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidatePackagesMissingBaseURL(t *testing.T) {
+	gen := NewGenerator("") // Empty base URL
+
+	packages := []models.Package{
+		{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_x86-64.raw"},
+	}
+
+	err := gen.ValidatePackages(packages)
+	if err == nil {
+		t.Error("ValidatePackages() should error when base URL is missing")
+	}
+
+	if !strings.Contains(err.Error(), "--base-url") {
+		t.Errorf("Error should mention --base-url, got: %v", err)
 	}
 }

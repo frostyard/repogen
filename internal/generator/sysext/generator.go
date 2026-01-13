@@ -20,14 +20,19 @@ import (
 // The generated repository structure is:
 //
 //	<output>/ext/<extension-name>/
-//	    SHA256SUMS           # Standard checksum file for systemd-sysupdate
-//	    <extension>.raw      # Extension files
-//	    <extension>.raw.zst  # Compressed variants
-type Generator struct{}
+//	    SHA256SUMS                    # Standard checksum file for systemd-sysupdate
+//	    <extension-name>.transfer     # systemd-sysupdate transfer configuration
+//	    <extension>.raw               # Extension files
+//	    <extension>.raw.zst           # Compressed variants
+type Generator struct {
+	baseURL string
+}
 
 // NewGenerator creates a new systemd-sysext generator
-func NewGenerator() generator.Generator {
-	return &Generator{}
+func NewGenerator(baseURL string) generator.Generator {
+	return &Generator{
+		baseURL: baseURL,
+	}
 }
 
 // Generate creates a systemd-sysext repository structure.
@@ -67,7 +72,9 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 	}
 
 	// Copy files and build SHA256SUMS content
-	var sha256Lines []string
+	// Use a map to deduplicate entries by filename (in case existing metadata
+	// and new packages overlap)
+	sha256Entries := make(map[string]string) // filename -> sha256
 
 	for i := range packages {
 		pkg := &packages[i]
@@ -97,9 +104,15 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 			logrus.Debugf("Skipping copy for extension: %s", pkg.Name)
 		}
 
-		// Add line to SHA256SUMS (standard format: "<hash>  <filename>")
-		// Note: two spaces between hash and filename per shasum convention
-		sha256Lines = append(sha256Lines, fmt.Sprintf("%s  %s", pkg.SHA256Sum, basename))
+		// Add entry to map (deduplicates by filename)
+		sha256Entries[basename] = pkg.SHA256Sum
+	}
+
+	// Build SHA256SUMS content from deduplicated entries
+	var sha256Lines []string
+	for filename, hash := range sha256Entries {
+		// Format: "<hash>  <filename>" (two spaces per shasum convention)
+		sha256Lines = append(sha256Lines, fmt.Sprintf("%s  %s", hash, filename))
 	}
 
 	// Write SHA256SUMS file
@@ -109,12 +122,58 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 		return fmt.Errorf("failed to write SHA256SUMS: %w", err)
 	}
 
-	logrus.Infof("Generated SHA256SUMS for %s (%d files)", extName, len(packages))
+	// Generate systemd-sysupdate transfer configuration file
+	if err := g.generateTransferFile(extDir, extName); err != nil {
+		return fmt.Errorf("failed to write transfer file: %w", err)
+	}
+
+	logrus.Infof("Generated SHA256SUMS for %s (%d files)", extName, len(sha256Entries))
+	return nil
+}
+
+// generateTransferFile creates a systemd-sysupdate transfer configuration file
+// for the extension. This file can be placed in /etc/sysupdate.d/ to enable
+// automatic updates via systemd-sysupdate.
+func (g *Generator) generateTransferFile(extDir, extName string) error {
+	// Build the source URL path
+	sourceURL := strings.TrimSuffix(g.baseURL, "/") + "/ext/" + extName + "/"
+
+	// Generate transfer file content
+	// The @v and @a are systemd-sysupdate version and architecture placeholders
+	transferContent := fmt.Sprintf(`[Transfer]
+Verify=false
+
+[Source]
+Type=url-file
+Path=%s
+MatchPattern=%s_@v_@a.raw.zst \
+             %s_@v_@a.raw.xz \
+             %s_@v_@a.raw.gz \
+             %s_@v_@a.raw
+
+[Target]
+Type=regular-file
+Path=/var/lib/extensions.d/
+MatchPattern=%s_@v_@a.raw.zst \
+             %s_@v_@a.raw.xz \
+             %s_@v_@a.raw.gz \
+             %s_@v_@a.raw
+`, sourceURL, extName, extName, extName, extName, extName, extName, extName, extName)
+
+	transferPath := filepath.Join(extDir, extName+".transfer")
+	if err := utils.WriteFile(transferPath, []byte(transferContent), 0644); err != nil {
+		return err
+	}
+
+	logrus.Debugf("Generated transfer file: %s", transferPath)
 	return nil
 }
 
 // ValidatePackages checks if packages are valid for this generator
 func (g *Generator) ValidatePackages(packages []models.Package) error {
+	if g.baseURL == "" {
+		return fmt.Errorf("--base-url is required for sysext repository generation")
+	}
 	for _, pkg := range packages {
 		if pkg.Name == "" {
 			return fmt.Errorf("sysext package missing name: %s", pkg.Filename)
