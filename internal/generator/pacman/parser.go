@@ -54,7 +54,7 @@ func extractPKGINFO(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Detect compression from extension
 	var tarReader *tar.Reader
@@ -77,7 +77,7 @@ func extractPKGINFO(path string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer gr.Close()
+		defer func() { _ = gr.Close() }()
 		tarReader = tar.NewReader(gr)
 	} else if strings.HasSuffix(path, ".pkg.tar") {
 		tarReader = tar.NewReader(f)
@@ -217,7 +217,7 @@ func parsePacmanDB(dbPath string) ([]models.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Detect compression from extension
 	var tarReader *tar.Reader
@@ -228,7 +228,7 @@ func parsePacmanDB(dbPath string) ([]models.Package, error) {
 		if err != nil {
 			// If zstd fails and it's .db.tar, try uncompressed
 			if strings.HasSuffix(dbPath, ".db.tar") {
-				f.Seek(0, 0)
+				_, _ = f.Seek(0, 0)
 				tarReader = tar.NewReader(f)
 			} else {
 				return nil, err
@@ -248,7 +248,7 @@ func parsePacmanDB(dbPath string) ([]models.Package, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer gr.Close()
+		defer func() { _ = gr.Close() }()
 		tarReader = tar.NewReader(gr)
 	} else {
 		// Assume it's a symlink or uncompressed tar
@@ -325,7 +325,7 @@ func parseDescFile(data []byte) (*models.Package, error) {
 			pkg.Description = line
 		case "CSIZE":
 			size := int64(0)
-			fmt.Sscanf(line, "%d", &size)
+			_, _ = fmt.Sscanf(line, "%d", &size)
 			pkg.Size = size
 		case "MD5SUM":
 			pkg.MD5Sum = line

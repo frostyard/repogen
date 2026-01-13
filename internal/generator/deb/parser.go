@@ -55,7 +55,7 @@ func extractControl(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// .deb files are ar archives
 	// Skip the first 8 bytes ("!<arch>\n")
@@ -83,7 +83,7 @@ func extractControl(path string) ([]byte, error) {
 		// Parse file size (bytes 48-58, decimal)
 		sizeStr := strings.TrimSpace(string(arHeader[48:58]))
 		var size int64
-		fmt.Sscanf(sizeStr, "%d", &size)
+		_, _ = fmt.Sscanf(sizeStr, "%d", &size)
 
 		// Check if this is the control archive
 		if strings.HasPrefix(filename, "control.tar") {
@@ -104,7 +104,7 @@ func extractControl(path string) ([]byte, error) {
 
 		// Align to 2-byte boundary
 		if size%2 != 0 {
-			f.Seek(1, io.SeekCurrent)
+			_, _ = f.Seek(1, io.SeekCurrent)
 		}
 	}
 
@@ -121,7 +121,7 @@ func extractControlFromTar(data []byte, filename string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer gr.Close()
+		defer func() { _ = gr.Close() }()
 		tarReader = tar.NewReader(gr)
 	} else if strings.HasSuffix(filename, ".xz") {
 		xr, err := xz.NewReader(bytes.NewReader(data))
@@ -274,7 +274,7 @@ func parsePackagesFile(path string) ([]models.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return parsePackagesReader(f)
 }
 
@@ -283,13 +283,13 @@ func parsePackagesGzFile(path string) ([]models.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	return parsePackagesReader(gz)
 }

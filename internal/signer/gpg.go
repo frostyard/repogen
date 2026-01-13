@@ -30,13 +30,13 @@ func NewGPGSigner(keyPath, passphrase string) (*GPGSigner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open key file: %w", err)
 	}
-	defer keyFile.Close()
+	defer func() { _ = keyFile.Close() }()
 
 	// Try to parse as armored key first
 	entityList, err := openpgp.ReadArmoredKeyRing(keyFile)
 	if err != nil {
 		// Try as binary key
-		keyFile.Seek(0, 0)
+		_, _ = keyFile.Seek(0, 0)
 		entityList, err = openpgp.ReadKeyRing(keyFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read key: %w", err)
@@ -85,7 +85,7 @@ func (s *GPGSigner) SignCleartext(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Import the key
 	keyPath, err := filepath.Abs(s.keyPath)
@@ -145,7 +145,7 @@ func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Import the key
 	keyPath, err := filepath.Abs(s.keyPath)
@@ -191,7 +191,7 @@ func (s *GPGSigner) SignDetachedBinaryFromFile(filePath string) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Import the key
 	keyPath, err := filepath.Abs(s.keyPath)
@@ -240,7 +240,7 @@ func (s *GPGSigner) GetPublicKey() ([]byte, error) {
 
 	err = s.entity.Serialize(w)
 	if err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, err
 	}
 
@@ -249,62 +249,6 @@ func (s *GPGSigner) GetPublicKey() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-// canonicalizeText implements RFC 4880 text canonicalization for signing
-// Removes trailing whitespace from each line and uses CRLF line endings
-func canonicalizeText(data []byte) []byte {
-	lines := bytes.Split(data, []byte("\n"))
-	var buf bytes.Buffer
-
-	for i, line := range lines {
-		// Remove trailing spaces and tabs (but not the content)
-		line = bytes.TrimRight(line, " \t\r")
-		buf.Write(line)
-		// Add CRLF for all lines except the last empty one
-		if i < len(lines)-1 || len(line) > 0 {
-			buf.WriteString("\r\n")
-		}
-	}
-
-	return buf.Bytes()
-}
-
-// dashEscape performs dash-escaping required by OpenPGP cleartext signatures
-// Any line starting with '-' must be prefixed with "- " (RFC 4880 section 7.1)
-func dashEscape(data []byte) []byte {
-	lines := bytes.Split(data, []byte("\n"))
-	var buf bytes.Buffer
-
-	for i, line := range lines {
-		// Dash-escape lines starting with '-'
-		if bytes.HasPrefix(line, []byte("-")) {
-			buf.WriteString("- ")
-		}
-		buf.Write(line)
-		// Add newline except for the last line if it was empty
-		if i < len(lines)-1 {
-			buf.WriteString("\n")
-		}
-	}
-
-	return buf.Bytes()
-}
-
-// createCleartextSignature creates a PGP cleartext signature format
-func createCleartextSignature(message, signature []byte) []byte {
-	var buf bytes.Buffer
-
-	buf.WriteString("-----BEGIN PGP SIGNED MESSAGE-----\n")
-	buf.WriteString("Hash: SHA512\n")
-	buf.WriteString("\n")
-	buf.Write(message)
-	if !bytes.HasSuffix(message, []byte("\n")) {
-		buf.WriteString("\n")
-	}
-	buf.Write(signature)
-
-	return buf.Bytes()
 }
 
 // NewNilSigner returns a nil signer (for unsigned repositories)

@@ -67,7 +67,7 @@ structures with appropriate metadata files and signatures.`,
 	cmd.Flags().StringSliceVar(&config.Arches, "arch", []string{"amd64"}, "Architectures to support")
 
 	// Type-specific options
-	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles and RPM .repo files")
+	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles, RPM .repo files, and sysext transfer files (required for sysext)")
 	cmd.Flags().StringVar(&config.GPGKeyURL, "gpg-key-url", "", "GPG key URL for RPM .repo files (supports $releasever/$basearch variables)")
 	cmd.Flags().StringVar(&config.DistroVariant, "distro", "fedora", "Distribution variant for RPM repos (fedora, centos, rhel)")
 	cmd.Flags().StringVar(&config.Version, "version", "", "Release version for RPM repos (e.g., 40 for Fedora 40). Auto-detected from RPM metadata if not provided")
@@ -222,7 +222,7 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	generators[scanner.TypeApk] = apk.NewGenerator(rsaSigner, config.RSAKeyName)
 	generators[scanner.TypePacman] = pacman.NewGenerator(gpgSigner)
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
-	generators[scanner.TypeSysext] = sysext.NewGenerator()
+	generators[scanner.TypeSysext] = sysext.NewGenerator(config.BaseURL)
 
 	for pkgType, newPackages := range packagesByType {
 		gen, ok := generators[pkgType]
