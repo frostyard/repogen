@@ -45,7 +45,7 @@ changelog:
 
 release:
   github:
-    owner: ralt
+    owner: frostyard
     name: repogen
   draft: false
   prerelease: auto

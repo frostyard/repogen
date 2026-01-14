@@ -3,8 +3,8 @@ package utils
 import (
 	"fmt"
 
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/scanner"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/scanner"
 )
 
 // PackageIdentity returns a unique identifier for a package based on format

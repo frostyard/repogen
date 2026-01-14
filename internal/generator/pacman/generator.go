@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/frostyard/repogen/internal/generator"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/scanner"
+	"github.com/frostyard/repogen/internal/signer"
+	"github.com/frostyard/repogen/internal/utils"
 	"github.com/klauspost/compress/zstd"
-	"github.com/ralt/repogen/internal/generator"
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/scanner"
-	"github.com/ralt/repogen/internal/signer"
-	"github.com/ralt/repogen/internal/utils"
 	"github.com/sirupsen/logrus"
 )
 

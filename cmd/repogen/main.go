@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/ralt/repogen/internal/cli"
+	"github.com/frostyard/repogen/internal/cli"
 	"github.com/sirupsen/logrus"
 )
 

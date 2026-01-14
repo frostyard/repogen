@@ -1,6 +1,6 @@
 # Repogen - Universal Repository Generator
 
-[![Test](https://github.com/ralt/repogen/actions/workflows/test.yml/badge.svg)](https://github.com/ralt/repogen/actions/workflows/test.yml)
+[![Test](https://github.com/frostyard/repogen/actions/workflows/test.yml/badge.svg)](https://github.com/frostyard/repogen/actions/workflows/test.yml)
 
 > **⚠️ Alpha Software Warning**
 >
@@ -35,7 +35,7 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 
 ```bash
 # Clone the repository
-git clone https://github.com/ralt/repogen
+git clone https://github.com/frostyard/repogen
 cd repogen
 
 # Build
@@ -854,6 +854,160 @@ This ensures compatibility with both old (Bookworm) and new (Trixie) Debian rele
 - Check Docker can pull images: `docker pull debian:bookworm`
 - Increase timeout for slow systems: `go test -timeout 30m ./test`
 
+## GitHub Action
+
+Repogen provides a reusable GitHub Action for publishing packages to repositories hosted on Cloudflare R2 storage. This is ideal for CI/CD workflows that build `.deb` packages or systemd-sysext images.
+
+### Quick Start
+
+```yaml
+- name: Publish to repository
+  uses: frostyard/repogen/.github/actions/publish-to-r2@main
+  with:
+    r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+    r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+    r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    r2-bucket: my-repo-bucket
+    packages-dir: ./dist
+    package-type: deb
+```
+
+### Full Example: Publishing Debian Packages
+
+```yaml
+name: Build and Publish
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build .deb package
+        run: |
+          # Your build steps here
+          dpkg-deb --build mypackage dist/mypackage_1.0.0_amd64.deb
+
+      - name: Publish to repository
+        uses: frostyard/repogen/.github/actions/publish-to-r2@main
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: my-packages
+          packages-dir: ./dist
+          package-type: deb
+          codename: stable
+          origin: My Organization
+          label: My Packages
+          architectures: amd64,arm64
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+```
+
+### Full Example: Publishing Sysext Images
+
+```yaml
+name: Build and Publish Sysext
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sysext image
+        run: |
+          # Build your sysext (example)
+          ./build-sysext.sh
+          # Output: dist/myext_1.0.0_x86-64.raw.zst
+
+      - name: Publish to repository
+        uses: frostyard/repogen/.github/actions/publish-to-r2@main
+        with:
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: my-extensions
+          repo-prefix: repo
+          packages-dir: ./dist
+          package-type: sysext
+          base-url: https://extensions.example.com/repo
+```
+
+### Action Inputs
+
+| Input                  | Required | Default     | Description                                                       |
+| ---------------------- | -------- | ----------- | ----------------------------------------------------------------- |
+| `r2-account-id`        | Yes      | -           | Cloudflare R2 Account ID                                          |
+| `r2-access-key-id`     | Yes      | -           | Cloudflare R2 Access Key ID                                       |
+| `r2-secret-access-key` | Yes      | -           | Cloudflare R2 Secret Access Key                                   |
+| `r2-bucket`            | Yes      | -           | Cloudflare R2 Bucket name                                         |
+| `packages-dir`         | Yes      | -           | Directory containing packages to add                              |
+| `package-type`         | Yes      | -           | Package type: `deb`, `sysext`, `rpm`, `apk`, `pacman`, `homebrew` |
+| `base-url`             | No\*     | -           | Base URL for the repository (\*required for `sysext`)             |
+| `repo-prefix`          | No       | -           | Path prefix in R2 bucket                                          |
+| `gpg-private-key`      | No       | -           | GPG private key (base64 or ASCII armored)                         |
+| `gpg-passphrase`       | No       | -           | GPG key passphrase                                                |
+| `rsa-private-key`      | No       | -           | RSA private key for Alpine (PEM format)                           |
+| `rsa-passphrase`       | No       | -           | RSA key passphrase                                                |
+| `rsa-key-name`         | No       | `repogen`   | Key name for Alpine signatures                                    |
+| `codename`             | No       | `stable`    | Codename for Debian repos                                         |
+| `suite`                | No       | -           | Suite for Debian repos                                            |
+| `components`           | No       | `main`      | Components for Debian repos                                       |
+| `architectures`        | No       | `all,amd64` | Architectures (comma-separated)                                   |
+| `origin`               | No       | -           | Repository origin name                                            |
+| `label`                | No       | -           | Repository label                                                  |
+| `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                         |
+| `distro-variant`       | No       | `fedora`    | Distribution for RPM repos                                        |
+| `version`              | No       | -           | Release version for RPM repos                                     |
+| `repogen-version`      | No       | `latest`    | Version of repogen to use                                         |
+
+### Action Outputs
+
+| Output           | Description                                |
+| ---------------- | ------------------------------------------ |
+| `packages-added` | Number of packages added to the repository |
+
+### How It Works
+
+1. **Downloads repogen** from GitHub releases
+2. **Syncs existing metadata** from R2 (only metadata files, not packages)
+3. **Runs repogen** in incremental mode to add new packages
+4. **Uploads** the updated repository back to R2
+
+The action uses incremental mode, which means:
+
+- Existing packages are preserved
+- Only metadata files are synced locally
+- Conflicts are detected if you try to add a package that already exists
+
+### Setting Up R2 Credentials
+
+1. Go to Cloudflare Dashboard → R2 → Manage R2 API Tokens
+2. Create an API token with "Object Read & Write" permissions
+3. Note the Access Key ID and Secret Access Key
+4. Add these as repository secrets in GitHub:
+   - `R2_ACCOUNT_ID`
+   - `R2_ACCESS_KEY_ID`
+   - `R2_SECRET_ACCESS_KEY`
+
+### Configuring Public Access
+
+To serve your repository publicly:
+
+1. In Cloudflare Dashboard → R2 → Your Bucket → Settings
+2. Enable "Public Access" or connect a custom domain
+3. Use the public URL as your `base-url`
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
@@ -862,7 +1016,7 @@ Contributions are welcome! Please feel free to submit pull requests or open issu
 
 ```bash
 # Clone and build
-git clone https://github.com/ralt/repogen
+git clone https://github.com/frostyard/repogen
 cd repogen
 make build
 

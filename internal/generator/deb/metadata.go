@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ralt/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/models"
 )
 
 // GeneratePackagesFile creates a Debian Packages file from package metadata

@@ -28,8 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/utils"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/utils"
 )
 
 // stripCompressionSuffix removes known compression suffixes from a filename

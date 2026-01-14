@@ -1,0 +1,449 @@
+name: 'Publish Packages to Repogen R2 Repository'
+description: 'Add .deb or sysext packages to an existing repogen repository hosted on Cloudflare R2'
+author: 'frostyard'
+
+branding:
+  icon: 'package'
+  color: 'orange'
+
+inputs:
+  # Cloudflare R2 credentials
+  r2-account-id:
+    description: 'Cloudflare R2 Account ID'
+    required: true
+  r2-access-key-id:
+    description: 'Cloudflare R2 Access Key ID'
+    required: true
+  r2-secret-access-key:
+    description: 'Cloudflare R2 Secret Access Key'
+    required: true
+  r2-bucket:
+    description: 'Cloudflare R2 Bucket name'
+    required: true
+
+  # Package inputs
+  packages-dir:
+    description: 'Directory containing packages to add (.deb, .raw, .raw.zst, etc.)'
+    required: true
+  package-type:
+    description: 'Type of packages: deb, sysext, rpm, apk, pacman, homebrew'
+    required: true
+
+  # Repository configuration
+  base-url:
+    description: 'Base URL where the repository will be accessible (required for sysext)'
+    required: false
+    default: ''
+  repo-prefix:
+    description: 'Prefix path in R2 bucket (e.g., "repo" for s3://bucket/repo/)'
+    required: false
+    default: ''
+
+  # Signing (optional)
+  gpg-private-key:
+    description: 'GPG private key for signing (base64 encoded or ASCII armored)'
+    required: false
+    default: ''
+  gpg-passphrase:
+    description: 'GPG key passphrase'
+    required: false
+    default: ''
+  rsa-private-key:
+    description: 'RSA private key for Alpine signing (PEM format)'
+    required: false
+    default: ''
+  rsa-passphrase:
+    description: 'RSA key passphrase'
+    required: false
+    default: ''
+  rsa-key-name:
+    description: 'Key name for Alpine signatures'
+    required: false
+    default: 'repogen'
+
+  # Debian-specific options
+  codename:
+    description: 'Codename for Debian repos (e.g., stable, bookworm)'
+    required: false
+    default: 'stable'
+  suite:
+    description: 'Suite for Debian repos (defaults to codename)'
+    required: false
+    default: ''
+  components:
+    description: 'Components for Debian repos (comma-separated)'
+    required: false
+    default: 'main'
+  architectures:
+    description: 'Architectures to support (comma-separated)'
+    required: false
+    default: 'all,amd64'
+
+  # Repository metadata
+  origin:
+    description: 'Repository origin name'
+    required: false
+    default: ''
+  label:
+    description: 'Repository label'
+    required: false
+    default: ''
+  repo-name:
+    description: 'Repository name (required for Pacman)'
+    required: false
+    default: ''
+
+  # RPM-specific options
+  distro-variant:
+    description: 'Distribution variant for RPM repos (fedora, centos, rhel)'
+    required: false
+    default: 'fedora'
+  version:
+    description: 'Release version for RPM repos (e.g., 40 for Fedora 40)'
+    required: false
+    default: ''
+
+  # Repogen version
+  repogen-version:
+    description: 'Version of repogen to use (e.g., v0.1.0, or "latest")'
+    required: false
+    default: 'latest'
+
+outputs:
+  packages-added:
+    description: 'Number of packages added to the repository'
+    value: ${{ steps.run-repogen.outputs.packages-added }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      run: |
+        # Validate package type
+        case "${{ inputs.package-type }}" in
+          deb|sysext|rpm|apk|pacman|homebrew)
+            echo "Package type: ${{ inputs.package-type }}"
+            ;;
+          *)
+            echo "::error::Invalid package-type. Must be one of: deb, sysext, rpm, apk, pacman, homebrew"
+            exit 1
+            ;;
+        esac
+
+        # Validate base-url is provided for sysext
+        if [[ "${{ inputs.package-type }}" == "sysext" && -z "${{ inputs.base-url }}" ]]; then
+          echo "::error::base-url is required for sysext package type"
+          exit 1
+        fi
+
+        # Validate repo-name is provided for pacman
+        if [[ "${{ inputs.package-type }}" == "pacman" && -z "${{ inputs.repo-name }}" ]]; then
+          echo "::error::repo-name is required for pacman package type"
+          exit 1
+        fi
+
+        # Validate packages directory exists
+        if [[ ! -d "${{ inputs.packages-dir }}" ]]; then
+          echo "::error::packages-dir does not exist: ${{ inputs.packages-dir }}"
+          exit 1
+        fi
+
+    - name: Install repogen
+      shell: bash
+      run: |
+        set -e
+
+        REPOGEN_VERSION="${{ inputs.repogen-version }}"
+
+        if [[ "$REPOGEN_VERSION" == "latest" ]]; then
+          # Get latest release
+          REPOGEN_VERSION=$(curl -s https://api.github.com/repos/frostyard/repogen/releases/latest | jq -r .tag_name)
+        fi
+
+        # Remove 'v' prefix if present for download URL
+        VERSION_NUM="${REPOGEN_VERSION#v}"
+
+        echo "Installing repogen $REPOGEN_VERSION..."
+
+        # Detect architecture
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH="amd64" ;;
+          aarch64) ARCH="arm64" ;;
+        esac
+
+        # Download repogen
+        DOWNLOAD_URL="https://github.com/frostyard/repogen/releases/download/${REPOGEN_VERSION}/repogen-linux-${ARCH}"
+        echo "Downloading from: $DOWNLOAD_URL"
+
+        curl -L -o /tmp/repogen "$DOWNLOAD_URL"
+        chmod +x /tmp/repogen
+
+        # Verify installation
+        /tmp/repogen --help > /dev/null
+        echo "repogen installed successfully"
+
+    - name: Configure AWS CLI for R2
+      shell: bash
+      run: |
+        # Configure AWS CLI to use R2
+        aws configure set aws_access_key_id "${{ inputs.r2-access-key-id }}"
+        aws configure set aws_secret_access_key "${{ inputs.r2-secret-access-key }}"
+        aws configure set default.region auto
+
+        # Set R2 endpoint
+        echo "R2_ENDPOINT=https://${{ inputs.r2-account-id }}.r2.cloudflarestorage.com" >> $GITHUB_ENV
+
+    - name: Sync existing repository from R2
+      shell: bash
+      run: |
+        set -e
+
+        BUCKET="${{ inputs.r2-bucket }}"
+        PREFIX="${{ inputs.repo-prefix }}"
+        PACKAGE_TYPE="${{ inputs.package-type }}"
+
+        # Create local repo directory
+        mkdir -p repo
+
+        # Build S3 path
+        if [[ -n "$PREFIX" ]]; then
+          S3_PATH="s3://${BUCKET}/${PREFIX}"
+        else
+          S3_PATH="s3://${BUCKET}"
+        fi
+
+        echo "Syncing existing metadata from R2..."
+
+        # Sync only metadata files based on package type
+        # We don't need to sync the actual packages, just the metadata for incremental mode
+        case "$PACKAGE_TYPE" in
+          deb)
+            # Sync dists directory (metadata)
+            aws s3 sync "${S3_PATH}/dists" "./repo/dists" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --delete \
+              2>/dev/null || echo "No existing dists directory found"
+            ;;
+          sysext)
+            # Sync ext directory, excluding actual extension files
+            aws s3 sync "${S3_PATH}/ext" "./repo/ext" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --exclude "*.raw" \
+              --exclude "*.raw.zst" \
+              --exclude "*.raw.xz" \
+              --exclude "*.raw.gz" \
+              2>/dev/null || echo "No existing ext directory found"
+            ;;
+          rpm)
+            # Sync repodata directory
+            VERSION="${{ inputs.version }}"
+            if [[ -n "$VERSION" ]]; then
+              aws s3 sync "${S3_PATH}/${VERSION}/x86_64/repodata" "./repo/${VERSION}/x86_64/repodata" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --delete \
+                2>/dev/null || echo "No existing repodata directory found"
+            else
+              aws s3 sync "${S3_PATH}" "./repo" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --exclude "*.rpm" \
+                2>/dev/null || echo "No existing repository found"
+            fi
+            ;;
+          apk)
+            # Sync APKINDEX files
+            aws s3 sync "${S3_PATH}" "./repo" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --exclude "*.apk" \
+              2>/dev/null || echo "No existing repository found"
+            ;;
+          pacman)
+            # Sync database files only
+            ARCHES="${{ inputs.architectures }}"
+            IFS=',' read -ra ARCH_ARRAY <<< "$ARCHES"
+            for arch in "${ARCH_ARRAY[@]}"; do
+              arch=$(echo "$arch" | tr -d ' ')
+              aws s3 sync "${S3_PATH}/${arch}" "./repo/${arch}" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --exclude "*.pkg.tar.zst" \
+                --exclude "*.pkg.tar.xz" \
+                --exclude "*.pkg.tar.gz" \
+                --exclude "*.pkg.tar.zst.sig" \
+                --exclude "*.pkg.tar.xz.sig" \
+                --exclude "*.pkg.tar.gz.sig" \
+                2>/dev/null || echo "No existing repository found for $arch"
+            done
+            ;;
+          homebrew)
+            # Sync Formula directory
+            aws s3 sync "${S3_PATH}/Formula" "./repo/Formula" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --delete \
+              2>/dev/null || echo "No existing Formula directory found"
+            ;;
+        esac
+
+        echo "Metadata sync complete"
+
+    - name: Prepare signing keys
+      shell: bash
+      run: |
+        set -e
+
+        # Prepare GPG key if provided
+        if [[ -n "${{ inputs.gpg-private-key }}" ]]; then
+          echo "Preparing GPG key..."
+
+          # Check if it's base64 encoded or plain ASCII armor
+          if echo "${{ inputs.gpg-private-key }}" | grep -q "BEGIN PGP"; then
+            echo "${{ inputs.gpg-private-key }}" > /tmp/gpg-key.asc
+          else
+            echo "${{ inputs.gpg-private-key }}" | base64 -d > /tmp/gpg-key.asc
+          fi
+
+          echo "GPG_KEY_PATH=/tmp/gpg-key.asc" >> $GITHUB_ENV
+        fi
+
+        # Prepare RSA key if provided
+        if [[ -n "${{ inputs.rsa-private-key }}" ]]; then
+          echo "Preparing RSA key..."
+
+          # Check if it's base64 encoded or plain PEM
+          if echo "${{ inputs.rsa-private-key }}" | grep -q "BEGIN"; then
+            echo "${{ inputs.rsa-private-key }}" > /tmp/rsa-key.pem
+          else
+            echo "${{ inputs.rsa-private-key }}" | base64 -d > /tmp/rsa-key.pem
+          fi
+
+          chmod 600 /tmp/rsa-key.pem
+          echo "RSA_KEY_PATH=/tmp/rsa-key.pem" >> $GITHUB_ENV
+        fi
+
+    - name: Run repogen
+      id: run-repogen
+      shell: bash
+      run: |
+        set -e
+
+        # Count packages before
+        PACKAGE_COUNT=$(find "${{ inputs.packages-dir }}" -type f \( \
+          -name "*.deb" -o \
+          -name "*.rpm" -o \
+          -name "*.apk" -o \
+          -name "*.pkg.tar.zst" -o \
+          -name "*.pkg.tar.xz" -o \
+          -name "*.pkg.tar.gz" -o \
+          -name "*.raw" -o \
+          -name "*.raw.zst" -o \
+          -name "*.raw.xz" -o \
+          -name "*.raw.gz" -o \
+          -name "*.bottle.tar.gz" \
+        \) 2>/dev/null | wc -l)
+
+        echo "Found $PACKAGE_COUNT packages to add"
+        echo "packages-added=$PACKAGE_COUNT" >> $GITHUB_OUTPUT
+
+        if [[ "$PACKAGE_COUNT" -eq 0 ]]; then
+          echo "::warning::No packages found in ${{ inputs.packages-dir }}"
+          exit 0
+        fi
+
+        # Build repogen command
+        REPOGEN_CMD="/tmp/repogen generate"
+        REPOGEN_CMD+=" --input-dir '${{ inputs.packages-dir }}'"
+        REPOGEN_CMD+=" --output-dir './repo'"
+        REPOGEN_CMD+=" --incremental"
+        REPOGEN_CMD+=" -v"
+
+        # Add base-url if provided
+        if [[ -n "${{ inputs.base-url }}" ]]; then
+          REPOGEN_CMD+=" --base-url '${{ inputs.base-url }}'"
+        fi
+
+        # Add Debian options
+        if [[ -n "${{ inputs.codename }}" ]]; then
+          REPOGEN_CMD+=" --codename '${{ inputs.codename }}'"
+        fi
+        if [[ -n "${{ inputs.suite }}" ]]; then
+          REPOGEN_CMD+=" --suite '${{ inputs.suite }}'"
+        fi
+        if [[ -n "${{ inputs.components }}" ]]; then
+          REPOGEN_CMD+=" --components '${{ inputs.components }}'"
+        fi
+        if [[ -n "${{ inputs.architectures }}" ]]; then
+          REPOGEN_CMD+=" --arch '${{ inputs.architectures }}'"
+        fi
+
+        # Add metadata options
+        if [[ -n "${{ inputs.origin }}" ]]; then
+          REPOGEN_CMD+=" --origin '${{ inputs.origin }}'"
+        fi
+        if [[ -n "${{ inputs.label }}" ]]; then
+          REPOGEN_CMD+=" --label '${{ inputs.label }}'"
+        fi
+        if [[ -n "${{ inputs.repo-name }}" ]]; then
+          REPOGEN_CMD+=" --repo-name '${{ inputs.repo-name }}'"
+        fi
+
+        # Add RPM options
+        if [[ -n "${{ inputs.distro-variant }}" ]]; then
+          REPOGEN_CMD+=" --distro '${{ inputs.distro-variant }}'"
+        fi
+        if [[ -n "${{ inputs.version }}" ]]; then
+          REPOGEN_CMD+=" --version '${{ inputs.version }}'"
+        fi
+
+        # Add signing options
+        if [[ -n "${GPG_KEY_PATH:-}" ]]; then
+          REPOGEN_CMD+=" --gpg-key '${GPG_KEY_PATH}'"
+          if [[ -n "${{ inputs.gpg-passphrase }}" ]]; then
+            REPOGEN_CMD+=" --gpg-passphrase '${{ inputs.gpg-passphrase }}'"
+          fi
+        fi
+
+        if [[ -n "${RSA_KEY_PATH:-}" ]]; then
+          REPOGEN_CMD+=" --rsa-key '${RSA_KEY_PATH}'"
+          if [[ -n "${{ inputs.rsa-passphrase }}" ]]; then
+            REPOGEN_CMD+=" --rsa-passphrase '${{ inputs.rsa-passphrase }}'"
+          fi
+          REPOGEN_CMD+=" --key-name '${{ inputs.rsa-key-name }}'"
+        fi
+
+        echo "Running: $REPOGEN_CMD"
+        eval $REPOGEN_CMD
+
+    - name: Upload repository to R2
+      shell: bash
+      run: |
+        set -e
+
+        BUCKET="${{ inputs.r2-bucket }}"
+        PREFIX="${{ inputs.repo-prefix }}"
+
+        # Build S3 path
+        if [[ -n "$PREFIX" ]]; then
+          S3_PATH="s3://${BUCKET}/${PREFIX}"
+        else
+          S3_PATH="s3://${BUCKET}"
+        fi
+
+        echo "Uploading repository to R2..."
+
+        # Sync repository to R2
+        # Note: We don't use --delete to preserve existing packages that aren't local
+        aws s3 sync "./repo" "${S3_PATH}" \
+          --endpoint-url "$R2_ENDPOINT"
+
+        echo "Repository uploaded successfully to ${S3_PATH}"
+
+    - name: Cleanup
+      if: always()
+      shell: bash
+      run: |
+        # Clean up sensitive files
+        rm -f /tmp/gpg-key.asc /tmp/rsa-key.pem /tmp/repogen
+
+        # Clear AWS credentials
+        aws configure set aws_access_key_id ""
+        aws configure set aws_secret_access_key ""

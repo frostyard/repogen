@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ralt/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/models"
 )
 
 func TestIncrementalModeCopiesNewPackages(t *testing.T) {

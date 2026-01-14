@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ralt/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/models"
 )
 
 func TestParsePackage(t *testing.T) {

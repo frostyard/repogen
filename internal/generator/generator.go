@@ -3,8 +3,8 @@ package generator
 import (
 	"context"
 
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/scanner"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/scanner"
 )
 
 // Generator interface for repository generators

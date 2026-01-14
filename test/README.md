@@ -5,6 +5,7 @@ This directory contains the Docker-based integration test suite for repogen.
 ## Overview
 
 The test suite validates that repogen generates working repositories for all supported package types by:
+
 1. Building minimal test packages
 2. Generating repositories using repogen
 3. Running native package managers in Docker containers
@@ -34,6 +35,7 @@ test/
 - `rpmbuild` (for building RPM packages)
 
 Or use Docker to build all packages:
+
 ```bash
 make test-packages-docker
 ```
@@ -74,6 +76,7 @@ go test -v -run TestIntegration/Homebrew .
 **File**: `fixtures/debs/repogen-test_1.0.0_amd64.deb`
 
 Minimal Debian package with:
+
 - Control file with metadata
 - Binary: `/usr/bin/repogen-test`
 - Architecture: amd64
@@ -83,6 +86,7 @@ Minimal Debian package with:
 **File**: `fixtures/rpms/repogen-test-1.0.0-1.x86_64.rpm`
 
 Minimal RPM package with:
+
 - Spec file with metadata
 - Binary: `/usr/bin/repogen-test`
 - Architecture: x86_64
@@ -92,6 +96,7 @@ Minimal RPM package with:
 **File**: `fixtures/apks/repogen-test-1.0.0-r0.apk`
 
 Minimal APK package with:
+
 - .PKGINFO metadata file
 - Binary: `/usr/bin/repogen-test`
 - Architecture: x86_64
@@ -101,6 +106,7 @@ Minimal APK package with:
 **File**: `fixtures/bottles/repogen-test--1.0.0.x86_64_linux.bottle.tar.gz`
 
 Minimal Homebrew bottle with:
+
 - Binary: `repogen-test/1.0.0/bin/repogen-test`
 - Platform: x86_64_linux
 
@@ -109,11 +115,13 @@ Minimal Homebrew bottle with:
 Each integration test follows this pattern:
 
 ### 1. Setup
+
 - Clean previous test outputs
 - Verify test package exists
 - Create output directory
 
 ### 2. Generate Repository
+
 ```bash
 repogen generate \
   --input-dir fixtures/{type} \
@@ -121,15 +129,19 @@ repogen generate \
 ```
 
 ### 3. Verify Structure
+
 Check that all expected files exist:
+
 - Metadata files (Release, Packages, APKINDEX, etc.)
 - Package files in correct locations
 - Signatures (if signing enabled)
 
 ### 4. Docker Test
+
 Spin up distribution-specific container:
 
 **Debian:**
+
 ```bash
 docker run --rm -v $(pwd)/repo:/repo debian:bookworm bash -c "
   echo 'deb [trusted=yes] file:///repo stable main' > /etc/apt/sources.list.d/test.list
@@ -140,6 +152,7 @@ docker run --rm -v $(pwd)/repo:/repo debian:bookworm bash -c "
 ```
 
 **Fedora:**
+
 ```bash
 docker run --rm -v $(pwd)/repo:/repo fedora:latest bash -c "
   cat > /etc/yum.repos.d/test.repo <<EOF
@@ -153,6 +166,7 @@ docker run --rm -v $(pwd)/repo:/repo fedora:latest bash -c "
 ```
 
 **Alpine:**
+
 ```bash
 docker run --rm -v $(pwd)/repo:/repo alpine:latest sh -c "
   echo 'file:///repo' >> /etc/apk/repositories
@@ -163,6 +177,7 @@ docker run --rm -v $(pwd)/repo:/repo alpine:latest sh -c "
 ```
 
 ### 5. Verification
+
 - Package manager successfully reads repository
 - Package installs without errors
 - Binary executes successfully
@@ -194,7 +209,7 @@ docker run --rm -v $(pwd)/repo:/repo alpine:latest sh -c "
     --- PASS: TestIntegration/Alpine (10.21s)
     --- PASS: TestIntegration/Homebrew (8.25s)
 PASS
-ok      github.com/ralt/repogen/test    45.234s
+ok      github.com/frostyard/repogen/test    45.234s
 ```
 
 ### Failure Example
@@ -208,35 +223,45 @@ ok      github.com/ralt/repogen/test    45.234s
 ## Troubleshooting
 
 ### Docker not available
+
 ```
 --- SKIP: TestIntegration (0.00s)
     integration_test.go:22: Docker not available, skipping integration tests
 ```
+
 **Solution**: Install Docker or run tests on CI
 
 ### Test package not found
+
 ```
 --- SKIP: TestIntegration/Debian (0.00s)
     integration_test.go:42: Debian test package not found, run build-test-packages.sh first
 ```
+
 **Solution**: Run `./build-test-packages.sh` or `make test-packages`
 
 ### Container fails to pull
+
 ```
 Error: failed to pull image "debian:bookworm": ...
 ```
+
 **Solution**: Check internet connection or Docker Hub access
 
 ### Permission denied
+
 ```
 Error: permission denied while trying to connect to Docker daemon
 ```
+
 **Solution**: Add user to docker group: `sudo usermod -aG docker $USER`
 
 ### Timeout
+
 ```
 panic: test timed out after 15m0s
 ```
+
 **Solution**: Increase timeout: `go test -timeout 30m .`
 
 ## Adding New Tests
@@ -244,6 +269,7 @@ panic: test timed out after 15m0s
 To add a test for a new package format:
 
 1. **Create test package builder** in `build-test-packages.sh`:
+
 ```bash
 build_newformat() {
     echo "Building NewFormat test package..."
@@ -252,6 +278,7 @@ build_newformat() {
 ```
 
 2. **Add test function** in `integration_test.go`:
+
 ```go
 func testNewFormatRepository(t *testing.T, projectRoot, testDir string) {
     // Setup
@@ -269,6 +296,7 @@ func testNewFormatRepository(t *testing.T, projectRoot, testDir string) {
 ```
 
 3. **Add to test suite**:
+
 ```go
 t.Run("NewFormat", func(t *testing.T) {
     testNewFormatRepository(t, projectRoot, testDir)
@@ -278,6 +306,7 @@ t.Run("NewFormat", func(t *testing.T) {
 ## CI Integration
 
 The test suite is designed for CI/CD:
+
 - Fast feedback (parallel container tests)
 - Clear pass/fail indicators
 - Detailed error messages
@@ -288,6 +317,7 @@ See `.github/workflows/test.yml` for GitHub Actions example.
 ## Performance
 
 Typical test execution times:
+
 - Test package build: ~5 seconds
 - Repository generation: ~1-2 seconds per type
 - Docker container tests: ~10-15 seconds per container
@@ -296,6 +326,7 @@ Typical test execution times:
 ## Maintenance
 
 Test packages should be rebuilt when:
+
 - Package format specifications change
 - New metadata fields are required
 - Testing new architectures

@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/utils"
 	"github.com/klauspost/compress/zstd"
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/utils"
 	"github.com/ulikunitz/xz"
 )
 

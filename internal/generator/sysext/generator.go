@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ralt/repogen/internal/generator"
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/scanner"
-	"github.com/ralt/repogen/internal/utils"
+	"github.com/frostyard/repogen/internal/generator"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/scanner"
+	"github.com/frostyard/repogen/internal/utils"
 	"github.com/sirupsen/logrus"
 )
 

@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/utils"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/utils"
 	"github.com/sassoftware/go-rpmutils"
 )
 

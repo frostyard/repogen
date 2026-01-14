@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostyard/repogen/internal/models"
 	"github.com/klauspost/compress/zstd"
-	"github.com/ralt/repogen/internal/models"
 )
 
 func TestGenerateDescFile(t *testing.T) {

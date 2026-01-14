@@ -6,17 +6,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ralt/repogen/internal/generator"
-	"github.com/ralt/repogen/internal/generator/apk"
-	"github.com/ralt/repogen/internal/generator/deb"
-	"github.com/ralt/repogen/internal/generator/homebrew"
-	"github.com/ralt/repogen/internal/generator/pacman"
-	"github.com/ralt/repogen/internal/generator/rpm"
-	"github.com/ralt/repogen/internal/generator/sysext"
-	"github.com/ralt/repogen/internal/models"
-	"github.com/ralt/repogen/internal/scanner"
-	"github.com/ralt/repogen/internal/signer"
-	"github.com/ralt/repogen/internal/utils"
+	"github.com/frostyard/repogen/internal/generator"
+	"github.com/frostyard/repogen/internal/generator/apk"
+	"github.com/frostyard/repogen/internal/generator/deb"
+	"github.com/frostyard/repogen/internal/generator/homebrew"
+	"github.com/frostyard/repogen/internal/generator/pacman"
+	"github.com/frostyard/repogen/internal/generator/rpm"
+	"github.com/frostyard/repogen/internal/generator/sysext"
+	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/scanner"
+	"github.com/frostyard/repogen/internal/signer"
+	"github.com/frostyard/repogen/internal/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -104,15 +104,6 @@ func validateConfig(config *models.RepositoryConfig) error {
 	}
 	if config.Label == "" {
 		config.Label = config.Origin
-	}
-
-	// Validate GPG key URL requirement for RPM .repo files
-	if config.BaseURL != "" && config.GPGKeyPath != "" && config.GPGKeyURL == "" {
-		return &models.RepoGenError{
-			Type: models.ErrInvalidConfig,
-			Err: fmt.Errorf("--gpg-key-url is required when both --base-url and --gpg-key are specified for signed RPM .repo files\n" +
-				"Example: --gpg-key-url 'https://example.com/repo/$releasever/$basearch/RPM-GPG-KEY-myrepo'"),
-		}
 	}
 
 	// Validate repo-name requirement for Pacman repositories

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ralt/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/models"
 )
 
 // CopyFile copies a file from src to dst

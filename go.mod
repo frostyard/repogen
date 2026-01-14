@@ -1,4 +1,4 @@
-module github.com/ralt/repogen
+module github.com/frostyard/repogen
 
 go 1.23.5
 
