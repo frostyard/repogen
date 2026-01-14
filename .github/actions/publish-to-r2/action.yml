@@ -120,13 +120,16 @@ runs:
     - name: Validate inputs
       shell: bash
       run: |
+        set -e
+        echo "::group::Validating inputs"
+
         # Validate package type
         case "${{ inputs.package-type }}" in
           deb|sysext|rpm|apk|pacman|homebrew)
-            echo "Package type: ${{ inputs.package-type }}"
+            echo "✓ Package type: ${{ inputs.package-type }}"
             ;;
           *)
-            echo "::error::Invalid package-type. Must be one of: deb, sysext, rpm, apk, pacman, homebrew"
+            echo "::error::Invalid package-type '${{ inputs.package-type }}'. Must be one of: deb, sysext, rpm, apk, pacman, homebrew"
             exit 1
             ;;
         esac
@@ -136,6 +139,7 @@ runs:
           echo "::error::base-url is required for sysext package type"
           exit 1
         fi
+        echo "✓ base-url: ${{ inputs.base-url }}"
 
         # Validate repo-name is provided for pacman
         if [[ "${{ inputs.package-type }}" == "pacman" && -z "${{ inputs.repo-name }}" ]]; then
@@ -146,23 +150,40 @@ runs:
         # Validate packages directory exists
         if [[ ! -d "${{ inputs.packages-dir }}" ]]; then
           echo "::error::packages-dir does not exist: ${{ inputs.packages-dir }}"
+          echo "Current directory contents:"
+          ls -la
           exit 1
         fi
+        echo "✓ packages-dir exists: ${{ inputs.packages-dir }}"
+
+        # List contents of packages directory for debugging
+        echo ""
+        echo "Contents of ${{ inputs.packages-dir }}:"
+        find "${{ inputs.packages-dir }}" -type f -name "*.raw*" -o -name "*.deb" -o -name "*.rpm" -o -name "*.apk" -o -name "*.pkg.tar.*" -o -name "*.bottle.tar.gz" 2>/dev/null | head -20 || echo "  (no matching package files found)"
+        echo ""
+
+        echo "::endgroup::"
 
     - name: Install repogen
       shell: bash
       run: |
         set -e
+        echo "::group::Installing repogen"
 
         REPOGEN_VERSION="${{ inputs.repogen-version }}"
 
         if [[ "$REPOGEN_VERSION" == "latest" ]]; then
           # Get latest release
-          REPOGEN_VERSION=$(curl -s https://api.github.com/repos/frostyard/repogen/releases/latest | jq -r .tag_name)
-        fi
+          echo "Fetching latest release version..."
+          RELEASE_INFO=$(curl -sS https://api.github.com/repos/frostyard/repogen/releases/latest)
+          REPOGEN_VERSION=$(echo "$RELEASE_INFO" | jq -r .tag_name)
 
-        # Remove 'v' prefix if present for download URL
-        VERSION_NUM="${REPOGEN_VERSION#v}"
+          if [[ -z "$REPOGEN_VERSION" || "$REPOGEN_VERSION" == "null" ]]; then
+            echo "::error::Could not determine latest repogen version. API response:"
+            echo "$RELEASE_INFO" | head -20
+            exit 1
+          fi
+        fi
 
         echo "Installing repogen $REPOGEN_VERSION..."
 
@@ -172,33 +193,52 @@ runs:
           x86_64) ARCH="amd64" ;;
           aarch64) ARCH="arm64" ;;
         esac
+        echo "Detected architecture: $ARCH"
 
         # Download repogen
         DOWNLOAD_URL="https://github.com/frostyard/repogen/releases/download/${REPOGEN_VERSION}/repogen-linux-${ARCH}"
         echo "Downloading from: $DOWNLOAD_URL"
 
-        curl -L -o /tmp/repogen "$DOWNLOAD_URL"
+        HTTP_CODE=$(curl -sS -L -w "%{http_code}" -o /tmp/repogen "$DOWNLOAD_URL")
+        if [[ "$HTTP_CODE" != "200" ]]; then
+          echo "::error::Failed to download repogen (HTTP $HTTP_CODE)"
+          echo "URL: $DOWNLOAD_URL"
+          exit 1
+        fi
+
         chmod +x /tmp/repogen
 
         # Verify installation
-        /tmp/repogen --help > /dev/null
-        echo "repogen installed successfully"
+        echo "Verifying installation..."
+        /tmp/repogen --version || /tmp/repogen --help > /dev/null
+        echo "✓ repogen installed successfully"
+
+        echo "::endgroup::"
 
     - name: Configure AWS CLI for R2
       shell: bash
       run: |
+        set -e
+        echo "::group::Configuring AWS CLI for R2"
+
         # Configure AWS CLI to use R2
         aws configure set aws_access_key_id "${{ inputs.r2-access-key-id }}"
         aws configure set aws_secret_access_key "${{ inputs.r2-secret-access-key }}"
         aws configure set default.region auto
 
         # Set R2 endpoint
-        echo "R2_ENDPOINT=https://${{ inputs.r2-account-id }}.r2.cloudflarestorage.com" >> $GITHUB_ENV
+        R2_ENDPOINT="https://${{ inputs.r2-account-id }}.r2.cloudflarestorage.com"
+        echo "R2_ENDPOINT=$R2_ENDPOINT" >> $GITHUB_ENV
+        echo "✓ R2 endpoint configured: $R2_ENDPOINT"
+        echo "✓ Bucket: ${{ inputs.r2-bucket }}"
+
+        echo "::endgroup::"
 
     - name: Sync existing repository from R2
       shell: bash
       run: |
         set -e
+        echo "::group::Syncing existing metadata from R2"
 
         BUCKET="${{ inputs.r2-bucket }}"
         PREFIX="${{ inputs.repo-prefix }}"
@@ -214,27 +254,30 @@ runs:
           S3_PATH="s3://${BUCKET}"
         fi
 
-        echo "Syncing existing metadata from R2..."
+        echo "S3 path: $S3_PATH"
+        echo "Package type: $PACKAGE_TYPE"
 
         # Sync only metadata files based on package type
         # We don't need to sync the actual packages, just the metadata for incremental mode
         case "$PACKAGE_TYPE" in
           deb)
             # Sync dists directory (metadata)
+            echo "Syncing dists directory..."
             aws s3 sync "${S3_PATH}/dists" "./repo/dists" \
               --endpoint-url "$R2_ENDPOINT" \
               --delete \
-              2>/dev/null || echo "No existing dists directory found"
+              2>&1 || echo "No existing dists directory found (this is OK for first run)"
             ;;
           sysext)
             # Sync ext directory, excluding actual extension files
+            echo "Syncing ext directory (metadata only)..."
             aws s3 sync "${S3_PATH}/ext" "./repo/ext" \
               --endpoint-url "$R2_ENDPOINT" \
               --exclude "*.raw" \
               --exclude "*.raw.zst" \
               --exclude "*.raw.xz" \
               --exclude "*.raw.gz" \
-              2>/dev/null || echo "No existing ext directory found"
+              2>&1 || echo "No existing ext directory found (this is OK for first run)"
             ;;
           rpm)
             # Sync repodata directory
@@ -272,62 +315,97 @@ runs:
                 --exclude "*.pkg.tar.zst.sig" \
                 --exclude "*.pkg.tar.xz.sig" \
                 --exclude "*.pkg.tar.gz.sig" \
-                2>/dev/null || echo "No existing repository found for $arch"
+                2>&1 || echo "No existing repository found for $arch (this is OK for first run)"
             done
             ;;
           homebrew)
             # Sync Formula directory
+            echo "Syncing Formula directory..."
             aws s3 sync "${S3_PATH}/Formula" "./repo/Formula" \
               --endpoint-url "$R2_ENDPOINT" \
               --delete \
-              2>/dev/null || echo "No existing Formula directory found"
+              2>&1 || echo "No existing Formula directory found (this is OK for first run)"
             ;;
         esac
 
-        echo "Metadata sync complete"
+        echo ""
+        echo "Local repo directory contents:"
+        find ./repo -type f 2>/dev/null | head -20 || echo "  (empty)"
+        echo ""
+        echo "✓ Metadata sync complete"
+        echo "::endgroup::"
 
     - name: Prepare signing keys
       shell: bash
+      env:
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        RSA_PRIVATE_KEY: ${{ inputs.rsa-private-key }}
       run: |
         set -e
+        echo "::group::Preparing signing keys"
 
         # Prepare GPG key if provided
-        if [[ -n "${{ inputs.gpg-private-key }}" ]]; then
+        if [[ -n "$GPG_PRIVATE_KEY" ]]; then
           echo "Preparing GPG key..."
 
           # Check if it's base64 encoded or plain ASCII armor
-          if echo "${{ inputs.gpg-private-key }}" | grep -q "BEGIN PGP"; then
-            echo "${{ inputs.gpg-private-key }}" > /tmp/gpg-key.asc
+          if echo "$GPG_PRIVATE_KEY" | head -1 | grep -q "BEGIN PGP"; then
+            echo "Detected ASCII-armored GPG key"
+            echo "$GPG_PRIVATE_KEY" > /tmp/gpg-key.asc
           else
-            echo "${{ inputs.gpg-private-key }}" | base64 -d > /tmp/gpg-key.asc
+            echo "Detected base64-encoded GPG key, decoding..."
+            echo "$GPG_PRIVATE_KEY" | base64 -d > /tmp/gpg-key.asc
           fi
 
-          echo "GPG_KEY_PATH=/tmp/gpg-key.asc" >> $GITHUB_ENV
+          # Verify the key looks valid
+          if head -1 /tmp/gpg-key.asc | grep -q "BEGIN PGP"; then
+            echo "✓ GPG key prepared successfully"
+            echo "GPG_KEY_PATH=/tmp/gpg-key.asc" >> $GITHUB_ENV
+          else
+            echo "::warning::GPG key does not appear to be valid PGP format"
+            echo "First line: $(head -1 /tmp/gpg-key.asc | cut -c1-40)..."
+          fi
+        else
+          echo "No GPG key provided, skipping"
         fi
 
         # Prepare RSA key if provided
-        if [[ -n "${{ inputs.rsa-private-key }}" ]]; then
+        if [[ -n "$RSA_PRIVATE_KEY" ]]; then
           echo "Preparing RSA key..."
 
           # Check if it's base64 encoded or plain PEM
-          if echo "${{ inputs.rsa-private-key }}" | grep -q "BEGIN"; then
-            echo "${{ inputs.rsa-private-key }}" > /tmp/rsa-key.pem
+          if echo "$RSA_PRIVATE_KEY" | head -1 | grep -q "BEGIN"; then
+            echo "Detected PEM-formatted RSA key"
+            echo "$RSA_PRIVATE_KEY" > /tmp/rsa-key.pem
           else
-            echo "${{ inputs.rsa-private-key }}" | base64 -d > /tmp/rsa-key.pem
+            echo "Detected base64-encoded RSA key, decoding..."
+            echo "$RSA_PRIVATE_KEY" | base64 -d > /tmp/rsa-key.pem
           fi
 
           chmod 600 /tmp/rsa-key.pem
+          echo "✓ RSA key prepared successfully"
           echo "RSA_KEY_PATH=/tmp/rsa-key.pem" >> $GITHUB_ENV
+        else
+          echo "No RSA key provided, skipping"
         fi
+
+        echo "::endgroup::"
 
     - name: Run repogen
       id: run-repogen
       shell: bash
       run: |
         set -e
+        echo "::group::Running repogen"
 
-        # Count packages before
-        PACKAGE_COUNT=$(find "${{ inputs.packages-dir }}" -type f \( \
+        # List all files in input directory for debugging
+        echo "All files in ${{ inputs.packages-dir }}:"
+        find "${{ inputs.packages-dir }}" -type f 2>/dev/null | head -50 || echo "  (empty or not accessible)"
+        echo ""
+
+        # Count packages with detailed output
+        echo "Searching for packages..."
+        PACKAGE_FILES=$(find "${{ inputs.packages-dir }}" -type f \( \
           -name "*.deb" -o \
           -name "*.rpm" -o \
           -name "*.apk" -o \
@@ -339,84 +417,99 @@ runs:
           -name "*.raw.xz" -o \
           -name "*.raw.gz" -o \
           -name "*.bottle.tar.gz" \
-        \) 2>/dev/null | wc -l)
+        \) 2>/dev/null || true)
 
-        echo "Found $PACKAGE_COUNT packages to add"
+        if [[ -n "$PACKAGE_FILES" ]]; then
+          echo "Found packages:"
+          echo "$PACKAGE_FILES"
+          PACKAGE_COUNT=$(echo "$PACKAGE_FILES" | wc -l)
+        else
+          PACKAGE_COUNT=0
+        fi
+
+        echo ""
+        echo "Total packages found: $PACKAGE_COUNT"
         echo "packages-added=$PACKAGE_COUNT" >> $GITHUB_OUTPUT
 
         if [[ "$PACKAGE_COUNT" -eq 0 ]]; then
-          echo "::warning::No packages found in ${{ inputs.packages-dir }}"
-          exit 0
+          echo "::error::No packages found in ${{ inputs.packages-dir }}"
+          echo "Expected file extensions: .deb, .rpm, .apk, .pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz, .raw, .raw.zst, .raw.xz, .raw.gz, .bottle.tar.gz"
+          exit 1
         fi
 
-        # Build repogen command
-        REPOGEN_CMD="/tmp/repogen generate"
-        REPOGEN_CMD+=" --input-dir '${{ inputs.packages-dir }}'"
-        REPOGEN_CMD+=" --output-dir './repo'"
-        REPOGEN_CMD+=" --incremental"
-        REPOGEN_CMD+=" -v"
+        # Build repogen command as array for safer execution
+        REPOGEN_ARGS=("generate")
+        REPOGEN_ARGS+=("--input-dir" "${{ inputs.packages-dir }}")
+        REPOGEN_ARGS+=("--output-dir" "./repo")
+        REPOGEN_ARGS+=("--incremental")
+        REPOGEN_ARGS+=("-v")
 
         # Add base-url if provided
         if [[ -n "${{ inputs.base-url }}" ]]; then
-          REPOGEN_CMD+=" --base-url '${{ inputs.base-url }}'"
+          REPOGEN_ARGS+=("--base-url" "${{ inputs.base-url }}")
         fi
 
         # Add Debian options
         if [[ -n "${{ inputs.codename }}" ]]; then
-          REPOGEN_CMD+=" --codename '${{ inputs.codename }}'"
+          REPOGEN_ARGS+=("--codename" "${{ inputs.codename }}")
         fi
         if [[ -n "${{ inputs.suite }}" ]]; then
-          REPOGEN_CMD+=" --suite '${{ inputs.suite }}'"
+          REPOGEN_ARGS+=("--suite" "${{ inputs.suite }}")
         fi
         if [[ -n "${{ inputs.components }}" ]]; then
-          REPOGEN_CMD+=" --components '${{ inputs.components }}'"
+          REPOGEN_ARGS+=("--components" "${{ inputs.components }}")
         fi
         if [[ -n "${{ inputs.architectures }}" ]]; then
-          REPOGEN_CMD+=" --arch '${{ inputs.architectures }}'"
+          REPOGEN_ARGS+=("--arch" "${{ inputs.architectures }}")
         fi
 
         # Add metadata options
         if [[ -n "${{ inputs.origin }}" ]]; then
-          REPOGEN_CMD+=" --origin '${{ inputs.origin }}'"
+          REPOGEN_ARGS+=("--origin" "${{ inputs.origin }}")
         fi
         if [[ -n "${{ inputs.label }}" ]]; then
-          REPOGEN_CMD+=" --label '${{ inputs.label }}'"
+          REPOGEN_ARGS+=("--label" "${{ inputs.label }}")
         fi
         if [[ -n "${{ inputs.repo-name }}" ]]; then
-          REPOGEN_CMD+=" --repo-name '${{ inputs.repo-name }}'"
+          REPOGEN_ARGS+=("--repo-name" "${{ inputs.repo-name }}")
         fi
 
         # Add RPM options
         if [[ -n "${{ inputs.distro-variant }}" ]]; then
-          REPOGEN_CMD+=" --distro '${{ inputs.distro-variant }}'"
+          REPOGEN_ARGS+=("--distro" "${{ inputs.distro-variant }}")
         fi
         if [[ -n "${{ inputs.version }}" ]]; then
-          REPOGEN_CMD+=" --version '${{ inputs.version }}'"
+          REPOGEN_ARGS+=("--version" "${{ inputs.version }}")
         fi
 
         # Add signing options
         if [[ -n "${GPG_KEY_PATH:-}" ]]; then
-          REPOGEN_CMD+=" --gpg-key '${GPG_KEY_PATH}'"
+          REPOGEN_ARGS+=("--gpg-key" "${GPG_KEY_PATH}")
           if [[ -n "${{ inputs.gpg-passphrase }}" ]]; then
-            REPOGEN_CMD+=" --gpg-passphrase '${{ inputs.gpg-passphrase }}'"
+            REPOGEN_ARGS+=("--gpg-passphrase" "${{ inputs.gpg-passphrase }}")
           fi
         fi
 
         if [[ -n "${RSA_KEY_PATH:-}" ]]; then
-          REPOGEN_CMD+=" --rsa-key '${RSA_KEY_PATH}'"
+          REPOGEN_ARGS+=("--rsa-key" "${RSA_KEY_PATH}")
           if [[ -n "${{ inputs.rsa-passphrase }}" ]]; then
-            REPOGEN_CMD+=" --rsa-passphrase '${{ inputs.rsa-passphrase }}'"
+            REPOGEN_ARGS+=("--rsa-passphrase" "${{ inputs.rsa-passphrase }}")
           fi
-          REPOGEN_CMD+=" --key-name '${{ inputs.rsa-key-name }}'"
+          REPOGEN_ARGS+=("--key-name" "${{ inputs.rsa-key-name }}")
         fi
 
-        echo "Running: $REPOGEN_CMD"
-        eval $REPOGEN_CMD
+        echo "Running: /tmp/repogen ${REPOGEN_ARGS[*]}"
+        /tmp/repogen "${REPOGEN_ARGS[@]}"
+
+        echo ""
+        echo "✓ repogen completed successfully"
+        echo "::endgroup::"
 
     - name: Upload repository to R2
       shell: bash
       run: |
         set -e
+        echo "::group::Uploading repository to R2"
 
         BUCKET="${{ inputs.r2-bucket }}"
         PREFIX="${{ inputs.repo-prefix }}"
@@ -428,6 +521,12 @@ runs:
           S3_PATH="s3://${BUCKET}"
         fi
 
+        echo "Target: $S3_PATH"
+        echo ""
+        echo "Files to upload:"
+        find ./repo -type f | head -50
+        echo ""
+
         echo "Uploading repository to R2..."
 
         # Sync repository to R2
@@ -435,15 +534,20 @@ runs:
         aws s3 sync "./repo" "${S3_PATH}" \
           --endpoint-url "$R2_ENDPOINT"
 
-        echo "Repository uploaded successfully to ${S3_PATH}"
+        echo ""
+        echo "✓ Repository uploaded successfully to ${S3_PATH}"
+        echo "::endgroup::"
 
     - name: Cleanup
       if: always()
       shell: bash
       run: |
+        echo "::group::Cleanup"
         # Clean up sensitive files
         rm -f /tmp/gpg-key.asc /tmp/rsa-key.pem /tmp/repogen
 
         # Clear AWS credentials
         aws configure set aws_access_key_id ""
         aws configure set aws_secret_access_key ""
+        echo "✓ Cleanup complete"
+        echo "::endgroup::"
