@@ -48,12 +48,10 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		archPackages[arch] = append(archPackages[arch], pkg)
 	}
 
-	// Generate repository for each architecture
-	for _, arch := range config.Arches {
-		if pkgs, ok := archPackages[arch]; ok {
-			if err := g.generateForArch(ctx, config, arch, pkgs); err != nil {
-				return fmt.Errorf("failed to generate for %s: %w", arch, err)
-			}
+	// Generate repository for each architecture found in packages
+	for arch, pkgs := range archPackages {
+		if err := g.generateForArch(ctx, config, arch, pkgs); err != nil {
+			return fmt.Errorf("failed to generate for %s: %w", arch, err)
 		}
 	}
 
