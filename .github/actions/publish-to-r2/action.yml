@@ -87,7 +87,7 @@ inputs:
   label:
     description: 'Repository label'
     required: false
-    default: ''
+    default: 'Frostyard Repository'
   repo-name:
     description: 'Repository name (required for Pacman)'
     required: false
