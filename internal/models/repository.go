@@ -29,5 +29,6 @@ type RepositoryConfig struct {
 	DistroVariant string // For RPM: fedora, centos, rhel (affects .repo defaults)
 
 	// Incremental mode
-	Incremental bool // Add new packages to existing repository without removing existing ones
+	Incremental    bool // Add new packages to existing repository without removing existing ones
+	SkipDuplicates bool // In incremental mode, skip packages that already exist instead of failing
 }

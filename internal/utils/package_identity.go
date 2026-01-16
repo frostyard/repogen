@@ -42,3 +42,19 @@ func DetectConflicts(existing, newPackages []models.Package, pkgType scanner.Pac
 	}
 	return conflicts
 }
+
+// FilterOutConflicts returns packages that are not in the toExclude list
+func FilterOutConflicts(packages, toExclude []models.Package, pkgType scanner.PackageType) []models.Package {
+	excludeMap := make(map[string]bool)
+	for _, pkg := range toExclude {
+		excludeMap[PackageIdentity(pkg, pkgType)] = true
+	}
+
+	var result []models.Package
+	for _, pkg := range packages {
+		if !excludeMap[PackageIdentity(pkg, pkgType)] {
+			result = append(result, pkg)
+		}
+	}
+	return result
+}

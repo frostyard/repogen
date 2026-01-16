@@ -80,6 +80,10 @@ func TestIntegration(t *testing.T) {
 	t.Run("ChecksumVerification", func(t *testing.T) {
 		testChecksumVerification(t, projectRoot, testDir)
 	})
+
+	t.Run("IncrementalSkipDuplicates", func(t *testing.T) {
+		testIncrementalSkipDuplicates(t, projectRoot, testDir)
+	})
 }
 
 func testDebianRepository(t *testing.T, projectRoot, testDir string) {
@@ -1356,4 +1360,174 @@ func calculateSHA256(path string) (string, error) {
 	}
 
 	return parts[0], nil
+}
+
+// testIncrementalSkipDuplicates tests the --skip-duplicates flag behavior
+func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "incremental-skip-duplicates-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "rpms")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+
+	// Check if test packages exist
+	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test-1.0.0-1.x86_64.rpm")); os.IsNotExist(err) {
+		t.Skip("RPM test packages not found, run build-test-packages.sh first")
+	}
+
+	// Clean up repo directory
+	if err := os.RemoveAll(repoDir); err != nil {
+		t.Fatalf("Failed to clean repo directory: %v", err)
+	}
+
+	// Step 1: Initial repository generation with first package
+	t.Log("Step 1: Creating initial repository with repogen-test package...")
+	initialInputDir := filepath.Join(testDir, "skip-dup-input-1")
+	if err := os.MkdirAll(initialInputDir, 0755); err != nil {
+		t.Fatalf("Failed to create initial input directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(initialInputDir) })
+
+	// Copy first package to input directory
+	if err := copyFile(
+		filepath.Join(fixturesDir, "repogen-test-1.0.0-1.x86_64.rpm"),
+		filepath.Join(initialInputDir, "repogen-test-1.0.0-1.x86_64.rpm"),
+	); err != nil {
+		t.Fatalf("Failed to copy first package: %v", err)
+	}
+
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", initialInputDir,
+		"--output-dir", repoDir,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate initial repository: %v\nOutput: %s", err, output)
+	}
+
+	// Verify initial repository has 1 package
+	verifyRPMPackageCount(t, repoDir, 1)
+
+	// Step 2: Run incremental with duplicate - should fail WITHOUT --skip-duplicates
+	t.Log("Step 2: Testing incremental mode fails on duplicate without --skip-duplicates...")
+	cmd = exec.Command(repoGenBin, "generate",
+		"--input-dir", initialInputDir,
+		"--output-dir", repoDir,
+		"--incremental",
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("Expected incremental mode to fail on duplicate, but it succeeded\nOutput: %s", output)
+	}
+	if !strings.Contains(string(output), "already exist in repository") {
+		t.Fatalf("Expected duplicate error message, got: %s", output)
+	}
+	t.Log("  ✓ Correctly failed on duplicate without --skip-duplicates")
+
+	// Step 3: Run incremental with duplicate and --skip-duplicates - should succeed
+	t.Log("Step 3: Testing incremental mode with --skip-duplicates skips duplicate...")
+	cmd = exec.Command(repoGenBin, "generate",
+		"--input-dir", initialInputDir,
+		"--output-dir", repoDir,
+		"--incremental",
+		"--skip-duplicates",
+	)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Expected incremental mode with --skip-duplicates to succeed: %v\nOutput: %s", err, output)
+	}
+	if !strings.Contains(string(output), "Skipping") {
+		t.Logf("Warning: Expected 'Skipping' in output, got: %s", output)
+	}
+	t.Log("  ✓ Correctly skipped duplicate with --skip-duplicates")
+
+	// Verify repository still has 1 package (no duplicates added)
+	verifyRPMPackageCount(t, repoDir, 1)
+
+	// Step 4: Run incremental with new package and duplicate, --skip-duplicates should add new only
+	t.Log("Step 4: Testing incremental with mix of duplicate and new package...")
+	mixedInputDir := filepath.Join(testDir, "skip-dup-input-2")
+	if err := os.MkdirAll(mixedInputDir, 0755); err != nil {
+		t.Fatalf("Failed to create mixed input directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(mixedInputDir) })
+
+	// Copy both packages (one duplicate, one new)
+	if err := copyFile(
+		filepath.Join(fixturesDir, "repogen-test-1.0.0-1.x86_64.rpm"),
+		filepath.Join(mixedInputDir, "repogen-test-1.0.0-1.x86_64.rpm"),
+	); err != nil {
+		t.Fatalf("Failed to copy duplicate package: %v", err)
+	}
+	if err := copyFile(
+		filepath.Join(fixturesDir, "repogen-utils-2.0.0-1.x86_64.rpm"),
+		filepath.Join(mixedInputDir, "repogen-utils-2.0.0-1.x86_64.rpm"),
+	); err != nil {
+		t.Fatalf("Failed to copy new package: %v", err)
+	}
+
+	cmd = exec.Command(repoGenBin, "generate",
+		"--input-dir", mixedInputDir,
+		"--output-dir", repoDir,
+		"--incremental",
+		"--skip-duplicates",
+	)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Expected incremental with --skip-duplicates to succeed: %v\nOutput: %s", err, output)
+	}
+	t.Logf("Output: %s", output)
+	t.Log("  ✓ Correctly processed mix of duplicate and new package")
+
+	// Verify repository now has 2 packages (original + new, not the duplicate)
+	verifyRPMPackageCount(t, repoDir, 2)
+
+	// Step 5: Verify --skip-duplicates has no effect without --incremental
+	t.Log("Step 5: Testing --skip-duplicates without --incremental (non-incremental mode)...")
+	nonIncrementalDir := filepath.Join(testDir, "skip-dup-non-incremental-repo")
+	if err := os.RemoveAll(nonIncrementalDir); err != nil {
+		t.Fatalf("Failed to clean non-incremental repo directory: %v", err)
+	}
+
+	cmd = exec.Command(repoGenBin, "generate",
+		"--input-dir", initialInputDir,
+		"--output-dir", nonIncrementalDir,
+		"--skip-duplicates", // Without --incremental, this should be a no-op
+	)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Non-incremental mode with --skip-duplicates should succeed: %v\nOutput: %s", err, output)
+	}
+	t.Log("  ✓ --skip-duplicates works as no-op without --incremental")
+
+	t.Log("✓ Incremental --skip-duplicates tests passed")
+}
+
+// verifyRPMPackageCount checks that the repository has the expected number of packages
+func verifyRPMPackageCount(t *testing.T, repoDir string, expectedCount int) {
+	t.Helper()
+
+	primaryXMLPath, err := findPrimaryXML(filepath.Join(repoDir, "repodata"))
+	if err != nil {
+		t.Fatalf("Failed to find primary.xml.gz: %v", err)
+	}
+
+	// Read and decompress primary.xml.gz
+	cmd := exec.Command("zcat", primaryXMLPath)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("Failed to decompress primary.xml.gz: %v", err)
+	}
+
+	// Count package entries
+	packageCount := strings.Count(string(output), "<package type=\"rpm\">")
+	if packageCount != expectedCount {
+		t.Errorf("Expected %d packages in repository, found %d", expectedCount, packageCount)
+	}
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
 }

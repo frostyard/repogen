@@ -109,6 +109,12 @@ inputs:
     required: false
     default: 'latest'
 
+  # Incremental mode options
+  skip-duplicates:
+    description: 'Skip packages that already exist in the repository instead of failing (useful for nightly builds)'
+    required: false
+    default: 'false'
+
 outputs:
   packages-added:
     description: 'Number of packages added to the repository'
@@ -443,6 +449,11 @@ runs:
         REPOGEN_ARGS+=("--output-dir" "./repo")
         REPOGEN_ARGS+=("--incremental")
         REPOGEN_ARGS+=("-v")
+
+        # Add skip-duplicates if enabled
+        if [[ "${{ inputs.skip-duplicates }}" == "true" ]]; then
+          REPOGEN_ARGS+=("--skip-duplicates")
+        fi
 
         # Add base-url if provided
         if [[ -n "${{ inputs.base-url }}" ]]; then

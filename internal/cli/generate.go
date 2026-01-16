@@ -74,6 +74,7 @@ structures with appropriate metadata files and signatures.`,
 
 	// Incremental mode
 	cmd.Flags().BoolVar(&config.Incremental, "incremental", false, "Add new packages to existing repository without removing existing ones")
+	cmd.Flags().BoolVar(&config.SkipDuplicates, "skip-duplicates", false, "In incremental mode, skip packages that already exist instead of failing")
 
 	return cmd
 }
@@ -242,10 +243,18 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 					for _, pkg := range conflicts {
 						conflictNames = append(conflictNames, fmt.Sprintf("%s-%s-%s", pkg.Name, pkg.Version, pkg.Architecture))
 					}
-					return &models.RepoGenError{
-						Type: models.ErrInvalidConfig,
-						Err: fmt.Errorf("incremental mode: %d package(s) already exist in repository: %s",
-							len(conflicts), strings.Join(conflictNames, ", ")),
+
+					if config.SkipDuplicates {
+						// Filter out duplicates and continue
+						newPackages = utils.FilterOutConflicts(newPackages, conflicts, pkgType)
+						logrus.Warnf("Skipping %d duplicate package(s): %s",
+							len(conflicts), strings.Join(conflictNames, ", "))
+					} else {
+						return &models.RepoGenError{
+							Type: models.ErrInvalidConfig,
+							Err: fmt.Errorf("incremental mode: %d package(s) already exist in repository: %s",
+								len(conflicts), strings.Join(conflictNames, ", ")),
+						}
 					}
 				}
 

@@ -76,7 +76,7 @@ Incremental mode allows you to add new packages to an existing repository withou
 
 1. Reads existing metadata files (Packages, trust.db, repomd.xml, etc.) from the output directory
 2. Adds only new packages without removing existing ones
-3. Errors if a package with the same name+version already exists (conflict detection)
+3. Errors if a package with the same name+version already exists (use `--skip-duplicates` to skip instead)
 4. Regenerates metadata files with both existing and new packages
 5. Re-signs metadata if signing is enabled
 
@@ -88,6 +88,13 @@ repogen generate \
   --input-dir ./new-packages \
   --output-dir ./repo \
   --incremental
+
+# Skip duplicates instead of failing (useful for nightly builds)
+repogen generate \
+  --input-dir ./new-packages \
+  --output-dir ./repo \
+  --incremental \
+  --skip-duplicates
 ```
 
 **S3 Workflow Examples:**
@@ -176,6 +183,7 @@ aws s3 sync ./repo s3://my-bucket/repo
 **Important Notes:**
 
 - Incremental mode will error if a package with the same name+version already exists (conflict detection)
+- Use `--skip-duplicates` to silently skip packages that already exist instead of failing (useful for nightly builds)
 - If metadata files don't exist, it falls back to normal mode automatically
 - Package files from existing metadata don't need to be present locally
 - You can use incremental mode with or without signing
