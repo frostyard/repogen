@@ -953,31 +953,35 @@ jobs:
 
 ### Action Inputs
 
-| Input                  | Required | Default     | Description                                                       |
-| ---------------------- | -------- | ----------- | ----------------------------------------------------------------- |
-| `r2-account-id`        | Yes      | -           | Cloudflare R2 Account ID                                          |
-| `r2-access-key-id`     | Yes      | -           | Cloudflare R2 Access Key ID                                       |
-| `r2-secret-access-key` | Yes      | -           | Cloudflare R2 Secret Access Key                                   |
-| `r2-bucket`            | Yes      | -           | Cloudflare R2 Bucket name                                         |
-| `packages-dir`         | Yes      | -           | Directory containing packages to add                              |
-| `package-type`         | Yes      | -           | Package type: `deb`, `sysext`, `rpm`, `apk`, `pacman`, `homebrew` |
-| `base-url`             | No\*     | -           | Base URL for the repository (\*required for `sysext`)             |
-| `repo-prefix`          | No       | -           | Path prefix in R2 bucket                                          |
-| `gpg-private-key`      | No       | -           | GPG private key (base64 or ASCII armored)                         |
-| `gpg-passphrase`       | No       | -           | GPG key passphrase                                                |
-| `rsa-private-key`      | No       | -           | RSA private key for Alpine (PEM format)                           |
-| `rsa-passphrase`       | No       | -           | RSA key passphrase                                                |
-| `rsa-key-name`         | No       | `repogen`   | Key name for Alpine signatures                                    |
-| `codename`             | No       | `stable`    | Codename for Debian repos                                         |
-| `suite`                | No       | -           | Suite for Debian repos                                            |
-| `components`           | No       | `main`      | Components for Debian repos                                       |
-| `architectures`        | No       | `all,amd64` | Architectures (comma-separated)                                   |
-| `origin`               | No       | -           | Repository origin name                                            |
-| `label`                | No       | -           | Repository label                                                  |
-| `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                         |
-| `distro-variant`       | No       | `fedora`    | Distribution for RPM repos                                        |
-| `version`              | No       | -           | Release version for RPM repos                                     |
-| `repogen-version`      | No       | `latest`    | Version of repogen to use                                         |
+| Input                  | Required | Default     | Description                                                                              |
+| ---------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------- |
+| `r2-account-id`        | Yes      | -           | Cloudflare R2 Account ID                                                                 |
+| `r2-access-key-id`     | Yes      | -           | Cloudflare R2 Access Key ID                                                              |
+| `r2-secret-access-key` | Yes      | -           | Cloudflare R2 Secret Access Key                                                          |
+| `r2-bucket`            | Yes      | -           | Cloudflare R2 Bucket name                                                                |
+| `packages-dir`         | Yes      | -           | Directory containing packages to add                                                     |
+| `package-type`         | Yes      | -           | Package type: `deb`, `sysext`, `rpm`, `apk`, `pacman`, `homebrew`                        |
+| `base-url`             | No\*     | -           | Base URL for the repository (\*required for `sysext`)                                    |
+| `repo-prefix`          | No       | -           | Path prefix in R2 bucket                                                                 |
+| `gpg-private-key`      | No       | -           | GPG private key (base64 or ASCII armored)                                                |
+| `gpg-passphrase`       | No       | -           | GPG key passphrase                                                                       |
+| `rsa-private-key`      | No       | -           | RSA private key for Alpine (PEM format)                                                  |
+| `rsa-passphrase`       | No       | -           | RSA key passphrase                                                                       |
+| `rsa-key-name`         | No       | `repogen`   | Key name for Alpine signatures                                                           |
+| `codename`             | No       | `stable`    | Codename for Debian repos                                                                |
+| `suite`                | No       | -           | Suite for Debian repos                                                                   |
+| `components`           | No       | `main`      | Components for Debian repos                                                              |
+| `architectures`        | No       | `all,amd64` | Architectures (comma-separated)                                                          |
+| `origin`               | No       | -           | Repository origin name                                                                   |
+| `label`                | No       | -           | Repository label                                                                         |
+| `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                                                |
+| `distro-variant`       | No       | `fedora`    | Distribution for RPM repos                                                               |
+| `version`              | No       | -           | Release version for RPM repos                                                            |
+| `repogen-version`      | No       | `latest`    | Version of repogen to use                                                                |
+| `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
+| `purge-cache`          | No       | `false`     | Purge Cloudflare cache after upload                                                      |
+| `cloudflare-zone`      | No\*     | -           | Cloudflare Zone ID (\*required if `purge-cache` is `true`)                               |
+| `cloudflare-api-token` | No\*     | -           | Cloudflare API Token with Cache Purge permission (\*required if `purge-cache` is `true`) |
 
 ### Action Outputs
 
@@ -1007,6 +1011,28 @@ The action uses incremental mode, which means:
    - `R2_ACCOUNT_ID`
    - `R2_ACCESS_KEY_ID`
    - `R2_SECRET_ACCESS_KEY`
+
+### Setting Up Cache Purge (Optional)
+
+If your R2 bucket is served through a Cloudflare domain, you can configure the action to automatically purge the CDN cache after uploading. This ensures clients immediately see the updated repository metadata.
+
+1. Go to Cloudflare Dashboard → Your Domain → Overview (note the Zone ID in the right sidebar)
+2. Go to Profile → API Tokens → Create Token
+3. Create a Custom Token with permission: **Zone → Cache Purge → Purge**
+4. Restrict the token to the specific zone hosting your repository
+5. Add these as repository secrets in GitHub:
+   - `CLOUDFLARE_ZONE` (the Zone ID)
+   - `CLOUDFLARE_API_TOKEN` (the API token you created)
+6. Enable cache purging in your workflow:
+
+```yaml
+- uses: frostyard/repogen/.github/actions/publish-to-r2@main
+  with:
+    # ... other inputs ...
+    purge-cache: "true"
+    cloudflare-zone: ${{ secrets.CLOUDFLARE_ZONE }}
+    cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+```
 
 ### Configuring Public Access
 

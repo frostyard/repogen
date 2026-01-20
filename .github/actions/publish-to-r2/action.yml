@@ -115,6 +115,20 @@ inputs:
     required: false
     default: 'false'
 
+  # Cloudflare cache purge options
+  purge-cache:
+    description: 'Whether to purge Cloudflare cache after upload (requires cloudflare-zone and cloudflare-api-token)'
+    required: false
+    default: 'false'
+  cloudflare-zone:
+    description: 'Cloudflare Zone ID for cache purging'
+    required: false
+    default: ''
+  cloudflare-api-token:
+    description: 'Cloudflare API Token with Cache Purge permission'
+    required: false
+    default: ''
+
 outputs:
   packages-added:
     description: 'Number of packages added to the repository'
@@ -161,6 +175,23 @@ runs:
           exit 1
         fi
         echo "✓ packages-dir exists: ${{ inputs.packages-dir }}"
+
+        # Validate cache purge settings
+        if [[ "${{ inputs.purge-cache }}" == "true" ]]; then
+          if [[ -z "${{ inputs.cloudflare-zone }}" ]]; then
+            echo "::error::cloudflare-zone is required when purge-cache is enabled"
+            exit 1
+          fi
+          if [[ -z "${{ inputs.cloudflare-api-token }}" ]]; then
+            echo "::error::cloudflare-api-token is required when purge-cache is enabled"
+            exit 1
+          fi
+          if [[ -z "${{ inputs.base-url }}" ]]; then
+            echo "::error::base-url is required when purge-cache is enabled (needed to determine hostname)"
+            exit 1
+          fi
+          echo "✓ Cache purge settings validated"
+        fi
 
         # List contents of packages directory for debugging
         echo ""
@@ -547,6 +578,36 @@ runs:
 
         echo ""
         echo "✓ Repository uploaded successfully to ${S3_PATH}"
+        echo "::endgroup::"
+
+    - name: Purge Cloudflare cache
+      if: inputs.purge-cache == 'true'
+      shell: bash
+      run: |
+        set -e
+        echo "::group::Purging Cloudflare cache"
+
+        # Extract hostname from base-url
+        BASE_URL="${{ inputs.base-url }}"
+        HOSTNAME=$(echo "$BASE_URL" | sed 's|https\?://||' | cut -d/ -f1)
+
+        echo "Purging cache for hostname: $HOSTNAME"
+
+        # Call Cloudflare API to purge cache by hostname
+        RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ inputs.cloudflare-zone }}/purge_cache" \
+          -H "Authorization: Bearer ${{ inputs.cloudflare-api-token }}" \
+          -H "Content-Type: application/json" \
+          --data "{\"hosts\": [\"$HOSTNAME\"]}")
+
+        # Check if the purge was successful
+        SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+        if [[ "$SUCCESS" != "true" ]]; then
+          echo "::error::Failed to purge Cloudflare cache"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+
+        echo "✓ Cloudflare cache purged successfully for $HOSTNAME"
         echo "::endgroup::"
 
     - name: Cleanup
