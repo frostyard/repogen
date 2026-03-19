@@ -16,38 +16,43 @@ func TestParsePackage(t *testing.T) {
 		filename    string
 		wantName    string
 		wantVersion string
+		wantOSVer   string
 		wantArch    string
 		wantErr     bool
 	}{
 		{
 			name:        "basic .raw file",
-			filename:    "myext_1.0_x86-64.raw",
+			filename:    "myext_1.0_13_x86-64.raw",
 			wantName:    "myext",
 			wantVersion: "1.0",
+			wantOSVer:   "13",
 			wantArch:    "x86-64",
 			wantErr:     false,
 		},
 		{
 			name:        "zstd compressed",
-			filename:    "docker_24.0.5_x86-64.raw.zst",
+			filename:    "docker_24.0.5_13_x86-64.raw.zst",
 			wantName:    "docker",
 			wantVersion: "24.0.5",
+			wantOSVer:   "13",
 			wantArch:    "x86-64",
 			wantErr:     false,
 		},
 		{
 			name:        "xz compressed",
-			filename:    "nvidia_550.54.14_arm64.raw.xz",
+			filename:    "nvidia_550.54.14_12_arm64.raw.xz",
 			wantName:    "nvidia",
 			wantVersion: "550.54.14",
+			wantOSVer:   "12",
 			wantArch:    "arm64",
 			wantErr:     false,
 		},
 		{
 			name:        "gzip compressed",
-			filename:    "podman_5.0_x86-64.raw.gz",
+			filename:    "podman_5.0_13_x86-64.raw.gz",
 			wantName:    "podman",
 			wantVersion: "5.0",
+			wantOSVer:   "13",
 			wantArch:    "x86-64",
 			wantErr:     false,
 		},
@@ -57,33 +62,43 @@ func TestParsePackage(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:     "only one underscore (missing arch)",
+			name:     "too few parts and wrong arch (old 3-part format)",
+			filename: "myext_1.0_amd64.raw",
+			wantErr:  true,
+		},
+		{
+			name:     "too few parts (only 1 underscore)",
 			filename: "myext_1.0.raw",
 			wantErr:  true,
 		},
 		{
-			name:     "too many underscores",
-			filename: "my_ext_1.0_x86-64.raw",
+			name:     "too many underscores (5+ parts)",
+			filename: "my_ext_1.0_13_x86-64.raw",
 			wantErr:  true,
 		},
 		{
 			name:     "empty name",
-			filename: "_1.0_x86-64.raw",
+			filename: "_1.0_13_x86-64.raw",
 			wantErr:  true,
 		},
 		{
 			name:     "empty version",
-			filename: "myext__x86-64.raw",
+			filename: "myext__13_x86-64.raw",
+			wantErr:  true,
+		},
+		{
+			name:     "empty OS version",
+			filename: "myext_1.0__x86-64.raw",
 			wantErr:  true,
 		},
 		{
 			name:     "empty arch",
-			filename: "myext_1.0_.raw",
+			filename: "myext_1.0_13_.raw",
 			wantErr:  true,
 		},
 		{
 			name:     "no .raw extension",
-			filename: "myext_1.0_x86-64.tar.gz",
+			filename: "myext_1.0_13_x86-64.tar.gz",
 			wantErr:  true,
 		},
 	}
@@ -128,6 +143,13 @@ func TestParsePackage(t *testing.T) {
 				t.Errorf("ParsePackage() Architecture = %q, want %q", pkg.Architecture, tt.wantArch)
 			}
 
+			// Verify OSVersion is stored in Metadata
+			if osver, ok := pkg.Metadata["OSVersion"]; !ok {
+				t.Error("ParsePackage() OSVersion not found in Metadata")
+			} else if osver != tt.wantOSVer {
+				t.Errorf("ParsePackage() Metadata[OSVersion] = %q, want %q", osver, tt.wantOSVer)
+			}
+
 			// Verify checksums were calculated
 			if pkg.SHA256Sum == "" {
 				t.Error("ParsePackage() SHA256Sum should not be empty")
@@ -152,10 +174,10 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	// Create test sysext files
-	ext1 := filepath.Join(inputDir, "myext_1.0_x86-64.raw")
-	ext2 := filepath.Join(inputDir, "myext_2.0_x86-64.raw.zst")
-	ext3 := filepath.Join(inputDir, "other_1.0_x86-64.raw")
+	// Create test sysext files with 4-part format
+	ext1 := filepath.Join(inputDir, "myext_1.0_13_x86-64.raw")
+	ext2 := filepath.Join(inputDir, "myext_2.0_13_x86-64.raw.zst")
+	ext3 := filepath.Join(inputDir, "other_1.0_13_x86-64.raw")
 
 	if err := os.WriteFile(ext1, []byte("sysext content v1"), 0644); err != nil {
 		t.Fatalf("Failed to write ext1: %v", err)
@@ -194,15 +216,15 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Errorf("other directory not created")
 	}
 
-	// Verify files were copied
-	if _, err := os.Stat(filepath.Join(myextDir, "myext_1.0_x86-64.raw")); os.IsNotExist(err) {
-		t.Errorf("myext_1.0_x86-64.raw not copied")
+	// Verify files were copied with 4-part names
+	if _, err := os.Stat(filepath.Join(myextDir, "myext_1.0_13_x86-64.raw")); os.IsNotExist(err) {
+		t.Errorf("myext_1.0_13_x86-64.raw not copied")
 	}
-	if _, err := os.Stat(filepath.Join(myextDir, "myext_2.0_x86-64.raw.zst")); os.IsNotExist(err) {
-		t.Errorf("myext_2.0_x86-64.raw.zst not copied")
+	if _, err := os.Stat(filepath.Join(myextDir, "myext_2.0_13_x86-64.raw.zst")); os.IsNotExist(err) {
+		t.Errorf("myext_2.0_13_x86-64.raw.zst not copied")
 	}
-	if _, err := os.Stat(filepath.Join(otherDir, "other_1.0_x86-64.raw")); os.IsNotExist(err) {
-		t.Errorf("other_1.0_x86-64.raw not copied")
+	if _, err := os.Stat(filepath.Join(otherDir, "other_1.0_13_x86-64.raw")); os.IsNotExist(err) {
+		t.Errorf("other_1.0_13_x86-64.raw not copied")
 	}
 
 	// Verify SHA256SUMS files exist
@@ -269,8 +291,9 @@ func TestGeneratorGenerate(t *testing.T) {
 	if !strings.Contains(transferStr, "https://example.com/repo/ext/myext/") {
 		t.Errorf("Transfer file missing correct source URL, got: %s", transferStr)
 	}
-	if !strings.Contains(transferStr, "myext_@v_@a.raw") {
-		t.Errorf("Transfer file missing pattern with version/arch placeholders, got: %s", transferStr)
+	// Verify new pattern with %w and %a specifiers
+	if !strings.Contains(transferStr, "myext_@v_%w_%a.raw") {
+		t.Errorf("Transfer file missing pattern with version/osversion/arch placeholders, got: %s", transferStr)
 	}
 	if !strings.Contains(transferStr, "Path=/var/lib/extensions.d/") {
 		t.Errorf("Transfer file missing correct target path, got: %s", transferStr)
@@ -317,7 +340,7 @@ func TestIncrementalMode(t *testing.T) {
 	}
 
 	// Step 1: Create initial repo with v1.0
-	ext1 := filepath.Join(inputDir, "myext_1.0_x86-64.raw")
+	ext1 := filepath.Join(inputDir, "myext_1.0_13_x86-64.raw")
 	if err := os.WriteFile(ext1, []byte("sysext content v1"), 0644); err != nil {
 		t.Fatalf("Failed to write ext1: %v", err)
 	}
@@ -334,8 +357,8 @@ func TestIncrementalMode(t *testing.T) {
 	// Verify initial SHA256SUMS
 	sha256sumsPath := filepath.Join(outputDir, "ext", "myext", "SHA256SUMS")
 	initialContent, _ := os.ReadFile(sha256sumsPath)
-	if !strings.Contains(string(initialContent), "myext_1.0_x86-64.raw") {
-		t.Errorf("Initial SHA256SUMS should contain myext_1.0_x86-64.raw")
+	if !strings.Contains(string(initialContent), "myext_1.0_13_x86-64.raw") {
+		t.Errorf("Initial SHA256SUMS should contain myext_1.0_13_x86-64.raw")
 	}
 
 	// Step 2: Parse existing metadata
@@ -353,7 +376,7 @@ func TestIncrementalMode(t *testing.T) {
 	}
 
 	// Step 3: Add new version
-	ext2 := filepath.Join(inputDir, "myext_2.0_x86-64.raw.zst")
+	ext2 := filepath.Join(inputDir, "myext_2.0_13_x86-64.raw.zst")
 	_ = os.WriteFile(ext2, []byte("sysext content v2"), 0644)
 
 	packagesV2 := []models.Package{
@@ -370,11 +393,11 @@ func TestIncrementalMode(t *testing.T) {
 
 	// Verify updated SHA256SUMS contains both versions
 	updatedContent, _ := os.ReadFile(sha256sumsPath)
-	if !strings.Contains(string(updatedContent), "myext_1.0_x86-64.raw") {
-		t.Errorf("Updated SHA256SUMS should still contain myext_1.0_x86-64.raw")
+	if !strings.Contains(string(updatedContent), "myext_1.0_13_x86-64.raw") {
+		t.Errorf("Updated SHA256SUMS should still contain myext_1.0_13_x86-64.raw")
 	}
-	if !strings.Contains(string(updatedContent), "myext_2.0_x86-64.raw.zst") {
-		t.Errorf("Updated SHA256SUMS should contain myext_2.0_x86-64.raw.zst")
+	if !strings.Contains(string(updatedContent), "myext_2.0_13_x86-64.raw.zst") {
+		t.Errorf("Updated SHA256SUMS should contain myext_2.0_13_x86-64.raw.zst")
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(updatedContent)), "\n")
@@ -410,7 +433,7 @@ func TestIndexUpdatedWithNewExtension(t *testing.T) {
 	}
 
 	// Step 1: Create initial repo with one extension
-	ext1 := filepath.Join(inputDir, "alpha_1.0_x86-64.raw")
+	ext1 := filepath.Join(inputDir, "alpha_1.0_13_x86-64.raw")
 	_ = os.WriteFile(ext1, []byte("alpha content"), 0644)
 
 	packagesAlpha := []models.Package{
@@ -430,7 +453,7 @@ func TestIndexUpdatedWithNewExtension(t *testing.T) {
 	}
 
 	// Step 2: Add a new extension (beta) that comes before alpha alphabetically
-	ext2 := filepath.Join(inputDir, "beta_1.0_x86-64.raw")
+	ext2 := filepath.Join(inputDir, "beta_1.0_13_x86-64.raw")
 	_ = os.WriteFile(ext2, []byte("beta content"), 0644)
 
 	// Parse existing and combine with new
@@ -465,8 +488,8 @@ func TestValidatePackages(t *testing.T) {
 		{
 			name: "valid packages",
 			packages: []models.Package{
-				{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_x86-64.raw"},
-				{Name: "ext2", Version: "2.0", Filename: "/path/to/ext2_2.0_arm64.raw"},
+				{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_13_x86-64.raw"},
+				{Name: "ext2", Version: "2.0", Filename: "/path/to/ext2_2.0_13_arm64.raw"},
 			},
 			wantErr: false,
 		},
@@ -500,15 +523,209 @@ func TestValidatePackagesMissingBaseURL(t *testing.T) {
 	gen := NewGenerator("") // Empty base URL
 
 	packages := []models.Package{
-		{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_x86-64.raw"},
+		{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_13_x86-64.raw"},
 	}
 
 	err := gen.ValidatePackages(packages)
 	if err == nil {
-		t.Error("ValidatePackages() should error when base URL is missing")
+		t.Fatalf("ValidatePackages() should error when base URL is missing")
 	}
 
 	if !strings.Contains(err.Error(), "--base-url") {
 		t.Errorf("Error should mention --base-url, got: %v", err)
+	}
+}
+
+func TestParsePackageOSVersionExtraction(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "repogen-test-sysext-osver-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	tests := []struct {
+		name      string
+		filename  string
+		wantOSVer string
+		wantArch  string
+		wantName  string
+		wantVer   string
+	}{
+		{
+			name:      "debian trixie (13)",
+			filename:  "docker_24.0.0_13_x86-64.raw",
+			wantOSVer: "13",
+			wantArch:  "x86-64",
+			wantName:  "docker",
+			wantVer:   "24.0.0",
+		},
+		{
+			name:      "debian bookworm (12)",
+			filename:  "podman_5.0.0_12_arm64.raw.zst",
+			wantOSVer: "12",
+			wantArch:  "arm64",
+			wantName:  "podman",
+			wantVer:   "5.0.0",
+		},
+		{
+			name:      "ubuntu 22.04",
+			filename:  "nvtop_1.0.0_22.04_arm64.raw.xz",
+			wantOSVer: "22.04",
+			wantArch:  "arm64",
+			wantName:  "nvtop",
+			wantVer:   "1.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(tmpDir, tt.filename)
+			err := os.WriteFile(filePath, []byte("test content"), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write test file: %v", err)
+			}
+
+			pkg, err := ParsePackage(filePath)
+			if err != nil {
+				t.Fatalf("ParsePackage() error: %v", err)
+			}
+
+			if pkg.Name != tt.wantName {
+				t.Errorf("Name = %q, want %q", pkg.Name, tt.wantName)
+			}
+			if pkg.Version != tt.wantVer {
+				t.Errorf("Version = %q, want %q", pkg.Version, tt.wantVer)
+			}
+			if pkg.Architecture != tt.wantArch {
+				t.Errorf("Architecture = %q, want %q", pkg.Architecture, tt.wantArch)
+			}
+
+			// Verify OSVersion is stored correctly in Metadata
+			osver, ok := pkg.Metadata["OSVersion"]
+			if !ok {
+				t.Error("OSVersion not found in Metadata")
+			} else if osver != tt.wantOSVer {
+				t.Errorf("Metadata[OSVersion] = %q, want %q", osver, tt.wantOSVer)
+			}
+		})
+	}
+}
+
+func TestParsePackageRejectThreePartFormat(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "repogen-test-sysext-reject3-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	tests := []struct {
+		name     string
+		filename string
+	}{
+		{
+			name:     "3-part format (old style)",
+			filename: "docker_24.0.0_x86-64.raw",
+		},
+		{
+			name:     "3-part with compression",
+			filename: "podman_5.0.0_arm64.raw.zst",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(tmpDir, tt.filename)
+			err := os.WriteFile(filePath, []byte("test content"), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write test file: %v", err)
+			}
+
+			_, err = ParsePackage(filePath)
+			if err == nil {
+				t.Fatalf("ParsePackage() should reject 3-part filenames, got nil error")
+			}
+
+			if !strings.Contains(err.Error(), "exactly three underscores") &&
+				!strings.Contains(err.Error(), "4 parts") {
+				t.Errorf("Error message should mention 4 parts or 3 underscores, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestGenerateStoresOSVersionInMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "repogen-test-sysext-meta-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	inputDir := filepath.Join(tmpDir, "input")
+	outputDir := filepath.Join(tmpDir, "output")
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatalf("Failed to create input dir: %v", err)
+	}
+
+	gen := NewGenerator("https://example.com/repo")
+	config := &models.RepositoryConfig{
+		OutputDir: outputDir,
+	}
+
+	// Create test files with different OS versions
+	ext1 := filepath.Join(inputDir, "docker_24.0.0_13_x86-64.raw")
+	ext2 := filepath.Join(inputDir, "podman_5.0.0_12_arm64.raw.zst")
+
+	if err := os.WriteFile(ext1, []byte("docker content"), 0644); err != nil {
+		t.Fatalf("Failed to write ext1: %v", err)
+	}
+	if err := os.WriteFile(ext2, []byte("podman content"), 0644); err != nil {
+		t.Fatalf("Failed to write ext2: %v", err)
+	}
+
+	packages := []models.Package{
+		{Name: "docker", Version: "24.0.0", Architecture: "x86-64", Filename: ext1, SHA256Sum: "abc123"},
+		{Name: "podman", Version: "5.0.0", Architecture: "arm64", Filename: ext2, SHA256Sum: "def456"},
+	}
+
+	err = gen.Generate(context.Background(), config, packages)
+	if err != nil {
+		t.Fatalf("Generate() failed: %v", err)
+	}
+
+	// Parse the metadata back from SHA256SUMS
+	dockerDir := filepath.Join(outputDir, "ext", "docker")
+	podmanDir := filepath.Join(outputDir, "ext", "podman")
+
+	sha256sumDocker := filepath.Join(dockerDir, "SHA256SUMS")
+	sha256sumPodman := filepath.Join(podmanDir, "SHA256SUMS")
+
+	dockerPkgs, err := parseSHA256SUMS(sha256sumDocker, filepath.Join(outputDir, "ext"), "docker")
+	if err != nil {
+		t.Fatalf("parseSHA256SUMS for docker failed: %v", err)
+	}
+
+	podmanPkgs, err := parseSHA256SUMS(sha256sumPodman, filepath.Join(outputDir, "ext"), "podman")
+	if err != nil {
+		t.Fatalf("parseSHA256SUMS for podman failed: %v", err)
+	}
+
+	// Verify docker OSVersion
+	if len(dockerPkgs) != 1 {
+		t.Fatalf("Expected 1 docker package, got %d", len(dockerPkgs))
+	}
+	if osver, ok := dockerPkgs[0].Metadata["OSVersion"]; !ok {
+		t.Error("docker: OSVersion not found in Metadata")
+	} else if osver != "13" {
+		t.Errorf("docker: Metadata[OSVersion] = %q, want %q", osver, "13")
+	}
+
+	// Verify podman OSVersion
+	if len(podmanPkgs) != 1 {
+		t.Fatalf("Expected 1 podman package, got %d", len(podmanPkgs))
+	}
+	if osver, ok := podmanPkgs[0].Metadata["OSVersion"]; !ok {
+		t.Error("podman: OSVersion not found in Metadata")
+	} else if osver != "12" {
+		t.Errorf("podman: Metadata[OSVersion] = %q, want %q", osver, "12")
 	}
 }

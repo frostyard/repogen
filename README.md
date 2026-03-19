@@ -423,20 +423,22 @@ systemd-sysext repositories are designed to work with systemd-sysupdate for auto
 Sysext files must follow a strict naming convention:
 
 ```
-NAME_VERSION_ARCH.raw[.COMPRESSION]
+NAME_VERSION_OSVERSION_ARCH.raw[.COMPRESSION]
 ```
 
 Where:
 
 - `NAME`: Extension name (must not contain underscores)
 - `VERSION`: Version string (must not contain underscores)
-- `ARCH`: Architecture (e.g., x86-64, arm64; must not contain underscores)
+- `OSVERSION`: Operating system version from `/etc/os-release` VERSION_ID (must not contain underscores)
+- `ARCH`: Architecture using systemd naming (e.g., x86-64, arm64; must not contain underscores)
 - `COMPRESSION`: Optional compression suffix (`.zst`, `.xz`, or `.gz`)
 
 Examples:
 
-- `docker_24.0.5_x86-64.raw.zst`
-- `nvidia_550.54.14_arm64.raw.xz`
+- `docker_24.0.5_13_x86-64.raw.zst` (Debian Trixie, OS version 13)
+- `nvidia_550.54.14_12_arm64.raw.xz` (Debian Bookworm, OS version 12)
+- `podman_5.0.0_22.04_x86-64.raw.zst` (Ubuntu 22.04)
 
 **Generated Structure:**
 
@@ -446,8 +448,8 @@ repo/
     └── docker/
         ├── SHA256SUMS                      # Checksum file for systemd-sysupdate
         ├── docker.transfer                 # systemd-sysupdate transfer configuration
-        ├── docker_24.0.5_x86-64.raw.zst
-        └── docker_25.0.0_x86-64.raw.zst
+        ├── docker_24.0.5_13_x86-64.raw.zst
+        └── docker_25.0.0_13_x86-64.raw.zst
 ```
 
 **Note:** The `--base-url` flag is required when generating sysext repositories. This is used to generate the `.transfer` configuration files with the correct source URL.
@@ -483,19 +485,25 @@ Verify=false
 [Source]
 Type=url-file
 Path=https://example.com/repo/ext/docker/
-MatchPattern=docker_@v_@a.raw.zst \
-             docker_@v_@a.raw.xz \
-             docker_@v_@a.raw.gz \
-             docker_@v_@a.raw
+MatchPattern=docker_@v_%w_%a.raw.zst \
+             docker_@v_%w_%a.raw.xz \
+             docker_@v_%w_%a.raw.gz \
+             docker_@v_%w_%a.raw
 
 [Target]
 Type=regular-file
-Path=/var/lib/extensions/
-MatchPattern=docker_@v_@a.raw.zst \
-             docker_@v_@a.raw.xz \
-             docker_@v_@a.raw.gz \
-             docker_@v_@a.raw
+Path=/var/lib/extensions.d/
+MatchPattern=docker_@v_%w_%a.raw.zst \
+             docker_@v_%w_%a.raw.xz \
+             docker_@v_%w_%a.raw.gz \
+             docker_@v_%w_%a.raw
 ```
+
+**Specifier Reference:**
+
+- `@v`: Version (e.g., `24.0.5`)
+- `%w`: OS version from the running system (`VERSION_ID` in `/etc/os-release`); must match the `OSVERSION` embedded in the sysext filename (e.g., `13` for Debian Trixie, `22.04` for Ubuntu)
+- `%a`: Architecture in systemd naming (e.g., `x86-64`, `arm64`)
 
 ## GPG Key Setup
 
@@ -936,7 +944,7 @@ jobs:
         run: |
           # Build your sysext (example)
           ./build-sysext.sh
-          # Output: dist/myext_1.0.0_x86-64.raw.zst
+          # Output: dist/myext_1.0.0_13_x86-64.raw.zst
 
       - name: Publish to repository
         uses: frostyard/repogen/.github/actions/publish-to-r2@main
