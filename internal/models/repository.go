@@ -31,4 +31,7 @@ type RepositoryConfig struct {
 	// Incremental mode
 	Incremental    bool // Add new packages to existing repository without removing existing ones
 	SkipDuplicates bool // In incremental mode, skip packages that already exist instead of failing
+
+	// Output options
+	HTMLIndex bool // Generate HTML directory index pages for browser-friendly navigation
 }
