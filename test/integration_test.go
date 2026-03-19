@@ -1504,7 +1504,11 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 func verifyRPMPackageCount(t *testing.T, repoDir string, expectedCount int) {
 	t.Helper()
 
-	primaryXMLPath, err := findPrimaryXML(filepath.Join(repoDir, "repodata"))
+	repodataDir, err := findRepodataDir(repoDir)
+	if err != nil {
+		t.Fatalf("Failed to find repodata directory: %v", err)
+	}
+	primaryXMLPath, err := findPrimaryXML(repodataDir)
 	if err != nil {
 		t.Fatalf("Failed to find primary.xml.gz: %v", err)
 	}
