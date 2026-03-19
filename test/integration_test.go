@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1303,18 +1304,37 @@ func findRepodataDir(rootDir string) (string, error) {
 }
 
 func findPrimaryXML(repodataDir string) (string, error) {
-	files, err := os.ReadDir(repodataDir)
+	// Use repomd.xml as the source of truth rather than scanning for any
+	// matching filename — a repo may have multiple HASH-primary.xml.gz files
+	// present at once (older ones are valid to retain), so a directory scan
+	// would risk returning a stale one.
+	repomdPath := filepath.Join(repodataDir, "repomd.xml")
+	data, err := os.ReadFile(repomdPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read repomd.xml: %w", err)
 	}
 
-	for _, file := range files {
-		if strings.Contains(file.Name(), "primary.xml.gz") {
-			return filepath.Join(repodataDir, file.Name()), nil
+	var doc struct {
+		Data []struct {
+			Type     string `xml:"type,attr"`
+			Location struct {
+				Href string `xml:"href,attr"`
+			} `xml:"location"`
+		} `xml:"data"`
+	}
+	if err := xml.Unmarshal(data, &doc); err != nil {
+		return "", fmt.Errorf("failed to parse repomd.xml: %w", err)
+	}
+
+	for _, d := range doc.Data {
+		if d.Type == "primary" {
+			// href is relative to the arch dir (parent of repodata/)
+			archDir := filepath.Dir(repodataDir)
+			return filepath.Join(archDir, d.Location.Href), nil
 		}
 	}
 
-	return "", fmt.Errorf("primary.xml.gz not found in %s", repodataDir)
+	return "", fmt.Errorf("primary entry not found in %s", repomdPath)
 }
 
 func calculateMD5(path string) (string, error) {
