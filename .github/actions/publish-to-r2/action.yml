@@ -119,7 +119,7 @@ inputs:
   html-index:
     description: 'Generate HTML directory indexes for each directory in the repository'
     required: false
-    default: 'false'
+    default: 'true'
 
   # Cloudflare cache purge options
   purge-cache:
