@@ -528,7 +528,7 @@ func TestValidatePackagesMissingBaseURL(t *testing.T) {
 
 	err := gen.ValidatePackages(packages)
 	if err == nil {
-		t.Error("ValidatePackages() should error when base URL is missing")
+		t.Fatalf("ValidatePackages() should error when base URL is missing")
 	}
 
 	if !strings.Contains(err.Error(), "--base-url") {
