@@ -502,7 +502,7 @@ MatchPattern=docker_@v_%w_%a.raw.zst \
 **Specifier Reference:**
 
 - `@v`: Version (e.g., `24.0.5`)
-- `%w`: OS version from sysext filename (e.g., `13` for Debian Trixie, `22.04` for Ubuntu)
+- `%w`: OS version from the running system (`VERSION_ID` in `/etc/os-release`); must match the `OSVERSION` embedded in the sysext filename (e.g., `13` for Debian Trixie, `22.04` for Ubuntu)
 - `%a`: Architecture in systemd naming (e.g., `x86-64`, `arm64`)
 
 ## GPG Key Setup
