@@ -115,6 +115,12 @@ inputs:
     required: false
     default: 'false'
 
+  # HTML index generation
+  html-index:
+    description: 'Generate HTML directory indexes for each directory in the repository'
+    required: false
+    default: 'false'
+
   # Cloudflare cache purge options
   purge-cache:
     description: 'Whether to purge Cloudflare cache after upload (requires cloudflare-zone and cloudflare-api-token)'
@@ -484,6 +490,11 @@ runs:
         # Add skip-duplicates if enabled
         if [[ "${{ inputs.skip-duplicates }}" == "true" ]]; then
           REPOGEN_ARGS+=("--skip-duplicates")
+        fi
+
+        # Add html-index if enabled
+        if [[ "${{ inputs.html-index }}" == "true" ]]; then
+          REPOGEN_ARGS+=("--html-index")
         fi
 
         # Add base-url if provided
