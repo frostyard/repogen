@@ -492,7 +492,7 @@ MatchPattern=docker_@v_%w_%a.raw.zst \
 
 [Target]
 Type=regular-file
-Path=/var/lib/extensions/
+Path=/var/lib/extensions.d/
 MatchPattern=docker_@v_%w_%a.raw.zst \
              docker_@v_%w_%a.raw.xz \
              docker_@v_%w_%a.raw.gz \
