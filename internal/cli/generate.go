@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/frostyard/repogen/internal/dirindex"
 	"github.com/frostyard/repogen/internal/generator"
 	"github.com/frostyard/repogen/internal/generator/apk"
 	"github.com/frostyard/repogen/internal/generator/deb"
@@ -75,6 +76,9 @@ structures with appropriate metadata files and signatures.`,
 	// Incremental mode
 	cmd.Flags().BoolVar(&config.Incremental, "incremental", false, "Add new packages to existing repository without removing existing ones")
 	cmd.Flags().BoolVar(&config.SkipDuplicates, "skip-duplicates", false, "In incremental mode, skip packages that already exist instead of failing")
+
+	// Output options
+	cmd.Flags().BoolVar(&config.HTMLIndex, "html-index", false, "Generate HTML directory index pages for browser-friendly navigation")
 
 	return cmd
 }
@@ -286,6 +290,16 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 			return &models.RepoGenError{
 				Type: models.ErrMetadataGen,
 				Err:  fmt.Errorf("failed to generate %s repository: %w", pkgType, err),
+			}
+		}
+	}
+
+	// Generate HTML directory index pages for browsing
+	if config.HTMLIndex {
+		if err := dirindex.Generate(config.OutputDir); err != nil {
+			return &models.RepoGenError{
+				Type: models.ErrFileOp,
+				Err:  fmt.Errorf("failed to generate directory index: %w", err),
 			}
 		}
 	}
