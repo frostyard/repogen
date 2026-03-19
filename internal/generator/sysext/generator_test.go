@@ -642,7 +642,7 @@ func TestParsePackageRejectThreePartFormat(t *testing.T) {
 
 			_, err = ParsePackage(filePath)
 			if err == nil {
-				t.Error("ParsePackage() should reject 3-part filenames, got nil error")
+				t.Fatalf("ParsePackage() should reject 3-part filenames, got nil error")
 			}
 
 			if !strings.Contains(err.Error(), "exactly three underscores") &&
