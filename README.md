@@ -448,8 +448,8 @@ repo/
     └── docker/
         ├── SHA256SUMS                      # Checksum file for systemd-sysupdate
         ├── docker.transfer                 # systemd-sysupdate transfer configuration
-        ├── docker_24.0.5_x86-64.raw.zst
-        └── docker_25.0.0_x86-64.raw.zst
+        ├── docker_24.0.5_13_x86-64.raw.zst
+        └── docker_25.0.0_13_x86-64.raw.zst
 ```
 
 **Note:** The `--base-url` flag is required when generating sysext repositories. This is used to generate the `.transfer` configuration files with the correct source URL.
