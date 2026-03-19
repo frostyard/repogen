@@ -25,6 +25,9 @@ import (
 //	    <extension-name>.transfer     # systemd-sysupdate transfer configuration
 //	    <extension>.raw               # Extension files
 //	    <extension>.raw.zst           # Compressed variants
+//
+// Sysext filenames follow the format: NAME_VERSION_OSVERSION_ARCH.raw[.compression]
+// Example: docker_24.0.5_13_x86-64.raw.zst
 type Generator struct {
 	baseURL string
 }
@@ -41,7 +44,7 @@ func NewGenerator(baseURL string) generator.Generator {
 // Output structure:
 //
 //	<output>/ext/<name>/SHA256SUMS
-//	<output>/ext/<name>/<name>_<version>.raw[.compression]
+//	<output>/ext/<name>/<name>_<version>_<osversion>_<arch>.raw[.compression]
 func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfig, packages []models.Package) error {
 	logrus.Info("Generating systemd-sysext repository...")
 
@@ -140,30 +143,36 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 // generateTransferFile creates a systemd-sysupdate transfer configuration file
 // for the extension. This file can be placed in /etc/sysupdate.d/ to enable
 // automatic updates via systemd-sysupdate.
+//
+// The MatchPattern uses specifiers that are expanded at config-parse time:
+// - @v: version placeholder (matched from filename)
+// - %w: OS version specifier (expands to VERSION_ID from /etc/os-release)
+// - %a: architecture specifier (expands to systemd architecture)
 func (g *Generator) generateTransferFile(extDir, extName string) error {
 	// Build the source URL path
 	sourceURL := strings.TrimSuffix(g.baseURL, "/") + "/ext/" + extName + "/"
 
 	// Generate transfer file content
-	// The @v and @a are systemd-sysupdate version and architecture placeholders
+	// The @v is the version placeholder matched from filenames
+	// The %w and %a are systemd-sysupdate specifiers expanded at config-parse time
 	transferContent := fmt.Sprintf(`[Transfer]
 Verify=false
 
 [Source]
 Type=url-file
 Path=%s
-MatchPattern=%s_@v_@a.raw.zst \
-             %s_@v_@a.raw.xz \
-             %s_@v_@a.raw.gz \
-             %s_@v_@a.raw
+MatchPattern=%s_@v_%%w_%%a.raw.zst \
+             %s_@v_%%w_%%a.raw.xz \
+             %s_@v_%%w_%%a.raw.gz \
+             %s_@v_%%w_%%a.raw
 
 [Target]
 Type=regular-file
 Path=/var/lib/extensions.d/
-MatchPattern=%s_@v_@a.raw.zst \
-             %s_@v_@a.raw.xz \
-             %s_@v_@a.raw.gz \
-             %s_@v_@a.raw
+MatchPattern=%s_@v_%%w_%%a.raw.zst \
+             %s_@v_%%w_%%a.raw.xz \
+             %s_@v_%%w_%%a.raw.gz \
+             %s_@v_%%w_%%a.raw
 CurrentSymlink=%s.raw
 `, sourceURL, extName, extName, extName, extName, extName, extName, extName, extName, extName)
 
@@ -315,7 +324,7 @@ func parseSHA256SUMS(sha256sumsPath, extDir, extName string) ([]models.Package, 
 	return packages, nil
 }
 
-// parseFilenameMetadata extracts name, version, and arch from a sysext filename
+// parseFilenameMetadata extracts name, version, osversion, and arch from a sysext filename
 func parseFilenameMetadata(filePath, filename string) (*models.Package, error) {
 	// Strip compression suffix
 	nameWithRaw := stripCompressionSuffix(filename)
@@ -324,17 +333,20 @@ func parseFilenameMetadata(filePath, filename string) (*models.Package, error) {
 		return nil, fmt.Errorf("not a .raw file: %s", filename)
 	}
 
-	nameVersionArch := strings.TrimSuffix(nameWithRaw, ".raw")
-	parts := strings.Split(nameVersionArch, "_")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid filename format (expected NAME_VERSION_ARCH.raw): %s", filename)
+	nameVersionOSVersionArch := strings.TrimSuffix(nameWithRaw, ".raw")
+	parts := strings.Split(nameVersionOSVersionArch, "_")
+	if len(parts) != 4 {
+		return nil, fmt.Errorf("invalid filename format (expected NAME_VERSION_OSVERSION_ARCH.raw with exactly 3 underscores): %s", filename)
 	}
+
+	metadata := make(map[string]interface{})
+	metadata["OSVersion"] = parts[2]
 
 	return &models.Package{
 		Name:         parts[0],
 		Version:      parts[1],
-		Architecture: parts[2],
+		Architecture: parts[3],
 		Filename:     filePath,
-		Metadata:     make(map[string]interface{}),
+		Metadata:     metadata,
 	}, nil
 }
