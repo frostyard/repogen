@@ -313,6 +313,12 @@ func parseSHA256SUMS(sha256sumsPath, extDir, extName string) ([]models.Package, 
 			continue
 		}
 
+		// Ensure the parsed name matches the extension directory being scanned.
+		if pkg.Name != extName {
+			logrus.Debugf("Skipping SHA256SUMS entry %s: name %q does not match extension %q", filename, pkg.Name, extName)
+			continue
+		}
+
 		pkg.SHA256Sum = sha256sum
 		packages = append(packages, *pkg)
 	}
@@ -337,6 +343,13 @@ func parseFilenameMetadata(filePath, filename string) (*models.Package, error) {
 	parts := strings.Split(nameVersionOSVersionArch, "_")
 	if len(parts) != 4 {
 		return nil, fmt.Errorf("invalid filename format (expected NAME_VERSION_OSVERSION_ARCH.raw with exactly 3 underscores): %s", filename)
+	}
+
+	// Ensure that NAME, VERSION, OSVERSION, and ARCH are all non-empty.
+	for i, part := range parts {
+		if part == "" {
+			return nil, fmt.Errorf("invalid filename format (empty component at index %d in %q): %s", i, nameVersionOSVersionArch, filename)
+		}
 	}
 
 	metadata := make(map[string]interface{})
