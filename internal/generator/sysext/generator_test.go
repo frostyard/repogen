@@ -57,8 +57,13 @@ func TestParsePackage(t *testing.T) {
 			wantErr:     false,
 		},
 		{
-			name:     "missing underscores (old 3-part format)",
-			filename: "myext_1.0_x86-64.raw",
+			name:     "missing underscores",
+			filename: "myext.raw",
+			wantErr:  true,
+		},
+		{
+			name:     "too few parts and wrong arch (old 3-part format)",
+			filename: "myext_1.0_amd64.raw",
 			wantErr:  true,
 		},
 		{
