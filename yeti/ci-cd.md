@@ -83,6 +83,12 @@ build packages and want to add them to a repository incrementally.
 | `purge-cache` | `false` | Requires `cloudflare-zone` and `cloudflare-api-token` |
 | `repogen-version` | `latest` | Pin to specific version for reproducibility |
 
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `packages-added` | Number of packages added to the repository |
+
 ## Makefile Targets
 
 | Target | Description |
@@ -91,11 +97,15 @@ build packages and want to add them to a repository incrementally.
 | `make test` | Run unit + integration tests |
 | `make test-unit` | Unit tests only (`go test -short`) |
 | `make test-integration` | Build test packages, then run integration tests |
+| `make test-packages` | Build test packages locally |
 | `make test-packages-docker` | Build test fixtures in Docker containers |
 | `make lint` | Run golangci-lint |
 | `make fmt` | Format code |
 | `make install` | Install to `/usr/local/bin` |
+| `make uninstall` | Remove from `/usr/local/bin` |
+| `make deps` | Update dependencies (`go mod tidy` + `go mod download`) |
 | `make clean` | Remove build artifacts and test outputs |
+| `make help` | Show available targets |
 
 ## Test Fixtures
 
