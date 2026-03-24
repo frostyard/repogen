@@ -54,7 +54,8 @@ The `generate` subcommand (`cli/generate.go:runGeneration`) drives this pipeline
    and file extensions to classify each file into a `PackageType`.
 2. **Parse** — Each scanned package is parsed by its format-specific parser
    (e.g., `deb.ParsePackage` extracts the control file from the ar archive).
-   Parsers populate the universal `models.Package` struct.
+   Parsers populate the universal `models.Package` struct. Homebrew bottles
+   are an exception — they skip parsing and derive metadata from the filename.
 3. **Incremental merge** (optional) — If `--incremental` is set, existing
    repository metadata is parsed via `Generator.ParseExistingMetadata()` and
    merged with new packages. Conflicts are detected using `PackageIdentity()`
@@ -117,6 +118,12 @@ removing old ones. The workflow:
 3. Either error on conflicts or skip them (`--skip-duplicates`)
 4. Concatenate existing + new, regenerate all metadata
 
+### Pre-compiled Regexes
+
+Regex patterns used inside loops (RPM distro version parsing, Homebrew formula
+parsing) are compiled once at package init time as `var` declarations, avoiding
+repeated compilation during scanning.
+
 ### Package Copy Optimization
 
 `utils.ShouldCopyPackage()` avoids redundant file copies by checking:
@@ -148,7 +155,7 @@ All configuration is passed via CLI flags to `models.RepositoryConfig`:
 | `--components` | `main` | Debian components |
 | `--arch` | `amd64` | Architectures to support |
 | `--base-url` | | Base URL for Homebrew bottles, RPM .repo files, sysext transfers (required for sysext) |
-| `--gpg-key-url` | | GPG key URL for RPM .repo files |
+| `--gpg-key-url` | | GPG key URL for RPM .repo files (supports `$releasever`/`$basearch` variables) |
 | `--distro` | `fedora` | RPM distribution variant (fedora/centos/rhel) |
 | `--version` | | RPM release version (auto-detected if not set) |
 | `--incremental` | `false` | Merge with existing repository |
