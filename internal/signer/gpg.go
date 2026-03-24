@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
@@ -17,6 +18,12 @@ import (
 type GPGSigner struct {
 	entity  *openpgp.Entity
 	keyPath string // Path to the private key file for GPG command-line operations
+
+	// Cached GPG home directory for CLI operations.
+	// Created lazily on first use, cleaned up by Close().
+	gpgHome     string
+	gpgHomeOnce sync.Once
+	gpgHomeErr  error
 }
 
 // NewGPGSigner creates a new GPG signer from a private key file
@@ -75,37 +82,63 @@ func NewGPGSigner(keyPath, passphrase string) (*GPGSigner, error) {
 	}, nil
 }
 
+// ensureGPGHome lazily creates a temporary GPG home directory and imports the
+// private key. The directory is reused for all subsequent CLI signing operations
+// and cleaned up by Close().
+func (s *GPGSigner) ensureGPGHome() (string, error) {
+	s.gpgHomeOnce.Do(func() {
+		tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
+		if err != nil {
+			s.gpgHomeErr = fmt.Errorf("failed to create temp dir: %w", err)
+			return
+		}
+
+		keyPath, err := filepath.Abs(s.keyPath)
+		if err != nil {
+			_ = os.RemoveAll(tmpDir)
+			s.gpgHomeErr = fmt.Errorf("failed to get absolute key path: %w", err)
+			return
+		}
+
+		cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			s.gpgHomeErr = fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+			return
+		}
+
+		s.gpgHome = tmpDir
+	})
+	return s.gpgHome, s.gpgHomeErr
+}
+
+// Close removes the cached GPG home directory. It is safe to call multiple
+// times or on a signer that never performed CLI signing.
+func (s *GPGSigner) Close() error {
+	if s.gpgHome != "" {
+		return os.RemoveAll(s.gpgHome)
+	}
+	return nil
+}
+
 // SignCleartext creates a cleartext signature (for Debian InRelease)
 func (s *GPGSigner) SignCleartext(data []byte) ([]byte, error) {
 	// Use GPG command-line for cleartext signing since go-crypto's implementation
 	// doesn't produce signatures that APT can verify correctly
 
-	// Create a temporary GPG home directory
-	tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
+	gpgHome, err := s.ensureGPGHome()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	// Import the key
-	keyPath, err := filepath.Abs(s.keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute key path: %w", err)
-	}
-
-	cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+		return nil, err
 	}
 
 	// Create temp file for input data
-	inputFile := filepath.Join(tmpDir, "input.txt")
+	inputFile := filepath.Join(gpgHome, "input.txt")
 	if err := os.WriteFile(inputFile, data, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write input file: %w", err)
 	}
 
 	// Sign with GPG
-	cmd = exec.Command("gpg", "--homedir", tmpDir, "--clearsign", "--armor",
+	cmd := exec.Command("gpg", "--homedir", gpgHome, "--clearsign", "--armor",
 		"--digest-algo", "SHA512", "--batch", "--yes", inputFile)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -140,34 +173,21 @@ func (s *GPGSigner) SignDetached(data []byte) ([]byte, error) {
 // Pacman expects binary OpenPGP signatures in old packet format, not ASCII-armored ones
 // We use GPG command-line to ensure compatibility with Pacman's expectations
 func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
-	// Create a temporary GPG home directory
-	tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
+	gpgHome, err := s.ensureGPGHome()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	// Import the key
-	keyPath, err := filepath.Abs(s.keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute key path: %w", err)
-	}
-
-	cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+		return nil, err
 	}
 
 	// Create temp file for input data
-	inputFile := filepath.Join(tmpDir, "input.dat")
+	inputFile := filepath.Join(gpgHome, "input.dat")
 	if err := os.WriteFile(inputFile, data, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write input file: %w", err)
 	}
 
 	// Sign with GPG - use --detach-sign for binary signature
 	// --no-armor ensures binary output (old packet format compatible with Pacman)
-	outputFile := filepath.Join(tmpDir, "output.sig")
-	cmd = exec.Command("gpg", "--homedir", tmpDir, "--detach-sign",
+	outputFile := filepath.Join(gpgHome, "output.sig")
+	cmd := exec.Command("gpg", "--homedir", gpgHome, "--detach-sign",
 		"--digest-algo", "SHA512", "--batch", "--yes",
 		"--output", outputFile, inputFile)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -186,22 +206,9 @@ func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
 // SignDetachedBinaryFromFile creates a detached binary signature directly from a file
 // This avoids loading large files into memory
 func (s *GPGSigner) SignDetachedBinaryFromFile(filePath string) ([]byte, error) {
-	// Create a temporary GPG home directory
-	tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
+	gpgHome, err := s.ensureGPGHome()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	// Import the key
-	keyPath, err := filepath.Abs(s.keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute key path: %w", err)
-	}
-
-	cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+		return nil, err
 	}
 
 	// Get absolute path for input file
@@ -212,8 +219,8 @@ func (s *GPGSigner) SignDetachedBinaryFromFile(filePath string) ([]byte, error) 
 
 	// Sign with GPG - use --detach-sign for binary signature
 	// --no-armor ensures binary output (old packet format compatible with Pacman)
-	outputFile := filepath.Join(tmpDir, "output.sig")
-	cmd = exec.Command("gpg", "--homedir", tmpDir, "--detach-sign",
+	outputFile := filepath.Join(gpgHome, "output.sig")
+	cmd := exec.Command("gpg", "--homedir", gpgHome, "--detach-sign",
 		"--digest-algo", "SHA512", "--batch", "--yes",
 		"--output", outputFile, inputFile)
 	if output, err := cmd.CombinedOutput(); err != nil {
