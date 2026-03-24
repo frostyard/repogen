@@ -14,6 +14,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// platformRe extracts the platform from a Homebrew bottle filename.
+var platformRe = regexp.MustCompile(`--(.*)\.(bottle\.tar\.gz|bottle\.tar)`)
+
 // Generator implements the generator.Generator interface for Homebrew taps
 type Generator struct {
 	baseURL string
@@ -209,8 +212,7 @@ func extractPackageName(filename string) string {
 // extractPlatform extracts platform from bottle filename
 func extractPlatform(filename string) string {
 	base := filepath.Base(filename)
-	re := regexp.MustCompile(`--(.*)\.(bottle\.tar\.gz|bottle\.tar)`)
-	matches := re.FindStringSubmatch(base)
+	matches := platformRe.FindStringSubmatch(base)
 	if len(matches) > 1 {
 		return matches[1]
 	}

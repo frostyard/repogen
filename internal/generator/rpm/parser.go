@@ -15,6 +15,19 @@ import (
 	"github.com/sassoftware/go-rpmutils"
 )
 
+// Pre-compiled regexes for parsing RPM distribution version strings.
+var (
+	distroVersionPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`fc(\d+)`),     // Fedora: fc40, fc39
+		regexp.MustCompile(`\.fc(\d+)`),   // Fedora with dot: .fc40
+		regexp.MustCompile(`el(\d+)`),     // RHEL/CentOS: el8, el9
+		regexp.MustCompile(`\.el(\d+)`),   // RHEL/CentOS with dot: .el8, .el9
+		regexp.MustCompile(`\.c(\d+)`),    // CentOS: .c8, .c9
+		regexp.MustCompile(`fedora(\d+)`), // Fedora: fedora40
+	}
+	distroDigitsRe = regexp.MustCompile(`(\d+)`)
+)
+
 // ParsePackage parses an RPM file and extracts metadata
 func ParsePackage(path string) (*models.Package, error) {
 	// Calculate checksums
@@ -159,26 +172,14 @@ func getDistroVersion(rpm *rpmutils.Rpm) string {
 // parseVersionFromDistro parses version from distribution strings
 // Handles patterns: fc40 -> 40, el8 -> 8, .el9 -> 9, etc.
 func parseVersionFromDistro(distro string) string {
-	// Common patterns for Fedora, RHEL, CentOS
-	patterns := []string{
-		`fc(\d+)`,     // Fedora: fc40, fc39
-		`\.fc(\d+)`,   // Fedora with dot: .fc40
-		`el(\d+)`,     // RHEL/CentOS: el8, el9
-		`\.el(\d+)`,   // RHEL/CentOS with dot: .el8, .el9
-		`\.c(\d+)`,    // CentOS: .c8, .c9
-		`fedora(\d+)`, // Fedora: fedora40
-	}
-
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
+	for _, re := range distroVersionPatterns {
 		if matches := re.FindStringSubmatch(distro); len(matches) > 1 {
 			return matches[1]
 		}
 	}
 
 	// If no pattern matched, try to extract the first sequence of digits
-	re := regexp.MustCompile(`(\d+)`)
-	if matches := re.FindStringSubmatch(distro); len(matches) > 0 {
+	if matches := distroDigitsRe.FindStringSubmatch(distro); len(matches) > 0 {
 		return matches[1]
 	}
 
