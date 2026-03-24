@@ -11,6 +11,15 @@ import (
 	"github.com/frostyard/repogen/internal/models"
 )
 
+// Pre-compiled regexes for parsing Homebrew formula files.
+var (
+	formulaVersionRe  = regexp.MustCompile(`version\s+"([^"]+)"`)
+	formulaDescRe     = regexp.MustCompile(`desc\s+"([^"]+)"`)
+	formulaHomepageRe = regexp.MustCompile(`homepage\s+"([^"]+)"`)
+	formulaURLRe      = regexp.MustCompile(`url\s+"([^"]+)"`)
+	formulaSHA256Re   = regexp.MustCompile(`sha256\s+"([^"]+)"`)
+)
+
 // ParseExistingMetadata reads Formula/*.rb files
 func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error) {
 	formulaDir := filepath.Join(config.OutputDir, "Formula")
@@ -49,32 +58,25 @@ func parseFormula(path string) ([]models.Package, error) {
 
 	var packages []models.Package
 
-	// Regex patterns
-	versionRe := regexp.MustCompile(`version\s+"([^"]+)"`)
-	descRe := regexp.MustCompile(`desc\s+"([^"]+)"`)
-	homepageRe := regexp.MustCompile(`homepage\s+"([^"]+)"`)
-	urlRe := regexp.MustCompile(`url\s+"([^"]+)"`)
-	sha256Re := regexp.MustCompile(`sha256\s+"([^"]+)"`)
-
 	scanner := bufio.NewScanner(f)
 	var version, desc, homepage, url, sha256 string
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		if matches := versionRe.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := formulaVersionRe.FindStringSubmatch(line); len(matches) > 1 {
 			version = matches[1]
 		}
-		if matches := descRe.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := formulaDescRe.FindStringSubmatch(line); len(matches) > 1 {
 			desc = matches[1]
 		}
-		if matches := homepageRe.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := formulaHomepageRe.FindStringSubmatch(line); len(matches) > 1 {
 			homepage = matches[1]
 		}
-		if matches := urlRe.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := formulaURLRe.FindStringSubmatch(line); len(matches) > 1 {
 			url = matches[1]
 		}
-		if matches := sha256Re.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := formulaSHA256Re.FindStringSubmatch(line); len(matches) > 1 {
 			sha256 = matches[1]
 
 			// URL + SHA256 = one package/bottle
