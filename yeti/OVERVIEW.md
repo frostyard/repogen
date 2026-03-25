@@ -102,7 +102,11 @@ map[string]interface{}` for format-specific data (e.g., RPM's `Release`,
 - **GPG (deb, rpm, pacman)**: `signer.GPGSigner` uses ProtonMail/go-crypto for
   detached ASCII signatures and shells out to `gpg` CLI for cleartext signing
   (InRelease) and binary detached signatures (Pacman `.sig` files) due to
-  compatibility requirements.
+  compatibility requirements. The GPG CLI operations use a cached temporary
+  home directory (`ensureGPGHome()` via `sync.Once`) that is created lazily on
+  first use and reused across all signing operations. `GPGSigner` implements
+  `io.Closer` to clean up this directory; `runGeneration()` defers `Close()`
+  after initializing the signer.
 - **RSA (apk)**: `signer.AlpineRSASigner` uses Go stdlib crypto/rsa with
   SHA1/PKCS1v15, matching Alpine's expected signature format.
 - Unsigned repos are supported — deb generates an InRelease with unsigned
