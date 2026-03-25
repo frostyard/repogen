@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
@@ -196,6 +197,9 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 				Type: models.ErrSigning,
 				Err:  fmt.Errorf("failed to initialize GPG signer: %w", err),
 			}
+		}
+		if closer, ok := gpgSigner.(io.Closer); ok {
+			defer func() { _ = closer.Close() }()
 		}
 		logrus.Info("GPG signer initialized")
 	}
