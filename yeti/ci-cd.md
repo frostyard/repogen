@@ -89,6 +89,20 @@ build packages and want to add them to a repository incrementally.
 |--------|-------------|
 | `packages-added` | Number of packages added to the repository |
 
+## Dependabot
+
+`.github/dependabot.yml` configures automated dependency updates:
+
+- **Ecosystem**: `gomod` — monitors `go.mod` for dependency updates.
+- **Schedule**: Weekly checks.
+- **Commit prefix**: `deps:` — follows the conventional-commit style used in
+  this repo (e.g., `perf:`, `fix:`, `docs:`).
+- **Labels**: PRs are labeled `dependencies`.
+
+Dependabot respects the `go` directive in `go.mod` and will not propose updates
+requiring a newer Go version. Dependabot PRs trigger the `Test` workflow
+automatically, providing CI validation before merge.
+
 ## Makefile Targets
 
 | Target | Description |

@@ -137,9 +137,9 @@ repeated compilation during scanning.
 2. Whether file sizes match
 3. Whether SHA256 checksums match
 
-Used by the RPM and Homebrew generators to skip unnecessary copies during
-generation. For existing packages in remote storage (S3/R2), the file may not
-exist locally — this is handled gracefully by returning `needsCopy=false`.
+Used by all six generators to skip unnecessary copies during generation.
+For existing packages in remote storage (S3/R2), the file may not exist
+locally — this is handled gracefully by returning `needsCopy=false`.
 
 ## Configuration
 
