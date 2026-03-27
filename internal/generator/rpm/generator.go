@@ -269,6 +269,11 @@ func generatePrimaryXML(packages []models.Package) ([]byte, error) {
 			buildTime = bt
 		}
 
+		group := ""
+		if g, ok := pkg.Metadata["Group"].(string); ok {
+			group = g
+		}
+
 		xmlPkg := xmlPkg{
 			Type: "rpm",
 			Name: pkg.Name,
@@ -300,7 +305,7 @@ func generatePrimaryXML(packages []models.Package) ([]byte, error) {
 			},
 			Format: xmlFormat{
 				License: pkg.License,
-				Group:   fmt.Sprintf("%v", pkg.Metadata["Group"]),
+				Group:   group,
 			},
 		}
 
