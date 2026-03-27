@@ -57,22 +57,34 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		updatedBottles := make([]models.Package, len(bottles))
 		for i, bottle := range bottles {
 			dstPath := filepath.Join(bottlesDir, filepath.Base(bottle.Filename))
-			if err := utils.CopyFile(bottle.Filename, dstPath); err != nil {
-				return fmt.Errorf("failed to copy %s: %w", bottle.Filename, err)
-			}
 
-			// Recalculate checksums on the copied file to ensure accuracy
-			checksums, err := utils.CalculateChecksums(dstPath)
+			// Check if package needs to be copied
+			srcPath, finalDstPath, needsCopy, err := utils.ShouldCopyPackage(&bottle, dstPath, config.OutputDir)
 			if err != nil {
-				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(bottle.Filename), err)
+				return fmt.Errorf("package copy check failed for %s: %w", filepath.Base(bottle.Filename), err)
 			}
 
-			// Update bottle with copied file information
 			updatedBottle := bottle
-			updatedBottle.Size = checksums.Size
-			updatedBottle.MD5Sum = checksums.MD5
-			updatedBottle.SHA1Sum = checksums.SHA1
-			updatedBottle.SHA256Sum = checksums.SHA256
+			if needsCopy {
+				logrus.Debugf("Copying bottle: %s -> %s", srcPath, finalDstPath)
+
+				if err := utils.CopyFile(srcPath, finalDstPath); err != nil {
+					return fmt.Errorf("failed to copy %s: %w", srcPath, err)
+				}
+
+				// Recalculate checksums on the copied file to ensure accuracy
+				checksums, err := utils.CalculateChecksums(finalDstPath)
+				if err != nil {
+					return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(bottle.Filename), err)
+				}
+
+				updatedBottle.Size = checksums.Size
+				updatedBottle.MD5Sum = checksums.MD5
+				updatedBottle.SHA1Sum = checksums.SHA1
+				updatedBottle.SHA256Sum = checksums.SHA256
+			} else {
+				logrus.Debugf("Skipping copy for bottle: %s", filepath.Base(bottle.Filename))
+			}
 			updatedBottles[i] = updatedBottle
 		}
 
