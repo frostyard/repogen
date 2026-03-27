@@ -156,7 +156,7 @@ func (g *Generator) generateForVersionArch(ctx context.Context, config *models.R
 	}
 
 	// Generate repomd.xml
-	repomdXML, err := generateRepomdXML(primaryChecksum, int64(len(primaryGz)), int64(len(primaryXML)))
+	repomdXML, err := generateRepomdXML(primaryChecksum, primaryXML, int64(len(primaryGz)))
 	if err != nil {
 		return fmt.Errorf("failed to generate repomd.xml: %w", err)
 	}
@@ -354,8 +354,8 @@ type repomdLocation struct {
 	Href string `xml:"href,attr"`
 }
 
-func generateRepomdXML(primaryChecksum string, compressedSize, uncompressedSize int64) ([]byte, error) {
-	openChecksum, _ := utils.CalculateChecksum([]byte(primaryChecksum), "sha256")
+func generateRepomdXML(primaryChecksum string, primaryXML []byte, compressedSize int64) ([]byte, error) {
+	openChecksum, _ := utils.CalculateChecksum(primaryXML, "sha256")
 
 	repomd := repomd{
 		Xmlns:    "http://linux.duke.edu/metadata/repo",
@@ -377,7 +377,7 @@ func generateRepomdXML(primaryChecksum string, compressedSize, uncompressedSize 
 				},
 				Timestamp: time.Now().Unix(),
 				Size:      compressedSize,
-				OpenSize:  uncompressedSize,
+				OpenSize:  int64(len(primaryXML)),
 			},
 		},
 	}
