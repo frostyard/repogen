@@ -257,8 +257,3 @@ func (s *GPGSigner) GetPublicKey() ([]byte, error) {
 
 	return buf.Bytes(), nil
 }
-
-// NewNilSigner returns a nil signer (for unsigned repositories)
-func NewNilSigner() Signer {
-	return nil
-}

@@ -121,8 +121,3 @@ func (s *AlpineRSASigner) GetPublicKey() ([]byte, error) {
 
 	return pem.EncodeToMemory(block), nil
 }
-
-// NewNilRSASigner returns a nil RSA signer (for unsigned repositories)
-func NewNilRSASigner() RSASigner {
-	return nil
-}
