@@ -92,7 +92,9 @@ dispatched by package type from the `packagesByType` map.
 ### Universal Package Model
 
 All formats are normalized into `models.Package` — a flat struct with core
-fields (Name, Version, Architecture, Description) plus a `Metadata
+fields (Name, Version, Architecture, Description, Maintainer, Homepage,
+License, Dependencies, Conflicts, Groups), file-level fields (Filename, Size,
+MD5Sum, SHA1Sum, SHA256Sum, SHA512Sum), plus a `Metadata
 map[string]interface{}` for format-specific data (e.g., RPM's `Release`,
 `BuildTime`, `DistroVersion`; Pacman's `BuildDate`, `InstalledSize`; sysext's
 `OSVersion`).
@@ -135,8 +137,9 @@ repeated compilation during scanning.
 2. Whether file sizes match
 3. Whether SHA256 checksums match
 
-For existing packages in remote storage (S3/R2), the file may not exist
-locally — this is handled gracefully by returning `needsCopy=false`.
+Used by the RPM and Homebrew generators to skip unnecessary copies during
+generation. For existing packages in remote storage (S3/R2), the file may not
+exist locally — this is handled gracefully by returning `needsCopy=false`.
 
 ## Configuration
 

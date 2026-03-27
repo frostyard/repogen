@@ -67,6 +67,8 @@ existing `dists/` structure and reconstructs `Package` structs.
 - Version is determined by priority: `--version` flag > RPM `DistroVersion`
   metadata > distro-variant default (Fedora=40, CentOS/RHEL=9).
 - `primary.xml.gz` filename includes its SHA256 hash (content-addressed).
+- `repomd.xml` records both a checksum of the compressed file and an
+  open-checksum computed from the uncompressed `primary.xml`.
 - `.repo` file uses `$releasever/$basearch` variables for dnf substitution.
 - `.repo` file name priority: `--repo-name` > `--distro` > sanitized origin.
 - Fedora enables `repo_gpgcheck` when signed; RHEL/CentOS add
@@ -179,6 +181,8 @@ decompresses it, and parses each package's `desc` file.
   `Hardware::CPU.arm?`/`Hardware::CPU.intel?` conditionals.
 - Formula class name is PascalCase conversion of package name.
 - `--base-url` controls bottle download URLs in formulas.
+- Uses `ShouldCopyPackage()` to skip redundant bottle copies when the
+  destination already has an identical file.
 - No signing support.
 
 ### Parser
