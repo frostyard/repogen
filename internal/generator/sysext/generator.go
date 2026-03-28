@@ -124,6 +124,9 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 		sha256Lines = append(sha256Lines, fmt.Sprintf("%s  %s", hash, filename))
 	}
 
+	// Sort for deterministic output
+	sort.Strings(sha256Lines)
+
 	// Write SHA256SUMS file
 	sha256sumsPath := filepath.Join(extDir, "SHA256SUMS")
 	sha256Content := strings.Join(sha256Lines, "\n") + "\n"
