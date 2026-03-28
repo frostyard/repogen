@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"io"
 	"os"
@@ -71,7 +72,7 @@ func CalculateChecksum(data []byte, hashType string) (string, error) {
 	case "sha512":
 		h = sha512.New()
 	default:
-		h = sha256.New()
+		return "", fmt.Errorf("unsupported hash type: %s", hashType)
 	}
 
 	h.Write(data)
