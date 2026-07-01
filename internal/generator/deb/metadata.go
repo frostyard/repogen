@@ -42,7 +42,7 @@ func GeneratePackagesFile(packages []models.Package) ([]byte, error) {
 		}
 
 		if pkg.Description != "" {
-			fmt.Fprintf(&buf, "Description: %s\n", pkg.Description)
+			fmt.Fprintf(&buf, "Description: %s\n", formatDescription(pkg.Description))
 		}
 
 		if len(pkg.Dependencies) > 0 {
@@ -65,4 +65,28 @@ func GeneratePackagesFile(packages []models.Package) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// formatDescription renders a package description as a valid multi-line Debian
+// control field. The synopsis stays on the "Description:" line and every
+// wrapped line of the extended description is indented by one space (blank
+// lines are written as " ."). parseControl strips the leading space from
+// continuation lines, so it must be restored here; without it apt fails to
+// parse the stanza and silently drops the fields that follow (notably
+// Depends), leaving packages installable with none of their dependencies.
+func formatDescription(desc string) string {
+	lines := strings.Split(desc, "\n")
+
+	var b strings.Builder
+	b.WriteString(lines[0])
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			b.WriteString("\n .")
+			continue
+		}
+		b.WriteString("\n ")
+		b.WriteString(line)
+	}
+
+	return b.String()
 }
