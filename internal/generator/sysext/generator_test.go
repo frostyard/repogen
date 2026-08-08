@@ -10,6 +10,20 @@ import (
 	"github.com/frostyard/repogen/internal/models"
 )
 
+type testSigner struct {
+	signedPath string
+	signature  []byte
+}
+
+func (s *testSigner) SignCleartext([]byte) ([]byte, error)      { return nil, nil }
+func (s *testSigner) SignDetached([]byte) ([]byte, error)       { return nil, nil }
+func (s *testSigner) SignDetachedBinary([]byte) ([]byte, error) { return nil, nil }
+func (s *testSigner) GetPublicKey() ([]byte, error)             { return nil, nil }
+func (s *testSigner) SignDetachedBinaryFromFile(path string) ([]byte, error) {
+	s.signedPath = path
+	return s.signature, nil
+}
+
 func TestParsePackage(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -189,7 +203,7 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("Failed to write ext3: %v", err)
 	}
 
-	gen := NewGenerator("https://example.com/repo")
+	gen := NewGenerator("https://example.com/repo", nil)
 	config := &models.RepositoryConfig{
 		OutputDir: outputDir,
 	}
@@ -321,6 +335,54 @@ func TestGeneratorGenerate(t *testing.T) {
 	}
 }
 
+func TestGeneratorSignsChecksumManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputDir := filepath.Join(tmpDir, "input")
+	outputDir := filepath.Join(tmpDir, "output")
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	imagePath := filepath.Join(inputDir, "myext_1.0_13_x86-64.raw")
+	if err := os.WriteFile(imagePath, []byte("signed sysext"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	metadataSigner := &testSigner{signature: []byte("binary-signature")}
+	gen := NewGenerator("https://example.com/repo", metadataSigner)
+	config := &models.RepositoryConfig{OutputDir: outputDir}
+	packages := []models.Package{{
+		Name: "myext", Version: "1.0", Architecture: "x86-64",
+		Filename: imagePath, SHA256Sum: "placeholder",
+	}}
+
+	if err := gen.Generate(context.Background(), config, packages); err != nil {
+		t.Fatalf("Generate() failed: %v", err)
+	}
+
+	extDir := filepath.Join(outputDir, "ext", "myext")
+	manifestPath := filepath.Join(extDir, "SHA256SUMS")
+	if metadataSigner.signedPath != manifestPath {
+		t.Errorf("signed path = %q, want %q", metadataSigner.signedPath, manifestPath)
+	}
+
+	signature, err := os.ReadFile(manifestPath + ".gpg")
+	if err != nil {
+		t.Fatalf("reading SHA256SUMS.gpg: %v", err)
+	}
+	if string(signature) != "binary-signature" {
+		t.Errorf("signature = %q, want %q", signature, "binary-signature")
+	}
+
+	transfer, err := os.ReadFile(filepath.Join(extDir, "myext.transfer"))
+	if err != nil {
+		t.Fatalf("reading transfer: %v", err)
+	}
+	if !strings.Contains(string(transfer), "Verify=true") {
+		t.Errorf("signed transfer does not enable verification:\n%s", transfer)
+	}
+}
+
 func TestIncrementalMode(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "repogen-test-sysext-incr-")
 	if err != nil {
@@ -334,7 +396,7 @@ func TestIncrementalMode(t *testing.T) {
 		t.Fatalf("Failed to create input dir: %v", err)
 	}
 
-	gen := NewGenerator("https://example.com/repo")
+	gen := NewGenerator("https://example.com/repo", nil)
 	config := &models.RepositoryConfig{
 		OutputDir: outputDir,
 	}
@@ -427,7 +489,7 @@ func TestIndexUpdatedWithNewExtension(t *testing.T) {
 	outputDir := filepath.Join(tmpDir, "output")
 	_ = os.MkdirAll(inputDir, 0755)
 
-	gen := NewGenerator("https://example.com/repo")
+	gen := NewGenerator("https://example.com/repo", nil)
 	config := &models.RepositoryConfig{
 		OutputDir: outputDir,
 	}
@@ -478,7 +540,7 @@ func TestIndexUpdatedWithNewExtension(t *testing.T) {
 }
 
 func TestValidatePackages(t *testing.T) {
-	gen := NewGenerator("https://example.com/repo")
+	gen := NewGenerator("https://example.com/repo", nil)
 
 	tests := []struct {
 		name     string
@@ -520,7 +582,7 @@ func TestValidatePackages(t *testing.T) {
 }
 
 func TestValidatePackagesMissingBaseURL(t *testing.T) {
-	gen := NewGenerator("") // Empty base URL
+	gen := NewGenerator("", nil) // Empty base URL
 
 	packages := []models.Package{
 		{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_13_x86-64.raw"},
@@ -666,7 +728,7 @@ func TestGenerateStoresOSVersionInMetadata(t *testing.T) {
 		t.Fatalf("Failed to create input dir: %v", err)
 	}
 
-	gen := NewGenerator("https://example.com/repo")
+	gen := NewGenerator("https://example.com/repo", nil)
 	config := &models.RepositoryConfig{
 		OutputDir: outputDir,
 	}

@@ -32,7 +32,7 @@ internal/
     apk/                      Alpine APK repository generator
     pacman/                   Arch Linux Pacman repository generator
     homebrew/                 Homebrew tap/formula generator
-    sysext/                   systemd-sysext repository generator
+    sysext/                   systemd-sysext repository generator; signs SHA256SUMS when GPG is configured
   signer/
     signer.go                 Signer + RSASigner interfaces
     gpg.go                    GPG signing (cleartext, detached ASCII, detached binary)

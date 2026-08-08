@@ -209,6 +209,7 @@ reconstructs package metadata from bottle URLs and SHA256 values.
     index                                    # Newline-separated list of extension names
     {name}/
       SHA256SUMS                             # Checksum file for systemd-sysupdate
+      SHA256SUMS.gpg                         # Detached signature when GPG signing is configured
       {name}.transfer                        # systemd-sysupdate transfer config
       {name}_{version}_{osversion}_{arch}.raw[.compression]  # Extension images
 ```
@@ -222,7 +223,9 @@ reconstructs package metadata from bottle URLs and SHA256 values.
 - Transfer `MatchPattern` lists compressed variants in preference order
   (zst > xz > gz > raw).
 - SHA256SUMS entries are deduplicated by filename.
-- No signing support (transfer files set `Verify=false`).
+- With `--gpg-key`, each manifest gets a detached binary `SHA256SUMS.gpg`
+  signature and the generated transfer sets `Verify=true`; without a signer,
+  the signature is omitted and the transfer sets `Verify=false`.
 
 ### Parser
 

@@ -12,6 +12,7 @@ import (
 	"github.com/frostyard/repogen/internal/generator"
 	"github.com/frostyard/repogen/internal/models"
 	"github.com/frostyard/repogen/internal/scanner"
+	"github.com/frostyard/repogen/internal/signer"
 	"github.com/frostyard/repogen/internal/utils"
 	"github.com/sirupsen/logrus"
 )
@@ -22,6 +23,7 @@ import (
 //
 //	<output>/ext/<extension-name>/
 //	    SHA256SUMS                    # Standard checksum file for systemd-sysupdate
+//	    SHA256SUMS.gpg                # Detached signature (when a signer is configured)
 //	    <extension-name>.transfer     # systemd-sysupdate transfer configuration
 //	    <extension>.raw               # Extension files
 //	    <extension>.raw.zst           # Compressed variants
@@ -30,12 +32,14 @@ import (
 // Example: docker_24.0.5_13_x86-64.raw.zst
 type Generator struct {
 	baseURL string
+	signer  signer.Signer
 }
 
-// NewGenerator creates a new systemd-sysext generator
-func NewGenerator(baseURL string) generator.Generator {
+// NewGenerator creates a new systemd-sysext generator.
+func NewGenerator(baseURL string, metadataSigner signer.Signer) generator.Generator {
 	return &Generator{
 		baseURL: baseURL,
+		signer:  metadataSigner,
 	}
 }
 
@@ -131,6 +135,16 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 		return fmt.Errorf("failed to write SHA256SUMS: %w", err)
 	}
 
+	if g.signer != nil {
+		signature, err := g.signer.SignDetachedBinaryFromFile(sha256sumsPath)
+		if err != nil {
+			return fmt.Errorf("failed to sign SHA256SUMS: %w", err)
+		}
+		if err := utils.WriteFile(sha256sumsPath+".gpg", signature, 0644); err != nil {
+			return fmt.Errorf("failed to write SHA256SUMS.gpg: %w", err)
+		}
+	}
+
 	// Generate systemd-sysupdate transfer configuration file
 	if err := g.generateTransferFile(extDir, extName); err != nil {
 		return fmt.Errorf("failed to write transfer file: %w", err)
@@ -155,8 +169,12 @@ func (g *Generator) generateTransferFile(extDir, extName string) error {
 	// Generate transfer file content
 	// The @v is the version placeholder matched from filenames
 	// The %w and %a are systemd-sysupdate specifiers expanded at config-parse time
+	verify := "false"
+	if g.signer != nil {
+		verify = "true"
+	}
 	transferContent := fmt.Sprintf(`[Transfer]
-Verify=false
+Verify=%s
 
 [Source]
 Type=url-file
@@ -174,7 +192,7 @@ MatchPattern=%s_@v_%%w_%%a.raw.zst \
              %s_@v_%%w_%%a.raw.gz \
              %s_@v_%%w_%%a.raw
 CurrentSymlink=%s.raw
-`, sourceURL, extName, extName, extName, extName, extName, extName, extName, extName, extName)
+`, verify, sourceURL, extName, extName, extName, extName, extName, extName, extName, extName, extName)
 
 	transferPath := filepath.Join(extDir, extName+".transfer")
 	if err := utils.WriteFile(transferPath, []byte(transferContent), 0644); err != nil {
