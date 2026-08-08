@@ -222,7 +222,7 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	generators[scanner.TypeApk] = apk.NewGenerator(rsaSigner, config.RSAKeyName)
 	generators[scanner.TypePacman] = pacman.NewGenerator(gpgSigner)
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
-	generators[scanner.TypeSysext] = sysext.NewGenerator(config.BaseURL)
+	generators[scanner.TypeSysext] = sysext.NewGenerator(config.BaseURL, gpgSigner)
 
 	for pkgType, newPackages := range packagesByType {
 		gen, ok := generators[pkgType]

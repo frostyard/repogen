@@ -447,18 +447,20 @@ repo/
 └── ext/
     └── docker/
         ├── SHA256SUMS                      # Checksum file for systemd-sysupdate
+        ├── SHA256SUMS.gpg                  # Detached signature (when --gpg-key is set)
         ├── docker.transfer                 # systemd-sysupdate transfer configuration
         ├── docker_24.0.5_13_x86-64.raw.zst
         └── docker_25.0.0_13_x86-64.raw.zst
 ```
 
-**Note:** The `--base-url` flag is required when generating sysext repositories. This is used to generate the `.transfer` configuration files with the correct source URL.
+**Note:** The `--base-url` flag is required when generating sysext repositories. This is used to generate the `.transfer` configuration files with the correct source URL. Pass `--gpg-key` to create a detached binary `SHA256SUMS.gpg` signature and generate transfers with `Verify=true`. Without a signing key, no signature is emitted and generated transfers retain `Verify=false`.
 
 ```bash
 repogen generate \
   --input-dir ./extensions \
   --output-dir ./repo \
-  --base-url https://example.com/repo
+  --base-url https://example.com/repo \
+  --gpg-key ./repository-signing-key.asc
 ```
 
 **Using with systemd-sysupdate:**
@@ -480,7 +482,7 @@ The generated transfer file looks like:
 
 ```ini
 [Transfer]
-Verify=false
+Verify=true
 
 [Source]
 Type=url-file
