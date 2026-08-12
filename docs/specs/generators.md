@@ -2,7 +2,11 @@
 
 *Formerly `yeti/generators.md`. Design context:
 [../design/overview.md](../design/overview.md) (pipeline and the
-`generator.Generator` interface).*
+`generator.Generator` interface). Cross-cutting decisions:
+[ADR-0007 — checksums from copied bytes](../adr/0007-recompute-checksums-from-copied-bytes.md),
+[ADR-0008 — magic-bytes detection](../adr/0008-magic-bytes-detection-with-extension-fallback.md),
+[ADR-0009 — GPG signing split](../adr/0009-gpg-cli-and-go-crypto-signing-split.md),
+[ADR-0011 — incremental state from published metadata](../adr/0011-incremental-state-from-published-metadata.md).*
 
 Each generator implements `generator.Generator` and produces a complete
 repository structure from a list of `models.Package` entries — the exact
@@ -11,6 +15,9 @@ output layout, metadata file formats, and signing behavior per format.
 ## Debian/APT (`internal/generator/deb/`)
 
 **Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`
+**Decisions**: [ADR-0001 (unsigned InRelease)](../adr/0001-unsigned-debian-repos-emit-inrelease.md),
+[ADR-0002 (shared pool layout)](../adr/0002-shared-debian-pool-layout.md),
+[ADR-0003 (single `main` component)](../adr/0003-single-main-component.md)
 
 ### Output Structure
 
@@ -52,6 +59,9 @@ existing `dists/` structure and reconstructs `Package` structs.
 ## Yum/RPM (`internal/generator/rpm/`)
 
 **Files**: `generator.go`, `parser.go`
+**Decisions**: [ADR-0004 (`{version}/{arch}/` layout and version ladder)](../adr/0004-rpm-version-arch-layout-and-version-ladder.md),
+[ADR-0005 (content-addressed repodata)](../adr/0005-content-addressed-repodata.md),
+[ADR-0010 (`.repo` file policy)](../adr/0010-dnf-repo-file-policy.md)
 
 ### Output Structure
 
@@ -130,6 +140,8 @@ extracts the `APKINDEX` entry, and parses it.
 ## Arch/Pacman (`internal/generator/pacman/`)
 
 **Files**: `generator.go`, `parser.go`
+**Decisions**: [ADR-0006 (dual database files)](../adr/0006-pacman-dual-database-files.md),
+[ADR-0009 (binary signatures via gpg CLI)](../adr/0009-gpg-cli-and-go-crypto-signing-split.md)
 
 ### Output Structure
 

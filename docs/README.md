@@ -16,9 +16,44 @@ this tree replaced the former `yeti/` AI-docs directory):
 
 ### Decisions (ADRs)
 
-*(none yet — repo-local decisions get the next number here;
-org-wide ones go to frostyard/core and are listed in
-[org-adrs.md](org-adrs.md))*
+Repo-local decisions; org-wide ones go to frostyard/core and are listed in
+[org-adrs.md](org-adrs.md).
+
+- [ADR-0001 — Unsigned Debian repositories still emit InRelease](adr/0001-unsigned-debian-repos-emit-inrelease.md)
+  — deliberately non-conformant unsigned `InRelease` so modern apt works
+  with `[trusted=yes]`
+- [ADR-0002 — Debian pool is shared, first-letter sharded, not codename-scoped](adr/0002-shared-debian-pool-layout.md)
+  — one `pool/main/{letter}/{name}/` for all codenames; non-`a-z` names
+  bucket under `0`; paths frozen once published
+- [ADR-0003 — Debian repositories have a single component: `main`](adr/0003-single-main-component.md)
+  — `main` hardcoded in dists/pool paths; `--components` only relabels the
+  Release file and errors on anything else
+- [ADR-0004 — RPM layout is `{version}/{arch}/` with a version-resolution ladder](adr/0004-rpm-version-arch-layout-and-version-ladder.md)
+  — `--version` > RPM `DistroVersion` metadata > per-variant default; the
+  shard makes `$releasever/$basearch` resolve
+- [ADR-0005 — Content-addressed repodata with open-checksum discipline](adr/0005-content-addressed-repodata.md)
+  — `{sha256}-primary.xml.gz` named by compressed-bytes hash; repomd records
+  checksum and open-checksum separately; repodata grows unbounded
+- [ADR-0006 — Pacman databases are written twice: `.db.tar.zst` and `.db`](adr/0006-pacman-dual-database-files.md)
+  — byte-identical copies (and dual `.sig`) because static storage has no
+  symlinks; the pair must never diverge
+- [ADR-0007 — Checksums come from copied bytes, never from parsed metadata](adr/0007-recompute-checksums-from-copied-bytes.md)
+  — recompute after every copy; three-stage skip check
+  (path → size → sha256); missing-locally is OK under incremental
+- [ADR-0008 — Package detection sniffs magic bytes first, falls back to filenames](adr/0008-magic-bytes-detection-with-extension-fallback.md)
+  — 512-byte sniff with per-format OR/AND/filename semantics; detection
+  routes, parsers validate
+- [ADR-0009 — GPG signing splits between the gpg CLI and go-crypto](adr/0009-gpg-cli-and-go-crypto-signing-split.md)
+  — cleartext and binary detached via gpg CLI in an ephemeral
+  `repogen-gpg-*` home, ASCII detached via go-crypto; routing is
+  correctness-critical
+- [ADR-0010 — dnf `.repo` file naming, ID, and flag policy](adr/0010-dnf-repo-file-policy.md)
+  — filename `--repo-name` > `--distro` > sanitized origin;
+  `$releasever/$basearch` always appended; distro-conditional
+  gpgcheck/metadata_expire flags
+- [ADR-0011 — Incremental mode reconstructs state from published metadata](adr/0011-incremental-state-from-published-metadata.md)
+  — the published indices are the only incremental state; format-aware
+  conflict identity; warn-and-fallback on unparsable metadata
 
 ### Design
 
