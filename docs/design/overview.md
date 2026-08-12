@@ -1,7 +1,10 @@
 # Repogen Overview
 
 *Formerly `yeti/OVERVIEW.md`; folded into `docs/` per
-[frostyard/core ADR-0025](https://github.com/frostyard/core/blob/main/docs/adr/0025-consolidate-repository-docs-into-docs.md).*
+[frostyard/core ADR-0025](https://github.com/frostyard/core/blob/main/docs/adr/0025-consolidate-repository-docs-into-docs.md).
+Rationale for the behaviors described here lives in the repo-local ADRs
+([ADR-0001](../adr/0001-unsigned-debian-repos-emit-inrelease.md)–[ADR-0011](../adr/0011-incremental-state-from-published-metadata.md);
+see the [docs index](../README.md#decisions-adrs)).*
 
 ## Purpose
 
@@ -104,6 +107,9 @@ map[string]interface{}` for format-specific data (e.g., RPM's `Release`,
 
 ### Signing Strategy
 
+*Decisions: [ADR-0009 — GPG CLI / go-crypto split](../adr/0009-gpg-cli-and-go-crypto-signing-split.md),
+[ADR-0001 — unsigned InRelease](../adr/0001-unsigned-debian-repos-emit-inrelease.md).*
+
 - **GPG (deb, rpm, pacman)**: `signer.GPGSigner` uses ProtonMail/go-crypto for
   detached ASCII signatures and shells out to `gpg` CLI for cleartext signing
   (InRelease) and binary detached signatures (Pacman `.sig` files) due to
@@ -118,6 +124,8 @@ map[string]interface{}` for format-specific data (e.g., RPM's `Release`,
   Release content for `[trusted=yes]` compatibility.
 
 ### Incremental Mode
+
+*Decision: [ADR-0011 — incremental state from published metadata](../adr/0011-incremental-state-from-published-metadata.md).*
 
 `--incremental` merges new packages into an existing repository without
 removing old ones. The workflow:
@@ -134,6 +142,8 @@ parsing) are compiled once at package init time as `var` declarations, avoiding
 repeated compilation during scanning.
 
 ### Package Copy Optimization
+
+*Decision: [ADR-0007 — checksums from copied bytes](../adr/0007-recompute-checksums-from-copied-bytes.md).*
 
 `utils.ShouldCopyPackage()` avoids redundant file copies by checking:
 1. Whether source == destination path
@@ -177,6 +187,12 @@ All configuration is passed via CLI flags to `models.RepositoryConfig`:
 
 See [Generator Details](../specs/generators.md) for the output directory
 layout, metadata file formats, and signing behavior of each generator.
+Layout decisions: [ADR-0002 (Debian pool)](../adr/0002-shared-debian-pool-layout.md),
+[ADR-0003 (single `main` component)](../adr/0003-single-main-component.md),
+[ADR-0004 (RPM version/arch shard)](../adr/0004-rpm-version-arch-layout-and-version-ladder.md),
+[ADR-0005 (content-addressed repodata)](../adr/0005-content-addressed-repodata.md),
+[ADR-0006 (Pacman dual database files)](../adr/0006-pacman-dual-database-files.md).
+Package-type detection: [ADR-0008](../adr/0008-magic-bytes-detection-with-extension-fallback.md).
 
 ## CI/CD & GitHub Action
 
