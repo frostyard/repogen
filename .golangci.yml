@@ -1,0 +1,10 @@
+# Configuration for `make lint` (golangci-lint v2). Pins the standard
+# linter set so local and CI runs agree; tighten only — never relax
+# (ADR-0012).
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard

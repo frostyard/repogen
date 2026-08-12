@@ -54,3 +54,14 @@ jobs:
         with:
           files: ./coverage.txt
           fail_ci_if_error: false
+
+  docs-gate:
+    name: Docs integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check docs index, links, and conformance aliases
+        run: node scripts/check-docs.mjs

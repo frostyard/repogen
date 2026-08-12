@@ -54,6 +54,10 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 - [ADR-0011 — Incremental mode reconstructs state from published metadata](adr/0011-incremental-state-from-published-metadata.md)
   — the published indices are the only incremental state; format-aware
   conflict identity; warn-and-fallback on unparsable metadata
+- [ADR-0012 — ACMM conformance via canonical aliases](adr/0012-acmm-conformance-via-canonical-aliases.md)
+  — one canonical `AGENTS.md` plus committed relative symlinks satisfy the
+  Hive ACMM path checks; directory criteria get real trees; the alias table
+  is the registry
 
 ### Design
 
@@ -61,12 +65,19 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   key patterns, configuration; the entry point for understanding the codebase
 - [CI/CD and GitHub Action](design/ci-cd.md) — test/release workflows, the
   `publish-to-r2` composite action, Makefile targets, test fixtures
+- [Quality loop](design/quality-loop.md) — how change quality is declared,
+  reviewed, gated, observed, and learned from; `docs/quality.md` is its
+  conformance alias
 
 ### Specs
 
 - [Generator Details](specs/generators.md) — per-format output directory
   layout, metadata file formats, parser behavior, and signing for all six
   generators
+- [PR acceptance metric](specs/pr-acceptance-metric.md) — the acceptance-rate
+  definition and window rules; `docs/metrics.md` is its conformance alias
+- [PR review rubric](specs/pr-review-rubric.md) — the checklist every PR
+  review applies; `docs/review-rubric.md` is its conformance alias
 
 ### Plans
 

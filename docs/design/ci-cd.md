@@ -6,13 +6,22 @@
 
 ### Test (`.github/workflows/test.yml`)
 
-Runs on PRs and pushes to main/master:
+Runs on PRs and pushes to main/master, two jobs:
+
+`test`:
 1. Sets up Go 1.23 with module caching.
 2. Runs `golint` (continue-on-error).
 3. Runs unit tests with race detection and coverage (`go test -v -short -race`).
 4. Builds test packages in Docker (`make test-packages-docker`).
 5. Runs integration tests (`make test-integration`).
 6. Uploads coverage to Codecov.
+
+`docs-gate`:
+1. Runs `node scripts/check-docs.mjs` — docs-index coverage, relative-link
+   integrity, and conformance-alias symlink resolution against
+   `.coverage-thresholds.json`
+   ([ADR-0012](../adr/0012-acmm-conformance-via-canonical-aliases.md); part
+   of the [quality loop](quality-loop.md)).
 
 ### Release (`.github/workflows/release.yml`)
 
