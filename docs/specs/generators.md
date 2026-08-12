@@ -1,7 +1,12 @@
 # Generator Details
 
+*Formerly `yeti/generators.md`. Design context:
+[../design/overview.md](../design/overview.md) (pipeline and the
+`generator.Generator` interface).*
+
 Each generator implements `generator.Generator` and produces a complete
-repository structure from a list of `models.Package` entries.
+repository structure from a list of `models.Package` entries — the exact
+output layout, metadata file formats, and signing behavior per format.
 
 ## Debian/APT (`internal/generator/deb/`)
 

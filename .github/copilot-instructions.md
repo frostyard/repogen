@@ -87,7 +87,12 @@ Fix any linting errors before considering the task complete. Common linting issu
 
 ## Documentation Requirements
 
-When making changes, update relevant documentation:
+When making changes, update relevant documentation. Architecture docs live in
+the four-category `docs/` tree (formerly the `yeti/` directory) — `docs/adr/`,
+`docs/design/`, `docs/specs/`, `docs/plans/` per
+[frostyard/core ADR-0025](https://github.com/frostyard/core/blob/main/docs/adr/0025-consolidate-repository-docs-into-docs.md);
+read `docs/design/overview.md` for codebase context and see `docs/README.md`
+for the index and conventions.
 
 1. **README.md**: Update if you add/modify:
 
@@ -96,13 +101,18 @@ When making changes, update relevant documentation:
    - New features or workflows
    - Repository structure changes
 
-2. **Code Comments**: Add/update godoc comments for:
+2. **docs/**: Update `docs/design/overview.md` and the relevant
+   `docs/design/` or `docs/specs/` docs when architecture, data flow,
+   generator output formats, or CI/CD change; index new docs in
+   `docs/README.md`.
+
+3. **Code Comments**: Add/update godoc comments for:
 
    - Exported functions and types
    - Complex logic that needs explanation
    - Configuration options
 
-3. **Inline Comments**: Add brief comments for:
+4. **Inline Comments**: Add brief comments for:
    - Non-obvious code decisions
    - Workarounds or edge cases
 
