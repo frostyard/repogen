@@ -1,5 +1,7 @@
 # CI/CD and GitHub Action
 
+*Formerly `yeti/ci-cd.md`. Design context: [overview.md](overview.md).*
+
 ## Workflows
 
 ### Test (`.github/workflows/test.yml`)

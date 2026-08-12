@@ -1,5 +1,8 @@
 # Repogen Overview
 
+*Formerly `yeti/OVERVIEW.md`; folded into `docs/` per
+[frostyard/core ADR-0025](https://github.com/frostyard/core/blob/main/docs/adr/0025-consolidate-repository-docs-into-docs.md).*
+
 ## Purpose
 
 Repogen is a Go CLI tool that scans directories for software package files and
@@ -172,8 +175,8 @@ All configuration is passed via CLI flags to `models.RepositoryConfig`:
 
 ## Format-Specific Output Structures
 
-See [Generator Details](generators.md) for the output directory layout,
-metadata file formats, and signing behavior of each generator.
+See [Generator Details](../specs/generators.md) for the output directory
+layout, metadata file formats, and signing behavior of each generator.
 
 ## CI/CD & GitHub Action
 
