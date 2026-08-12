@@ -33,11 +33,13 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run linter
+      - name: Install golangci-lint
         run: |
-          go install golang.org/x/lint/golint@latest
-          golint -set_exit_status ./...
-        continue-on-error: true
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Run linter
+        run: make lint
 
       - name: Run unit tests
         run: go test -v -short -race -coverprofile=coverage.txt ./...
