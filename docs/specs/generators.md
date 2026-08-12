@@ -252,4 +252,6 @@ from the filename using `_` as delimiter (exactly 4 parts expected).
 ### Incremental Mode
 
 `ParseExistingMetadata()` scans `ext/*/SHA256SUMS` files and reconstructs
-package metadata from the filenames listed in each checksums file.
+package metadata from the filenames listed in each checksums file. Index
+generation also enumerates those manifests, so a partial publish preserves
+all previously published extension names in `ext/index`.

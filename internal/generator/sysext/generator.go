@@ -211,9 +211,39 @@ func (g *Generator) generateIndex(config *models.RepositoryConfig, extPackages m
 		return err
 	}
 
-	// Collect extension names and sort them for consistent output
-	var names []string
+	namesSet := make(map[string]struct{}, len(extPackages))
 	for name := range extPackages {
+		namesSet[name] = struct{}{}
+	}
+
+	if config.Incremental {
+		entries, err := os.ReadDir(extDir)
+		if err != nil {
+			return fmt.Errorf("failed to read existing sysext metadata: %w", err)
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			manifestPath := filepath.Join(extDir, entry.Name(), "SHA256SUMS")
+			info, err := os.Stat(manifestPath)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("failed to inspect existing sysext manifest %s: %w", manifestPath, err)
+			}
+			if info.Mode().IsRegular() {
+				namesSet[entry.Name()] = struct{}{}
+			}
+		}
+	}
+
+	// Sort extension names for consistent output.
+	names := make([]string, 0, len(namesSet))
+	for name := range namesSet {
 		names = append(names, name)
 	}
 	sort.Strings(names)
