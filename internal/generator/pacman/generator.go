@@ -241,7 +241,7 @@ func generateDescFile(pkg models.Package) ([]byte, error) {
 	// Write a field to the buffer
 	writeField := func(name, value string) {
 		if value != "" {
-			buf.WriteString(fmt.Sprintf("%%%s%%\n%s\n\n", name, value))
+			fmt.Fprintf(&buf, "%%%s%%\n%s\n\n", name, value)
 		}
 	}
 
@@ -276,7 +276,7 @@ func generateDescFile(pkg models.Package) ([]byte, error) {
 	if len(pkg.Dependencies) > 0 {
 		buf.WriteString("%DEPENDS%\n")
 		for _, dep := range pkg.Dependencies {
-			buf.WriteString(fmt.Sprintf("%s\n", dep))
+			fmt.Fprintf(&buf, "%s\n", dep)
 		}
 		buf.WriteString("\n")
 	}
@@ -285,7 +285,7 @@ func generateDescFile(pkg models.Package) ([]byte, error) {
 	if len(pkg.Conflicts) > 0 {
 		buf.WriteString("%CONFLICTS%\n")
 		for _, conflict := range pkg.Conflicts {
-			buf.WriteString(fmt.Sprintf("%s\n", conflict))
+			fmt.Fprintf(&buf, "%s\n", conflict)
 		}
 		buf.WriteString("\n")
 	}
@@ -294,7 +294,7 @@ func generateDescFile(pkg models.Package) ([]byte, error) {
 	if len(pkg.Groups) > 0 {
 		buf.WriteString("%GROUPS%\n")
 		for _, group := range pkg.Groups {
-			buf.WriteString(fmt.Sprintf("%s\n", group))
+			fmt.Fprintf(&buf, "%s\n", group)
 		}
 		buf.WriteString("\n")
 	}
