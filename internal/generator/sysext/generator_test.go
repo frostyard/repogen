@@ -539,6 +539,52 @@ func TestIndexUpdatedWithNewExtension(t *testing.T) {
 	}
 }
 
+func TestIncrementalIndexIncludesExtensionsFromExistingManifests(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputDir := filepath.Join(tmpDir, "output")
+	alphaDir := filepath.Join(outputDir, "ext", "alpha")
+	if err := os.MkdirAll(alphaDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(alphaDir, "SHA256SUMS"),
+		[]byte("abc123  alpha_1.0_13_x86-64.raw\n"),
+		0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	betaPath := filepath.Join(tmpDir, "beta_1.0_13_x86-64.raw")
+	if err := os.WriteFile(betaPath, []byte("beta content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator("https://example.com/repo", nil)
+	config := &models.RepositoryConfig{
+		OutputDir:   outputDir,
+		Incremental: true,
+	}
+	packages := []models.Package{{
+		Name:         "beta",
+		Version:      "1.0",
+		Architecture: "x86-64",
+		Filename:     betaPath,
+		SHA256Sum:    "def456",
+	}}
+
+	if err := gen.Generate(context.Background(), config, packages); err != nil {
+		t.Fatalf("Generate() failed: %v", err)
+	}
+
+	index, err := os.ReadFile(filepath.Join(outputDir, "ext", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(index), "alpha\nbeta\n"; got != want {
+		t.Errorf("index = %q, want %q", got, want)
+	}
+}
+
 func TestValidatePackages(t *testing.T) {
 	gen := NewGenerator("https://example.com/repo", nil)
 
