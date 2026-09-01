@@ -577,7 +577,7 @@ runs:
         echo "Target: $S3_PATH"
         echo ""
         echo "Files to upload:"
-        find ./repo -type f | head -50
+        find ./repo -type f | sed -n '1,50p'
         echo ""
 
         echo "Uploading repository to R2..."
