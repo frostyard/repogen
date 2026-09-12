@@ -22,6 +22,10 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 - **Automatic Package Detection**: Scans directories and auto-detects package types using magic bytes
 - **Metadata Generation**: Creates all necessary index and metadata files for each repository type
 - **Repository Signing**: Signs repositories with GPG (Debian/RPM/Pacman) or RSA (Alpine) keys
+- **Deterministic Debian Metadata**: Canonical package, field, architecture,
+  component, checksum, and gzip output with a controlled Release timestamp
+- **Safe Debian No-op**: Preserves valid existing Release signatures when the
+  canonical metadata is unchanged
 - **Unsigned Repository Support**:
   - Always generates InRelease files (required by Debian Trixie)
   - InRelease contains Release content without signature for unsigned repos
@@ -134,7 +138,8 @@ Incremental mode allows you to add new packages to an existing repository withou
 2. Adds only new packages without removing existing ones
 3. Errors if a package with the same name+version already exists (use `--skip-duplicates` to skip instead)
 4. Regenerates metadata files with both existing and new packages
-5. Re-signs metadata if signing is enabled
+5. Re-signs changed metadata if signing is enabled; unchanged canonical
+   Debian metadata preserves cryptographically verified Release signatures
 
 **Basic Incremental Usage:**
 

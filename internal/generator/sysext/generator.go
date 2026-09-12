@@ -59,7 +59,13 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	}
 
 	// Generate repository for each extension
-	for extName, pkgs := range extPackages {
+	extNames := make([]string, 0, len(extPackages))
+	for extName := range extPackages {
+		extNames = append(extNames, extName)
+	}
+	sort.Strings(extNames)
+	for _, extName := range extNames {
+		pkgs := extPackages[extName]
 		if err := g.generateForExtension(ctx, config, extName, pkgs); err != nil {
 			return fmt.Errorf("failed to generate for extension %s: %w", extName, err)
 		}
@@ -89,6 +95,17 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 	// and new packages overlap)
 	sha256Entries := make(map[string]string) // filename -> sha256
 
+	sort.Slice(packages, func(i, j int) bool {
+		left := packages[i]
+		right := packages[j]
+		if left.Version != right.Version {
+			return left.Version < right.Version
+		}
+		if left.Architecture != right.Architecture {
+			return left.Architecture < right.Architecture
+		}
+		return left.Filename < right.Filename
+	})
 	for i := range packages {
 		pkg := &packages[i]
 		basename := filepath.Base(pkg.Filename)
@@ -117,13 +134,21 @@ func (g *Generator) generateForExtension(ctx context.Context, config *models.Rep
 			logrus.Debugf("Skipping copy for extension: %s", pkg.Name)
 		}
 
-		// Add entry to map (deduplicates by filename)
+		if previous, exists := sha256Entries[basename]; exists && previous != pkg.SHA256Sum {
+			return fmt.Errorf("conflicting SHA-256 values for sysext file %s", basename)
+		}
 		sha256Entries[basename] = pkg.SHA256Sum
 	}
 
 	// Build SHA256SUMS content from deduplicated entries
-	var sha256Lines []string
-	for filename, hash := range sha256Entries {
+	filenames := make([]string, 0, len(sha256Entries))
+	for filename := range sha256Entries {
+		filenames = append(filenames, filename)
+	}
+	sort.Strings(filenames)
+	sha256Lines := make([]string, 0, len(filenames))
+	for _, filename := range filenames {
+		hash := sha256Entries[filename]
 		// Format: "<hash>  <filename>" (two spaces per shasum convention)
 		sha256Lines = append(sha256Lines, fmt.Sprintf("%s  %s", hash, filename))
 	}

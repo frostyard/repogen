@@ -3,7 +3,9 @@
 This plan defines the repository-local implementation contract for the
 Frostyard APT publisher. R1 records the contract, R2 implements its
 write-free input preflight, and R3 implements explicit absent-target
-initialize plus strict signed prior-state reconciliation. Later phases remain
+initialize plus strict signed prior-state reconciliation. R4 provides the
+provider-neutral immutable pool primitive, and R6 provides deterministic
+local generation and signed no-op detection. R5 and R7-R10 remain
 unimplemented. The plan
 implements
 [core ADR-0048](https://github.com/frostyard/core/blob/main/docs/adr/0048-publish-debian-packages-to-explicit-codenames.md)
@@ -253,12 +255,28 @@ acceptance; it cannot waive
   separately authorized `gchlog` canary passes real `gpgv` and apt install
   while `stable` remains byte-identical.
 
+## Phase 5 - Deterministic generation and no-op detection (R6)
+
+- [x] Canonically order Debian package stanzas, arbitrary fields,
+  architectures, components, Release checksum entries, and sysext checksum
+  entries.
+- [x] Use deterministic gzip headers and expose a controlled Debian
+  publication clock.
+- [x] Preserve byte-identical Release, InRelease, and Release.gpg files
+  without signing calls when the canonical metadata is unchanged and both
+  prior signatures verify against the configured signer's public key.
+- **Done when:** shuffled inputs produce byte-identical Packages,
+  Packages.gz, Release, InRelease, and sysext checksum bytes; controlled Date
+  tests pass; a changed package set receives a new timestamp and signatures;
+  and an unchanged signed generation receives neither signing call.
+
 ## Later / ideas
 
-R6-R10 remain mandatory before closure expansion: deterministic/no-op
-generation, complete local atomicity, durable recovery, sysext reconciliation,
-and a separately human-published digest-verified Repogen release. Their order
-and acceptance matrix remain authoritative in core Plan 0007.
+R7-R10 remain mandatory before closure expansion: complete local atomicity,
+durable recovery, sysext reconciliation, and a separately human-published
+digest-verified Repogen release. Their order and acceptance matrix remain
+authoritative in core Plan 0007. R6 does not itself wire the read-only
+production validator to a writer or confer publication authority.
 
 ## Open questions
 

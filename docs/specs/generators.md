@@ -61,6 +61,10 @@ Neither operation writes. Production shared-pool verification, generation,
 signing, staging, publication, and read-back remain gated by
 [Plan 0001](../plans/0001-frostyard-production-publisher.md) R4-R5.
 
+The R6 deterministic generation behavior above is implemented in the generic
+generator but is not wired into this read-only production command. It confers
+no production publication or storage authority.
+
 ### Shared immutable pool primitive (R4)
 
 `internal/generator/deb/pool.go` defines a provider-neutral `SharedPool` used
@@ -112,8 +116,20 @@ clean staging, ordered publication, and remote read-back.
 ### Key Behaviors
 
 - Packages are organized in `pool/main/{first-letter}/{name}/` directories.
-- `Packages` file is sorted alphabetically by package name.
+- `Packages` stanzas use a total package name, Debian version, architecture,
+  and filename order. Remaining package fields break exact-identity ties, and
+  arbitrary control fields are emitted in sorted field-name order.
+- `Packages.gz` uses a fixed gzip timestamp so identical Packages bytes
+  produce identical compressed bytes.
 - `Release` includes MD5, SHA1, SHA256, SHA512 checksums for all metadata files.
+- Release architectures, components, and checksum paths are sorted, and
+  `GenerateReleaseFileAt`/`NewGeneratorWithClock` accept one explicit
+  publication timestamp.
+- If canonical Release bytes match the prior generation when rendered with
+  its Date, both prior signatures must verify against the configured signer's
+  public key before Release, InRelease, and Release.gpg are preserved without
+  signing calls. Missing, malformed, wrong-key, or invalid signatures force a
+  newly timestamped signed generation.
 - Unsigned repos still create `InRelease` with Release content for modern
   apt compatibility (`[trusted=yes]`).
 - Cleartext signing (InRelease) shells out to `gpg` CLI because go-crypto's
@@ -318,7 +334,9 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   `%w` for OS version, `%a` for architecture).
 - Transfer `MatchPattern` lists compressed variants in preference order
   (zst > xz > gz > raw).
-- SHA256SUMS entries are deduplicated by filename.
+- Extension names and SHA256SUMS entries are sorted. Entries are deduplicated
+  by filename only when their digests agree; conflicting duplicate filenames
+  fail generation.
 - With `--gpg-key`, each manifest gets a detached binary `SHA256SUMS.gpg`
   signature and the generated transfer sets `Verify=true`; without a signer,
   the signature is omitted and the transfer sets `Verify=false`.

@@ -1,6 +1,8 @@
 package deb
 
 import (
+	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,6 +33,7 @@ func TestGeneratePackagesFileMultilineDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GeneratePackagesFile: %v", err)
 	}
+
 	out := string(data)
 
 	// Every continuation line of the Description must be indented so the
@@ -60,5 +63,52 @@ func TestGeneratePackagesFileMultilineDescription(t *testing.T) {
 	}
 	if got := len(parsed[0].Dependencies); got != 3 {
 		t.Fatalf("round-trip lost dependencies: got %d, want 3 (%v)", got, parsed[0].Dependencies)
+	}
+}
+
+func TestGeneratePackagesFileCanonicalOrder(t *testing.T) {
+	first := models.Package{
+		Name:         "same",
+		Version:      "2.0",
+		Architecture: "amd64",
+		Filename:     "pool/main/s/same/same_2.0_amd64.deb",
+		Metadata: map[string]interface{}{
+			"Section":  "admin",
+			"Priority": "optional",
+		},
+	}
+	second := models.Package{
+		Name:         "same",
+		Version:      "1.0",
+		Architecture: "all",
+		Filename:     "pool/main/s/same/same_1.0_all.deb",
+		Metadata: map[string]interface{}{
+			"Priority": "optional",
+			"Section":  "admin",
+		},
+	}
+
+	input := []models.Package{first, second}
+	before := append([]models.Package(nil), input...)
+	got, err := GeneratePackagesFile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shuffled, err := GeneratePackagesFile([]models.Package{second, first})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(got, shuffled) {
+		t.Fatalf("shuffled packages produced different bytes:\n%s\n---\n%s", got, shuffled)
+	}
+	if !reflect.DeepEqual(input, before) {
+		t.Fatal("GeneratePackagesFile mutated its caller's package order")
+	}
+	if strings.Index(string(got), "Version: 1.0") > strings.Index(string(got), "Version: 2.0") {
+		t.Fatalf("versions are not in canonical order:\n%s", got)
+	}
+	if strings.Index(string(got), "Priority: optional") > strings.Index(string(got), "Section: admin") {
+		t.Fatalf("arbitrary metadata fields are not sorted:\n%s", got)
 	}
 }

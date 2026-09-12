@@ -106,6 +106,23 @@ participate in equality. This primitive has no S3/R2 adapter, credentials,
 CLI wiring, metadata writer, or publication authority; R3 and R5 must supply
 strict restore, clean staging, scoped writes, signing, and read-back.
 
+R6 makes the existing Debian metadata generator deterministic. Package
+stanzas use a total name/version/architecture/filename order with sorted
+arbitrary fields, gzip headers are fixed, Release architectures, components,
+and checksum entries are sorted, and `NewGeneratorWithClock` supplies one
+controlled publication timestamp. A repeated generation re-renders Release
+with the prior Date and skips rewriting or signing only when the bytes match
+exactly and both prior signatures verify against the configured signer's
+public key. Changed metadata uses the current controlled timestamp and signs
+a new generation. Sysext extension processing and checksum manifests are
+sorted, and a duplicate filename with conflicting digests fails instead of
+depending on map iteration.
+
+These are local generation primitives. They do not connect
+`validate-production` to a writer, add staging or publication, provide an
+R2 adapter, or authorize a production operation. R5 and R7-R10 retain those
+separate boundaries.
+
 ## Key Patterns
 
 ### Generator Interface
