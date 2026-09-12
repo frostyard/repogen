@@ -163,6 +163,138 @@ only explicitly enumerated objects for the target transaction, in this order:
 HTML indexes, other codenames, `stable`, and sysext paths are outside that
 transaction. Broad `aws s3 sync` is not an acceptable production mechanism.
 
+## T0 - Durable intake transport
+
+This section is the repository-local profile of the
+[core T0 contract](https://github.com/frostyard/core/blob/main/docs/plans/0007-support-suites-in-repogen.md#t0-durable-intake-transport-contract).
+It specifies later implementation; no submit service, storage, identity,
+workflow, permission, environment, token, secret, or production writer is
+configured by this candidate.
+
+### Boundary and durable namespace
+
+Producers submit through an authenticated, submit-only endpoint. They never
+receive credentials for the intake store, production package repository,
+signer, or cache. The endpoint validates the authenticated producer against
+an allowlist, streams and verifies artifact bytes, and conditionally creates
+immutable intake objects. Direct producer access to an object-store bucket is
+not conforming because a broad bucket credential could replace or delete
+another request even when keys are digest-addressed.
+
+The endpoint derives the authenticated principal rather than trusting a
+request field. It binds the principal to the producer repository and, when
+available, source ref, commit, workflow, and run claims; otherwise it performs
+trusted provider read-back before acceptance. A self-asserted source ID is
+provenance only. The receipt records the authorization-policy digest, not the
+credential. A broader later policy does not retroactively authorize the
+request, while a current explicit deny or revocation stops processing before
+a write.
+
+The durable backend must support conditional create, read-after-write
+read-back, prefix enumeration, and retained records. Workflow dispatch is an
+optional wake-up hint only; it is not a queue entry or completion signal.
+
+All JSON uses UTF-8
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) canonical form without
+duplicate keys or non-integer numeric fields. Objects use lowercase SHA-256
+of canonical JSON or exact artifact bytes:
+
+| Record | Key |
+| --- | --- |
+| Artifact | `blobs/sha256/<first-two>/<digest>` |
+| Provenance | `manifests/provenance/v1/sha256/<digest>.json` |
+| Request | `manifests/request/v1/sha256/<request-digest>.json` |
+| Receipt | `receipts/v1/<kind>/<target>/<sequence>-<request-digest>.json` |
+| Prior state | `manifests/prior/v1/sha256/<digest>.json` |
+| Attempt | `attempts/v1/<request-digest>/<attempt-id>.json` |
+| Result | `manifests/result/v1/sha256/<digest>.json` and a conditionally created `results/v1/<request-digest>.json` pointer |
+
+The intake authority allocates a monotonic receipt sequence for each
+`(kind, target)`. It acknowledges acceptance only after every referenced
+blob, manifest, and receipt reads back with the expected digest. Replaying
+identical canonical request bytes returns the existing receipt. Reusing a
+producer submission key for different bytes fails. Cursors are rebuildable
+caches; receipts remain the enumerable source of accepted work.
+
+### Request and manifest graph
+
+Every request contains `schema`, `kind`, `operation`, `target`, `producer`,
+`provenance_digest`, ordered `artifact_digests`, and `expected_prior`.
+`operation` is exactly `initialize` or `reconcile`. Initialize requires a null
+expected prior; reconcile requires the exact prior Release or sysext-index
+SHA-256.
+
+The provenance manifest records the producer repository and commit, source
+ref or tag, workflow/run and artifact identifiers, builder/environment pins,
+exact action and Repogen version/commit/asset/digest, and every artifact's
+filename, media type, size, SHA-256, package name, version, and architecture.
+It may link producer-local test evidence but contains no credential value,
+personal data, or unredacted command carrying a secret.
+
+For `kind: debian`, the request also fixes codename and matching suite, the
+accepted Origin and Label, component `main`, exact architecture allowlist,
+and Valid-Until policy. It can reference Debian artifacts only. For
+`kind: sysext`, the request fixes extension name, version, OSVersion,
+architecture, and checksum-index identity. It cannot name `dists/` or
+`pool/`. The two kinds use separate policy, writer capability, target
+serialization, and result records.
+
+Before a write, the writer records a prior manifest. Reconcile binds the
+verified signature, Release identity, every index digest, and the
+expected-prior match. Initialize binds an authoritative absent-target
+observation. A 403, timeout, 5xx, partial response, or unverifiable 404 is not
+absence.
+
+Each attempt is append-only. Retryable failure does not close or delete the
+request. A result is created only after remote read-back verifies the public
+commit point and every advertised object. It links the request, provenance,
+prior, attempt, exact action and Repogen binary, signing fingerprint, written
+object digests, and resulting Release/InRelease or sysext-index digests.
+
+### Replay and recovery
+
+Scheduled and manual reconciliation list receipts, not workflow history:
+
+1. Process one target by receipt sequence without cancelling earlier
+   accepted work. Cross-target concurrency waits for shared-pool collision
+   tests.
+2. Re-hash every referenced object, verify the receipt's authorization-policy
+   digest, and apply any current deny or revocation before staging.
+3. If a result exists and public read-back still matches, return the same
+   result as an idempotent no-op.
+4. Without a result, compare public state with the expected prior and prior
+   manifest. If the intended complete generation is already visible, verify
+   it and record the result. If the prior generation remains visible, retry
+   from clean staging. Any third state is drift and stops that target.
+5. Conditionally create the result pointer only after read-back. Workflow
+   success, dispatch delivery, staged upload, or process exit cannot close a
+   request.
+
+The single R1-R5 canary may use one reviewed request placed into this record
+shape by the protected writer under a separately approved human operation.
+It does not require a general producer credential or submit endpoint. R8
+implements the endpoint, enumeration, scheduled/manual reconciliation, and
+replay before closure expansion.
+
+### Capability and approval boundary
+
+The producer can call only the submit endpoint for an allowlisted identity,
+kind, and target. The intake endpoint can only verify and conditionally create
+intake records. The Debian writer can read accepted Debian intake, append
+writer records, and perform target-scoped conditional writes to approved
+`pool/main` objects and one `dists/<codename>` transaction; it cannot write
+`stable`, another codename, `ext/`, or use broad sync. The sysext writer can
+reconcile only its approved `ext/<name>` target and has no APT authority.
+Verifier/monitor capability is read-only.
+
+Signing material and passphrases exist only in the protected writer execution
+and never enter manifests, logs, artifacts, or producer workspaces.
+Short-lived federated producer identity is preferred, but the exact provider
+mechanism remains a separately approved configuration choice. The selected
+backend must be tested at its real credential boundary before capability
+separation is described as enforced; workflow YAML or advisory permissions
+alone are not proof.
+
 ## Rollback and retention
 
 Before the first visible InRelease, removal of an unpublished failed prefix is
@@ -186,11 +318,12 @@ The first Trixie `gchlog` canary is gated by this exact subset:
 | R4 | Verified digest map and conditional no-overwrite shared-pool handling | ETag trust, unreadable object, collision, or overwrite |
 | R5 | Signed by-hash staged transaction, manifest, InRelease-last publication, and read-back | Mutable tool, broad sync, unsigned output, incomplete visibility, or stable drift |
 
-R1-R5 permit at most one separately authorized, manually serialized,
-retained canary request. After that first visible transaction, new-suite
-writes freeze until R6-R10 add deterministic no-op behavior, full local
-atomicity/failure injection, durable intake and recovery, per-codename
-serialization, sysext reconciliation, and the hardened release.
+R1-R5 plus T0 permit at most one separately authorized, manually serialized,
+retained canary request using the T0 manifest graph. After that first visible
+transaction, new-suite writes freeze until R6-R10 add deterministic no-op
+behavior, full local atomicity/failure injection, the T0 submit and recovery
+service, per-codename serialization, sysext reconciliation, and the hardened
+release.
 
 ## Release artifact blocker
 
@@ -220,6 +353,20 @@ acceptance; it cannot waive
   contract without claiming either is fixed.
 - **Done when:** this plan and core Plan 0007 agree, repository documentation
   gates pass, and an independent reviewer accepts the exact candidates.
+
+## T0 - Specify durable intake
+
+- [x] Define the submit-only producer boundary and prohibit direct producer
+  intake-store or production-repository credentials.
+- [x] Define digest-addressed artifacts, provenance/request/prior/result
+  manifests, target-sequenced receipts, and append-only attempts.
+- [x] Define enumeration, idempotent replay, partial-attempt recovery, and
+  public-read-back completion.
+- [x] Keep Debian and sysext schemas, writers, paths, and credentials
+  separate.
+- **Done when:** core and Repogen plans agree, documentation gates pass, and
+  independent review accepts the exact candidate. This does not mean the
+  transport is implemented or configured.
 
 ## Phase 2 - Validate before writes (R2)
 
