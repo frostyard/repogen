@@ -464,7 +464,7 @@ func validateProductionPackageForStage(pkg models.Package) error {
 	if !productionVersionPattern.MatchString(pkg.Version) {
 		return fmt.Errorf("%w: package %q has invalid Debian version", ErrPublicationCandidate, pkg.Name)
 	}
-	if pkg.Architecture != "all" && pkg.Architecture != "amd64" {
+	if !isProductionArchitecture(pkg.Architecture) {
 		return fmt.Errorf("%w: package %q architecture %q is not allowed", ErrPublicationCandidate, pkg.Name, pkg.Architecture)
 	}
 	for field, value := range map[string]string{
@@ -511,7 +511,7 @@ func stageProductionIndexes(
 ) ([]stagedProductionObject, []ReleaseFileInfo, error) {
 	var objects []stagedProductionObject
 	var releaseInputs []ReleaseFileInfo
-	for _, architecture := range []string{"all", "amd64"} {
+	for _, architecture := range ProductionArchitectures() {
 		var architecturePackages []models.Package
 		for _, pkg := range packages {
 			if pkg.Architecture == architecture {
@@ -665,7 +665,7 @@ func verifyProductionPackageDigest(pkg models.Package, observed *utils.Checksum)
 			)
 		}
 	}
-	if pkg.Architecture != "all" && pkg.Architecture != "amd64" {
+	if !isProductionArchitecture(pkg.Architecture) {
 		return fmt.Errorf("%w: package %q architecture %q is not allowed", ErrPublicationCandidate, pkg.Name, pkg.Architecture)
 	}
 	return nil
@@ -691,7 +691,7 @@ func generateProductionRelease(codename string, releaseTime time.Time, files []R
 	fmt.Fprintf(&output, "Label: %s\n", productionReleaseLabel)
 	fmt.Fprintf(&output, "Suite: %s\n", codename)
 	fmt.Fprintf(&output, "Codename: %s\n", codename)
-	output.WriteString("Architectures: all amd64\n")
+	fmt.Fprintf(&output, "Architectures: %s\n", strings.Join(ProductionArchitectures(), " "))
 	output.WriteString("Components: main\n")
 	fmt.Fprintf(&output, "Date: %s\n", releaseTime.UTC().Format(time.RFC1123Z))
 	output.WriteString("Acquire-By-Hash: yes\n")

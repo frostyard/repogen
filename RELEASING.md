@@ -34,6 +34,10 @@ It uses commit-pinned GitHub Actions and exact GoReleaser `v2.18.1`.
 | `repogen-linux-arm64` | Raw Linux arm64 executable |
 | `SHA256SUMS` | SHA-256 digest list for both executables |
 
+Darwin amd64 and arm64 binaries from the retired hand-built workflow are
+intentionally not part of this contract. This pipeline supports only the two
+Linux assets above.
+
 The binaries embed:
 
 - the semantic version without the leading `v`; and
@@ -75,6 +79,7 @@ same verifier used by repository consumers:
 ```bash
 git rev-list -n 1 v1.2.3
 ./scripts/install-release.sh \
+  --github-release \
   v1.2.3 \
   <40-character-tag-commit> \
   "$(uname -m)" \
@@ -86,11 +91,18 @@ The installer:
 
 1. rejects `latest`, branches, and malformed versions;
 2. maps only amd64/x86_64 and arm64/aarch64 to the stable raw asset names;
-3. downloads the selected binary and `SHA256SUMS` from the exact tag;
+3. downloads the selected binary and `SHA256SUMS` from the fixed Frostyard
+   Repogen GitHub release origin and exact tag;
 4. requires exactly one lowercase SHA-256 entry for that asset;
 5. verifies the downloaded bytes before making them executable;
 6. verifies the embedded version and full commit; and
 7. installs only after every check passes.
+
+`SHA256SUMS` is unsigned and comes from the same GitHub release as the binary.
+The digest check detects a mismatch between those two release assets; it is
+not an independent authenticity proof. There is no release signature or
+attestation in this contract. Authenticity therefore depends on trusting
+GitHub's HTTPS release origin and the repository's release controls.
 
 Also compare the displayed GitHub release assets with the table above. A
 missing checksum, duplicate checksum entry, unexpected archive-only output,

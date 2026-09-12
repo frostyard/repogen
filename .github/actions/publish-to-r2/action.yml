@@ -218,13 +218,17 @@ runs:
 
     - name: Install repogen
       shell: bash
+      env:
+        REPOGEN_VERSION: ${{ inputs.repogen-version }}
+        REPOGEN_COMMIT: ${{ inputs.repogen-commit }}
       run: |
         set -e
         echo "::group::Installing repogen"
 
         "$GITHUB_ACTION_PATH/../../../scripts/install-release.sh" \
-          "${{ inputs.repogen-version }}" \
-          "${{ inputs.repogen-commit }}" \
+          --github-release \
+          "$REPOGEN_VERSION" \
+          "$REPOGEN_COMMIT" \
           "$(uname -m)" \
           /tmp/repogen
 

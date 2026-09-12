@@ -64,7 +64,7 @@ func TestProductionTransactionPublishesScopedObjectsWithInReleaseLast(t *testing
 	if !bytes.Contains(release, []byte("Acquire-By-Hash: yes\n")) {
 		t.Fatal("Release does not require Acquire-By-Hash")
 	}
-	for _, architecture := range []string{"all", "amd64"} {
+	for _, architecture := range ProductionArchitectures() {
 		for _, name := range []string{"Packages", "Packages.gz"} {
 			canonical := path.Join("dists", "trixie", "main", "binary-"+architecture, name)
 			digest := sha256Hex(store.objectBytes(canonical))
@@ -92,6 +92,15 @@ func TestProductionTransactionPublishesScopedObjectsWithInReleaseLast(t *testing
 	}
 	if len(resultData) > 16*1024 {
 		t.Fatalf("result manifest is unexpectedly large: %d bytes", len(resultData))
+	}
+}
+
+func TestProductionArchitecturesReturnsIndependentCopy(t *testing.T) {
+	first := ProductionArchitectures()
+	first[0] = "arm64"
+
+	if got := ProductionArchitectures(); !reflect.DeepEqual(got, []string{"all", "amd64"}) {
+		t.Fatalf("ProductionArchitectures() = %v, want [all amd64]", got)
 	}
 }
 

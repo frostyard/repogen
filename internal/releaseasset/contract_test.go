@@ -149,6 +149,7 @@ func TestRepositoryReleaseContractHasOnePinnedPublisherAndVerifiedConsumer(t *te
 	release := readContractFile(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	config := readContractFile(t, filepath.Join(root, ".goreleaser.yml"))
 	action := readContractFile(t, filepath.Join(root, ".github", "actions", "publish-to-r2", "action.yml"))
+	installer := readContractFile(t, filepath.Join(root, "scripts", "install-release.sh"))
 
 	for _, required := range []string{
 		"actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
@@ -178,6 +179,11 @@ func TestRepositoryReleaseContractHasOnePinnedPublisherAndVerifiedConsumer(t *te
 		"repogen-version:",
 		"repogen-commit:",
 		"scripts/install-release.sh",
+		"--github-release",
+		"REPOGEN_VERSION: ${{ inputs.repogen-version }}",
+		"REPOGEN_COMMIT: ${{ inputs.repogen-commit }}",
+		"\"$REPOGEN_VERSION\"",
+		"\"$REPOGEN_COMMIT\"",
 		"legacy sync action is disabled for deb",
 	} {
 		if !strings.Contains(action, required) {
@@ -187,16 +193,35 @@ func TestRepositoryReleaseContractHasOnePinnedPublisherAndVerifiedConsumer(t *te
 	if strings.Contains(action, "releases/latest") || strings.Contains(action, "default: 'latest'") {
 		t.Fatal("consumer action retains a mutable release lookup")
 	}
+	for _, forbidden := range []string{
+		"\"${{ inputs.repogen-version }}\"",
+		"\"${{ inputs.repogen-commit }}\"",
+	} {
+		if strings.Contains(action, forbidden) {
+			t.Fatalf("consumer action interpolates untrusted input directly into its shell script: %q", forbidden)
+		}
+	}
+	if !strings.Contains(installer, `base_url="https://github.com/frostyard/repogen/releases/download"`) {
+		t.Fatal("installer lacks its fixed production release origin")
+	}
+	for _, forbidden := range []string{"REPOGEN_RELEASE_BASE_URL", "REPOGEN_ALLOW_FILE_FIXTURE"} {
+		if strings.Contains(installer, forbidden) {
+			t.Fatalf("installer accepts caller-controlled release-origin environment variable %q", forbidden)
+		}
+	}
 }
 
 func releaseInstallCommand(script, releaseRoot, tag, commit, destination string) *exec.Cmd {
-	command := exec.Command("bash", script, tag, commit, "x86_64", destination)
-	command.Env = append(
-		os.Environ(),
-		"REPOGEN_RELEASE_BASE_URL=file://"+releaseRoot,
-		"REPOGEN_ALLOW_FILE_FIXTURE=1",
+	return exec.Command(
+		"bash",
+		script,
+		"--test-release-root",
+		releaseRoot,
+		tag,
+		commit,
+		"x86_64",
+		destination,
 	)
-	return command
 }
 
 func writeChecksums(t *testing.T, directory, asset string) {

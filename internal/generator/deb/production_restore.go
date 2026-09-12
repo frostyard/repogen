@@ -328,8 +328,13 @@ func parseProductionRelease(data []byte) (*productionRelease, error) {
 }
 
 func verifyProductionReleaseIdentity(release *productionRelease, config *models.RepositoryConfig) error {
-	if strings.Join(config.Arches, ",") != "all,amd64" {
-		return fmt.Errorf("production restore architectures must be exactly all,amd64")
+	requiredArchitectures := ProductionArchitectures()
+	if strings.Join(config.Arches, ",") != strings.Join(requiredArchitectures, ",") {
+		return fmt.Errorf(
+			"production restore architecture contract mismatch: got %s, want %s",
+			strings.Join(config.Arches, ","),
+			strings.Join(requiredArchitectures, ","),
+		)
 	}
 	expectedFields := map[string]string{
 		"Origin":          productionReleaseOrigin,

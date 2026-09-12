@@ -36,6 +36,10 @@ Triggered by `v*.*.*` tags:
 The former parallel hand-built workflow and its unrelated package/repository
 artifacts were removed. The sole GoReleaser contract publishes
 `repogen-linux-amd64`, `repogen-linux-arm64`, and `SHA256SUMS`.
+The Darwin amd64/arm64 assets from the retired workflow are intentionally not
+published. `SHA256SUMS` is unsigned and same-origin with the binaries, so its
+digest check does not provide independent authenticity; consumers trust
+GitHub's HTTPS release origin and repository release controls.
 
 ## GitHub Action: `publish-to-r2`
 
@@ -57,9 +61,10 @@ transaction and its migration sequence are documented in
 
 1. **Validate inputs** — checks package type, required flags (base-url for
    sysext, repo-name for pacman), directory existence.
-2. **Install repogen** — requires an exact tag and commit, downloads the exact
-   architecture asset plus `SHA256SUMS`, verifies the selected digest, and
-   verifies the embedded version/commit before installation.
+2. **Install repogen** — requires an exact tag and commit, uses a fixed GitHub
+   release origin, downloads the exact architecture asset plus unsigned
+   `SHA256SUMS`, verifies the selected digest, and verifies the embedded
+   version/commit before installation.
 3. **Configure AWS CLI** — sets up R2 endpoint credentials.
 4. **Sync existing metadata** — downloads only metadata files (not package
    binaries) from R2 for incremental mode. Sync strategy varies by format:

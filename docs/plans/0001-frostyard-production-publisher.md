@@ -345,10 +345,14 @@ path and removes the parallel workflow. Its authoritative consumer
 contract is an exact `vMAJOR.MINOR.PATCH` tag, exact 40-character source
 commit, `repogen-linux-{amd64,arm64}`, and `SHA256SUMS`. The binary reports
 its embedded identity through `repogen version --short`; the installer
-downloads both assets, verifies exactly one matching SHA-256 entry, and
-rejects any identity mismatch. This local candidate does not close issue 34,
-publish a release, or prove an external release. D5 still requires the exact
-reviewed merge and separately human-published, digest-verified release under
+uses the fixed GitHub release origin, downloads both assets, verifies exactly
+one matching SHA-256 entry, and rejects any identity mismatch. The checksum is
+unsigned and same-origin with the binary; there is no signature or attestation,
+so authenticity depends on GitHub and repository release controls. Darwin
+assets from the removed hand-built workflow are intentionally outside the new
+Linux-only contract. This local candidate does not close issue 34, publish a
+release, or prove an external release. D5 still requires the exact reviewed
+merge and separately human-published, digest-verified release under
 [core ADR-0023](https://github.com/frostyard/core/blob/main/docs/adr/0023-verified-pinned-downloads.md).
 
 ## Phase 1 - Record the boundary (R1)
@@ -417,7 +421,10 @@ and acceptance matrix remain authoritative in core Plan 0007.
 
 - **Release publication:** issue 34 remains externally open; D5 must prove
   the reviewed merged workflow and separately published release satisfy this
-  candidate contract.
+  candidate contract. Candidate review must retain or independently reproduce
+  exact GoReleaser config/snapshot output, asset names, checksums, and embedded
+  identities; the repository tests validate the contract structure but do not
+  execute GoReleaser.
 - **Production adapter/API:** select and separately approve the real provider
   adapter and external command/service wiring. The current library boundary
   and fixtures do not carry credentials or publication authority.

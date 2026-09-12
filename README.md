@@ -134,9 +134,12 @@ Release binaries now have one contract: the sole tag workflow runs pinned
 GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
 Each binary embeds the exact version and full commit shown by
 `repogen version --short`. Consumers must name an exact tag and commit;
-`scripts/install-release.sh` retrieves both files, verifies the selected
-SHA-256 entry, and checks embedded identity before installation. No `latest`
-lookup is accepted.
+`scripts/install-release.sh --github-release` retrieves both files from the
+fixed GitHub release origin, verifies the selected SHA-256 entry, and checks
+embedded identity before installation. The checksum is unsigned and
+same-origin, so authenticity depends on GitHub and repository release controls;
+there is no independent release signature or attestation. No `latest` lookup
+is accepted. Darwin assets from the retired workflow are not produced.
 
 The existing `repogen generate` command remains generic and keeps its current
 defaults, supported formats, unsigned behavior, and legacy incremental

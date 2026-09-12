@@ -203,7 +203,7 @@ func validateProductionConfig(cmd *cobra.Command, config *models.RepositoryConfi
 	if err := validateExactProductionArchitectures(config.Arches); err != nil {
 		return err
 	}
-	config.Arches = []string{"all", "amd64"}
+	config.Arches = deb.ProductionArchitectures()
 
 	if err := validateProductionPaths(config.InputDir, config.OutputDir); err != nil {
 		return err
@@ -226,8 +226,9 @@ func validateProductionIdentifier(name, value string) error {
 }
 
 func validateExactProductionArchitectures(architectures []string) error {
-	if len(architectures) != 2 {
-		return invalidProductionConfig("--arch must contain exactly all and amd64")
+	required := deb.ProductionArchitectures()
+	if len(architectures) != len(required) {
+		return invalidProductionConfig("--arch must contain exactly %s", strings.Join(required, " and "))
 	}
 
 	seen := make(map[string]struct{}, len(architectures))
@@ -240,11 +241,10 @@ func validateExactProductionArchitectures(architectures []string) error {
 		}
 		seen[architecture] = struct{}{}
 	}
-	if _, ok := seen["all"]; !ok {
-		return invalidProductionConfig("--arch must include all")
-	}
-	if _, ok := seen["amd64"]; !ok {
-		return invalidProductionConfig("--arch must include amd64")
+	for _, architecture := range required {
+		if _, ok := seen[architecture]; !ok {
+			return invalidProductionConfig("--arch must include %s", architecture)
+		}
 	}
 	return nil
 }

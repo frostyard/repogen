@@ -32,8 +32,36 @@ if [[ "${1:-}" == "--asset-name" ]]; then
   exit 0
 fi
 
+case "${1:-}" in
+  --github-release)
+    base_url="https://github.com/frostyard/repogen/releases/download"
+    shift
+    ;;
+  --test-release-root)
+    [[ "$#" -eq 6 ]] || {
+      echo "usage: $0 --test-release-root <absolute-directory> <vMAJOR.MINOR.PATCH> <40-char-commit> <architecture> <destination>" >&2
+      exit 2
+    }
+    test_release_root="$2"
+    [[ "$test_release_root" = /* ]] || {
+      echo "test release root must be an absolute directory" >&2
+      exit 2
+    }
+    [[ -d "$test_release_root" ]] || {
+      echo "test release root does not exist: $test_release_root" >&2
+      exit 2
+    }
+    base_url="file://${test_release_root%/}"
+    shift 2
+    ;;
+  *)
+    echo "usage: $0 --github-release <vMAJOR.MINOR.PATCH> <40-char-commit> <architecture> <destination>" >&2
+    exit 2
+    ;;
+esac
+
 [[ "$#" -eq 4 ]] || {
-  echo "usage: $0 <vMAJOR.MINOR.PATCH> <40-char-commit> <architecture> <destination>" >&2
+  echo "usage: $0 --github-release <vMAJOR.MINOR.PATCH> <40-char-commit> <architecture> <destination>" >&2
   exit 2
 }
 
@@ -49,11 +77,6 @@ validate_tag "$tag"
 
 asset=$(asset_name "$tag" "$arch")
 checksum_asset=SHA256SUMS
-base_url="${REPOGEN_RELEASE_BASE_URL:-https://github.com/frostyard/repogen/releases/download}"
-if [[ "$base_url" != https://* && "${REPOGEN_ALLOW_FILE_FIXTURE:-}" != "1" ]]; then
-  echo "release base URL must use HTTPS" >&2
-  exit 1
-fi
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
