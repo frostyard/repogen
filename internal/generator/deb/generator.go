@@ -59,6 +59,13 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	// Generate repository for each architecture
 	arches := append([]string(nil), config.Arches...)
 	sort.Strings(arches)
+	selectedPackages := make([]models.Package, 0, len(packages))
+	for _, arch := range arches {
+		selectedPackages = append(selectedPackages, archPackages[arch]...)
+	}
+	if err := validatePoolDestinations(config.OutputDir, selectedPackages); err != nil {
+		return fmt.Errorf("failed to validate pool destinations: %w", err)
+	}
 	for _, arch := range arches {
 		if err := g.generateForArch(ctx, config, arch, archPackages[arch]); err != nil {
 			return fmt.Errorf("failed to generate for %s: %w", arch, err)
@@ -72,6 +79,71 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 
 	logrus.Info("Debian repository generated successfully")
 	return nil
+}
+
+type poolContentIdentity struct {
+	size   int64
+	sha256 string
+}
+
+func validatePoolDestinations(outputDir string, packages []models.Package) error {
+	seen := make(map[string]poolContentIdentity, len(packages))
+	for index := range packages {
+		pkg := &packages[index]
+		dstPath, err := poolDestination(outputDir, pkg)
+		if err != nil {
+			return err
+		}
+
+		srcPath, _, _, err := utils.ShouldCopyPackage(pkg, dstPath, outputDir)
+		if err != nil {
+			return fmt.Errorf("package copy check failed for %s: %w", pkg.Name, err)
+		}
+
+		identity := poolContentIdentity{size: pkg.Size, sha256: pkg.SHA256Sum}
+		if _, err := os.Stat(srcPath); err == nil {
+			checksums, err := utils.CalculateChecksums(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+			}
+			identity = poolContentIdentity{size: checksums.Size, sha256: checksums.SHA256}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot stat package source %s: %w", srcPath, err)
+		}
+
+		previous, duplicate := seen[dstPath]
+		if !duplicate {
+			seen[dstPath] = identity
+			continue
+		}
+		if identity.sha256 == "" || previous.sha256 == "" {
+			return fmt.Errorf("cannot verify duplicate pool destination %q without SHA256", dstPath)
+		}
+		if identity != previous {
+			return fmt.Errorf("conflicting package contents for pool destination %q", dstPath)
+		}
+	}
+	return nil
+}
+
+func poolDestination(outputDir string, pkg *models.Package) (string, error) {
+	if pkg.Name == "" {
+		return "", fmt.Errorf("package name cannot be empty")
+	}
+
+	firstLetter := string(pkg.Name[0])
+	if firstLetter < "a" || firstLetter > "z" {
+		firstLetter = "0"
+	}
+
+	return filepath.Join(
+		outputDir,
+		"pool",
+		"main",
+		firstLetter,
+		pkg.Name,
+		filepath.Base(pkg.Filename),
+	), nil
 }
 
 // generateForArch generates repository files for a specific architecture
@@ -94,22 +166,14 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 	for i := range packages {
 		pkg := &packages[i]
 
-		// Determine pool subdirectory (first letter of package name)
-		firstLetter := string(pkg.Name[0])
-		if firstLetter >= "a" && firstLetter <= "z" {
-			// Use first letter
-		} else {
-			firstLetter = "0" // Use "0" for packages starting with numbers/special chars
+		dstPath, err := poolDestination(config.OutputDir, pkg)
+		if err != nil {
+			return err
 		}
-
-		// Create package directory: pool/main/{letter}/{name}/
-		pkgDir := filepath.Join(poolDir, firstLetter, pkg.Name)
+		pkgDir := filepath.Dir(dstPath)
 		if err := utils.EnsureDir(pkgDir); err != nil {
 			return err
 		}
-
-		// Determine destination path
-		dstPath := filepath.Join(pkgDir, filepath.Base(pkg.Filename))
 
 		// Check if package needs to be copied
 		srcPath, finalDstPath, needsCopy, err := utils.ShouldCopyPackage(pkg, dstPath, config.OutputDir)

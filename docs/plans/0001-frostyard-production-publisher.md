@@ -260,6 +260,8 @@ acceptance; it cannot waive
 - [x] Canonically order Debian package stanzas, arbitrary fields,
   architectures, components, Release checksum entries, and sysext checksum
   entries.
+- [x] Preflight Debian pool destinations so same-byte reuse is deterministic
+  and conflicting bytes at one path fail before output is created.
 - [x] Use deterministic gzip headers and expose a controlled Debian
   publication clock.
 - [x] Preserve byte-identical Release, InRelease, and Release.gpg files

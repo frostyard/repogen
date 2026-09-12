@@ -116,9 +116,15 @@ clean staging, ordered publication, and remote read-back.
 ### Key Behaviors
 
 - Packages are organized in `pool/main/{first-letter}/{name}/` directories.
-- `Packages` stanzas use a total package name, Debian version, architecture,
-  and filename order. Remaining package fields break exact-identity ties, and
-  arbitrary control fields are emitted in sorted field-name order.
+- `Packages` stanzas use a total package name, lexicographic version-string,
+  architecture, and filename order. Remaining package fields break
+  exact-identity ties, and arbitrary control fields are emitted in sorted
+  field-name order.
+- Generation validates all selected pool destinations before writing. Inputs
+  that resolve to one path are reusable only when their size and SHA-256
+  agree. Local source identities are derived from their bytes; unavailable
+  incremental objects use the retained metadata identity. Conflicting
+  contents fail without creating output.
 - `Packages.gz` uses a fixed gzip timestamp so identical Packages bytes
   produce identical compressed bytes.
 - `Release` includes MD5, SHA1, SHA256, SHA512 checksums for all metadata files.

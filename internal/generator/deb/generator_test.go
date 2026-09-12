@@ -424,6 +424,7 @@ func TestGenerateShuffledInputProducesIdenticalMetadata(t *testing.T) {
 			SHA256Sum: checksums.SHA256, SHA512Sum: checksums.SHA512,
 		}
 	}
+
 	first := buildPackage(firstPath, "2.0")
 	second := buildPackage(secondPath, "1.0")
 	publishedAt := time.Date(2026, time.September, 12, 18, 0, 0, 0, time.UTC)
@@ -460,5 +461,135 @@ func TestGenerateShuffledInputProducesIdenticalMetadata(t *testing.T) {
 		if !bytes.Equal(firstData, secondData) {
 			t.Errorf("shuffled input changed %s", relativePath)
 		}
+	}
+}
+
+func TestGenerateShuffledIdenticalPoolDestinationProducesIdenticalRepository(t *testing.T) {
+	tmpDir := t.TempDir()
+	firstInputDir := filepath.Join(tmpDir, "input-one")
+	secondInputDir := filepath.Join(tmpDir, "input-two")
+	for _, dir := range []string{firstInputDir, secondInputDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	firstPath := filepath.Join(firstInputDir, "same.deb")
+	secondPath := filepath.Join(secondInputDir, "same.deb")
+	for _, path := range []string{firstPath, secondPath} {
+		if err := os.WriteFile(path, []byte("identical package bytes"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	buildPackage := func(path, version string) models.Package {
+		checksums, err := utils.CalculateChecksums(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return models.Package{
+			Name: "same", Version: version, Architecture: "amd64", Filename: path,
+			Size: checksums.Size, MD5Sum: checksums.MD5, SHA1Sum: checksums.SHA1,
+			SHA256Sum: checksums.SHA256, SHA512Sum: checksums.SHA512,
+		}
+	}
+	first := buildPackage(firstPath, "2.0")
+	second := buildPackage(secondPath, "1.0")
+	publishedAt := time.Date(2026, time.September, 12, 18, 0, 0, 0, time.UTC)
+	outputs := []string{filepath.Join(tmpDir, "one"), filepath.Join(tmpDir, "two")}
+	inputs := [][]models.Package{{first, second}, {second, first}}
+	for index := range outputs {
+		config := &models.RepositoryConfig{
+			OutputDir: outputs[index], Origin: "Test", Label: "Test",
+			Codename: "trixie", Suite: "trixie",
+			Components: []string{"main"}, Arches: []string{"amd64"},
+		}
+		if err := NewGeneratorWithClock(nil, func() time.Time { return publishedAt }).Generate(
+			context.Background(), config, inputs[index],
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	relativePaths := []string{
+		filepath.Join("pool", "main", "s", "same", "same.deb"),
+		filepath.Join("dists", "trixie", "main", "binary-amd64", "Packages"),
+		filepath.Join("dists", "trixie", "main", "binary-amd64", "Packages.gz"),
+		filepath.Join("dists", "trixie", "Release"),
+		filepath.Join("dists", "trixie", "InRelease"),
+	}
+	for _, relativePath := range relativePaths {
+		firstData, err := os.ReadFile(filepath.Join(outputs[0], relativePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondData, err := os.ReadFile(filepath.Join(outputs[1], relativePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(firstData, secondData) {
+			t.Errorf("shuffled identical pool destination changed %s", relativePath)
+		}
+	}
+}
+
+func TestGenerateRejectsConflictingPoolDestinationBeforeWriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	firstInputDir := filepath.Join(tmpDir, "input-one")
+	secondInputDir := filepath.Join(tmpDir, "input-two")
+	for _, dir := range []string{firstInputDir, secondInputDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	firstPath := filepath.Join(firstInputDir, "same.deb")
+	secondPath := filepath.Join(secondInputDir, "same.deb")
+	if err := os.WriteFile(firstPath, []byte("first package bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte("second package bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	buildPackage := func(path, version string) models.Package {
+		checksums, err := utils.CalculateChecksums(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return models.Package{
+			Name: "same", Version: version, Architecture: "amd64", Filename: path,
+			Size: checksums.Size, MD5Sum: checksums.MD5, SHA1Sum: checksums.SHA1,
+			SHA256Sum: checksums.SHA256, SHA512Sum: checksums.SHA512,
+		}
+	}
+	first := buildPackage(firstPath, "2.0")
+	second := buildPackage(secondPath, "1.0")
+	second.Size = first.Size
+	second.SHA256Sum = first.SHA256Sum
+
+	for name, packages := range map[string][]models.Package{
+		"forward": {first, second},
+		"reverse": {second, first},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outputDir := filepath.Join(tmpDir, name)
+			config := &models.RepositoryConfig{
+				OutputDir: outputDir, Origin: "Test", Label: "Test",
+				Codename: "trixie", Suite: "trixie",
+				Components: []string{"main"}, Arches: []string{"amd64"},
+			}
+
+			err := NewGenerator(nil).Generate(context.Background(), config, packages)
+			if err == nil {
+				t.Fatal("Generate() accepted conflicting package bytes for one pool destination")
+			}
+			if !strings.Contains(err.Error(), "conflicting package contents for pool destination") {
+				t.Fatalf("Generate() returned unexpected error: %v", err)
+			}
+			if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+				t.Fatalf("Generate() mutated output before rejecting collision: %v", statErr)
+			}
+		})
 	}
 }
