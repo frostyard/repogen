@@ -39,6 +39,33 @@ overrides. It does not restore existing metadata, generate repository files,
 initialize a suite, sign, or publish. Those capabilities remain gated by
 [Plan 0001](../plans/0001-frostyard-production-publisher.md) R3-R5.
 
+### Shared immutable pool primitive (R4)
+
+`internal/generator/deb/pool.go` defines a provider-neutral `SharedPool` used
+only by later production phases. Its input is one stable, seekable staged
+object plus a copied map of `pool/main/...` paths to size and lowercase
+SHA-256 values obtained from signature- and checksum-verified Packages
+indexes.
+
+- Candidate bytes are streamed and must match their declared size and
+  SHA-256 before the object store is called.
+- A path present in the verified map is reusable only when the candidate,
+  retained stanza, and stream-hashed remote bytes all agree.
+- A path absent from the map is sent through atomic conditional
+  create-if-absent. If creation loses a race, the winner is streamed and may
+  be reused only when its size and SHA-256 match.
+- Missing indexed bytes, short or failed reads, different bytes at the same
+  path, unsafe paths, and malformed digests fail closed.
+- Provider ETags are informational and are never treated as hashes. The
+  object-store interface has no overwrite operation.
+
+The fake-S3 tests cover indexed and unindexed reuse, opaque ETags, collisions,
+unreadable streams, conditional-create races, concurrent same-byte writers,
+and shared Trixie/Forky path safety. No provider adapter or advisory
+permission is claimed to enforce the contract. R3 must still produce the
+verified digest map, and R5 must wire a real conditional provider operation,
+clean staging, ordered publication, and remote read-back.
+
 ## Debian/APT (`internal/generator/deb/`)
 
 **Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`

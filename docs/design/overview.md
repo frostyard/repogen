@@ -34,7 +34,7 @@ internal/
     detector.go               Magic-byte + extension detection for all package formats
   generator/
     generator.go              Generator interface (Generate, ValidatePackages, ParseExistingMetadata)
-    deb/                      Debian/APT repository generator
+    deb/                      Debian/APT generator plus isolated R4 shared-pool safety primitive
     rpm/                      Yum/DNF repository generator
     apk/                      Alpine APK repository generator
     pacman/                   Arch Linux Pacman repository generator
@@ -86,6 +86,17 @@ architectures, and control-field safety. It rejects every other recognized
 package format in the input tree and returns before creating or changing the
 output path. Strict restore, generation, signing, and publication remain
 later production phases.
+
+R4 adds `generator/deb.SharedPool` as a provider-neutral boundary for
+immutable `pool/main` objects. It consumes digest authority from already
+verified Packages indexes, verifies staged input bytes, stream-hashes every
+existing object, and permits only conditional create-if-absent. An indexed
+path must already exist with the exact indexed bytes; an unindexed path can
+be created once, and a lost create race is resolved only by hashing the
+winner. ETags are exposed only as informational provider metadata and never
+participate in equality. This primitive has no S3/R2 adapter, credentials,
+CLI wiring, metadata writer, or publication authority; R3 and R5 must supply
+strict restore, clean staging, scoped writes, signing, and read-back.
 
 ## Key Patterns
 
@@ -213,7 +224,9 @@ and the `publish-to-r2` composite action.
 
 The generic command and action behavior described above remains unchanged.
 The R2 `validate-production` preflight implements the fail-before-write target
-and Debian-input boundary, but it intentionally cannot generate or publish.
+and Debian-input boundary, while the isolated R4 primitive enforces
+conditional no-overwrite handling for shared-pool bytes in fixtures. Neither
+can generate or publish a production repository.
 The complete fail-closed Frostyard production publisher remains specified in
 [Plan 0001](../plans/0001-frostyard-production-publisher.md). The plan
 preserves generic local and unsigned generation while defining the proposed

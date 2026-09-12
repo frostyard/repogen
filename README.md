@@ -83,8 +83,11 @@ repogen validate-production \
 ```
 
 This command only validates. It never creates the output directory or writes,
-signs, restores, or publishes repository state. Production generation remains
-unavailable until strict restore, immutable pool handling, staged signing,
+signs, restores, or publishes repository state. R4 now provides an internal,
+provider-neutral shared-pool primitive that stream-hashes existing bytes and
+uses conditional create without overwrite; it has only fake-S3 test coverage
+and is not connected to this command or to production credentials. Production
+generation remains unavailable until strict restore, staging, signing,
 publication, and read-back are implemented in later phases. The existing
 `repogen generate` command remains generic and keeps its current defaults,
 supported formats, and unsigned behavior.
