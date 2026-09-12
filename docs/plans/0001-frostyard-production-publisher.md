@@ -7,8 +7,9 @@ initialize plus strict signed prior-state reconciliation. R4 provides the
 provider-neutral immutable pool primitive, and R6 provides deterministic
 local generation and signed no-op detection. R5 provides the signed,
 target-scoped publication transaction and R7 provides atomic local
-generation commit. The provider adapter/canary and R8-R10 remain
-unimplemented. The plan
+generation commit. R8 provides crash-durable local commits plus retained
+intake and Debian writer recovery. The provider adapter/canary and R9-R10
+remain unimplemented. The plan
 implements
 [core ADR-0048](https://github.com/frostyard/core/blob/main/docs/adr/0048-publish-debian-packages-to-explicit-codenames.md)
 and the Repogen R1-R10 sequence in
@@ -451,17 +452,39 @@ merge and separately human-published, digest-verified release under
   unchanged; initialize and reconcile expose one complete signed generation;
   unrelated stable fixture bytes and modes remain unchanged; and unsupported
   platforms fail rather than weaken atomicity.
-- **R8 boundary:** R7 provides one atomically visible namespace switch, but
-  does not fsync the output parent or provide crash recovery. Durable
-  parent-directory persistence and recovery remain mandatory R8 work.
+- **R8 boundary:** R7 alone provides one atomically visible namespace switch
+  without parent-directory durability. Phase 7 closes that boundary with the
+  journal, parent synchronization, and exact-state recovery below.
+
+## Phase 7 - Recover durable writer work (R8)
+
+- [x] Persist and synchronize an exact prior/candidate journal around the
+  local atomic switch, synchronize the parent after commit, and recover
+  interrupted pre-switch and post-switch states without rollback.
+- [x] Implement a retained local intake store with conditional create,
+  read-after-write, prefix enumeration, process-safe target locks, immutable
+  requests, monotonic receipts, append-only attempts, and result pointers.
+- [x] Enumerate receipts for scheduled/manual recovery, process each codename
+  in sequence without cancellation, allow independent codenames to progress,
+  and recheck current policy and every referenced digest.
+- [x] Resume a partial Debian publication only from exact prior/candidate
+  object states, preserve conditional shared-pool behavior, and create
+  completion records only after complete public read-back.
+- **Done when:** crash-boundary, coalesced-wakeup, same-target ordering,
+  cross-target concurrency, partial-attempt replay, permission/5xx/timeout,
+  checksum, ambiguous-state, read-back, GPG, and APT fixture tests pass under
+  the race detector.
+- **Boundary:** this is local library and fixture evidence. No endpoint,
+  provider adapter, credential, workflow, schedule, publication, or
+  production mutation is configured or authorized.
 
 ## Later / ideas
 
-R8-R10 remain mandatory before closure expansion: durable recovery, sysext
-reconciliation, and a separately human-published digest-verified Repogen
-release. Their order and acceptance matrix remain authoritative in core Plan
-0007. R7 does not wire the read-only production validator to a provider,
-configure credentials, or confer publication authority.
+R9-R10 remain mandatory before closure expansion: sysext reconciliation and a
+separately human-published digest-verified Repogen release. Their order and
+acceptance matrix remain authoritative in core Plan 0007. R8 does not wire the
+read-only production validator to a provider, configure credentials, or
+confer publication authority.
 
 ## Open questions
 

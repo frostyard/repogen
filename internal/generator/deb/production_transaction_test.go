@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +31,9 @@ func TestProductionTransactionPublishesScopedObjectsWithInReleaseLast(t *testing
 	if err != nil {
 		t.Fatalf("PublishProductionTransaction() error = %v", err)
 	}
-	if result.ReleaseSHA256 == "" || result.InReleaseSHA256 == "" {
+	if result.SigningKeyFingerprint == "" ||
+		result.ReleaseSHA256 == "" ||
+		result.InReleaseSHA256 == "" {
 		t.Fatalf("result lacks signed metadata digests: %+v", result)
 	}
 	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
@@ -246,7 +249,146 @@ func TestProductionTransactionSerializesSameTarget(t *testing.T) {
 	}
 }
 
-func TestProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
+func TestRecoverProductionTransactionResumesPartialInitialize(t *testing.T) {
+	transaction := stageProductionFixture(t, "initialize", nil)
+	store := newProductionFixtureStore()
+	for index, object := range transaction.objects {
+		if index >= len(transaction.objects)/2 {
+			break
+		}
+		data, err := os.ReadFile(object.localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.objects[object.Path] = data
+	}
+
+	result, err := RecoverProductionTransaction(context.Background(), store, transaction)
+	if err != nil {
+		t.Fatalf("RecoverProductionTransaction() error = %v", err)
+	}
+	if result.ReleaseSHA256 == "" || result.InReleaseSHA256 == "" {
+		t.Fatalf("recovered result lacks commit digests: %+v", result)
+	}
+	for _, object := range transaction.objects {
+		if got := store.objectBytes(object.Path); sha256Hex(got) != object.SHA256 {
+			t.Fatalf("recovered object %s has wrong digest", object.Path)
+		}
+	}
+	writes := len(store.writePaths())
+	if got := store.writePaths()[writes-1]; got != "dists/trixie/InRelease" {
+		t.Fatalf("last recovery write = %q, want dists/trixie/InRelease", got)
+	}
+
+	if _, err := RecoverProductionTransaction(context.Background(), store, transaction); err != nil {
+		t.Fatalf("idempotent RecoverProductionTransaction() error = %v", err)
+	}
+	if got := len(store.writePaths()); got != writes {
+		t.Fatalf("idempotent recovery performed %d writes", got-writes)
+	}
+}
+
+func TestRecoverProductionTransactionResumesMixedPriorAndCandidate(t *testing.T) {
+	initial := stageProductionFixture(t, "initialize", nil)
+	store := newProductionFixtureStore()
+	if _, err := PublishProductionTransaction(context.Background(), store, initial); err != nil {
+		t.Fatal(err)
+	}
+	request, closeSigner := productionFixtureRequest(t, "reconcile", priorStateFor(t, initial))
+	defer closeSigner()
+	request.ReleaseTime = request.ReleaseTime.Add(24 * time.Hour)
+	reconcile, err := StageProductionTransaction(filepath.Join(t.TempDir(), "reconcile"), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced := false
+	for _, object := range reconcile.objects {
+		if object.kind != productionIndexObject {
+			continue
+		}
+		data, err := os.ReadFile(object.localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.objects[object.Path] = data
+		replaced = true
+		break
+	}
+	if !replaced {
+		t.Fatal("fixture has no mutable index object")
+	}
+
+	if _, err := RecoverProductionTransaction(context.Background(), store, reconcile); err != nil {
+		t.Fatalf("RecoverProductionTransaction() error = %v", err)
+	}
+	for _, object := range reconcile.objects {
+		if got := store.objectBytes(object.Path); sha256Hex(got) != object.SHA256 {
+			t.Fatalf("recovered object %s has wrong digest", object.Path)
+		}
+	}
+}
+
+func TestRecoverProductionTransactionRejectsUnknownOrUnreadableState(t *testing.T) {
+	transaction := stageProductionFixture(t, "initialize", nil)
+	testCases := []struct {
+		name  string
+		setup func(*productionFixtureStore)
+	}{
+		{
+			name: "unknown-target-object",
+			setup: func(store *productionFixtureStore) {
+				store.objects["dists/trixie/unexpected"] = []byte("drift")
+			},
+		},
+		{
+			name: "candidate-checksum-mismatch",
+			setup: func(store *productionFixtureStore) {
+				store.objects[transaction.objects[0].Path] = []byte("corrupt")
+			},
+		},
+		{
+			name: "visible-candidate-is-incomplete",
+			setup: func(store *productionFixtureStore) {
+				for _, object := range transaction.objects {
+					if object.kind != productionInReleaseObject {
+						continue
+					}
+					data, err := os.ReadFile(object.localPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					store.objects[object.Path] = data
+					return
+				}
+				t.Fatal("fixture has no InRelease object")
+			},
+		},
+		{
+			name: "read-error",
+			setup: func(store *productionFixtureStore) {
+				store.failOpenAt = 1
+			},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newProductionFixtureStore()
+			testCase.setup(store)
+			if _, err := RecoverProductionTransaction(
+				context.Background(),
+				store,
+				transaction,
+			); err == nil {
+				t.Fatal("RecoverProductionTransaction() unexpectedly succeeded")
+			}
+			if got := len(store.writePaths()); got != 0 {
+				t.Fatalf("failed recovery performed %d writes", got)
+			}
+		})
+	}
+}
+
+func TestRecoverProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
 	for _, command := range []string{"gpg", "gpgv", "apt-get"} {
 		if _, err := exec.LookPath(command); err != nil {
 			t.Skipf("%s is not available", command)
@@ -257,7 +399,7 @@ func TestProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
 	store := newProductionFixtureStore()
 	stable := []byte("stable snapshot fixture")
 	store.objects["dists/stable/InRelease"] = append([]byte(nil), stable...)
-	if _, err := PublishProductionTransaction(context.Background(), store, transaction); err != nil {
+	if _, err := RecoverProductionTransaction(context.Background(), store, transaction); err != nil {
 		t.Fatal(err)
 	}
 
@@ -573,6 +715,19 @@ func (s *productionFixtureStore) PrefixExists(_ context.Context, prefix string) 
 		}
 	}
 	return false, nil
+}
+
+func (s *productionFixtureStore) ListPrefix(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	for key := range s.objects {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 func (s *productionFixtureStore) Acquire(ctx context.Context, target string) (ProductionPublicationLock, error) {

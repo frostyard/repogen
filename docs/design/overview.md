@@ -148,17 +148,36 @@ receive `0644`. Ownership, extended attributes, ACLs, and timestamps are not
 preserved or compared. The generic generator still supports unsigned output
 and direct local writes.
 
-These primitives do not connect `validate-production` to a writer, provide
-an R2 adapter or credential path, make local filesystem locking enforceable,
-or authorize a production operation. R8-R10 retain those separate
-boundaries. Atomic local replacement requires Linux `renameat2`; unsupported
-platforms fail rather than use a two-rename fallback. R7 reads and hashes the
-complete prior tree and copies all retained content, including `pool/`, so
-each generation costs O(repository size) I/O and hashing and requires roughly
-twice the repository's disk space while the sibling generation exists.
-The switch is atomically visible but not yet crash-durable because R7 does
-not fsync the output parent after `renameat2`; parent-directory persistence
-and recovery belong to R8.
+R8 makes the local switch crash-durable. Before `renameat2`, Repogen records
+the exact prior and candidate tree digests in an exclusive recovery journal
+and synchronizes both candidate and parent. After the switch it synchronizes
+the parent before reporting success. Recovery accepts only three safe facts:
+the output is the exact candidate, the sibling is the exact candidate while
+the output is the exact prior, or the output is the exact candidate after
+private cleanup already completed. Any other state stops without another
+rename. A visible candidate is never rolled back.
+
+R8 also introduces `internal/intake` for retained immutable records. Its local
+file store uses create-if-absent links, file and directory synchronization,
+read-back, prefix enumeration, and process-safe target locks. The recorder
+binds an adapter-provided authenticated principal to the request, verifies
+digest-addressed provenance and artifacts, and allocates monotonic
+per-target receipts. The reconciler enumerates receipts rather than workflow
+history, processes one target in sequence, permits independent targets to run
+concurrently, rechecks current authorization, retains append-only attempts,
+and creates a result pointer only after public verification. The Debian
+adapter uses the scoped production transaction and can resume a partial
+publication only when each observed object is exact prior bytes, exact
+candidate bytes, or authoritatively absent where allowed.
+
+These primitives do not connect `validate-production` to a network endpoint,
+provide an R2 adapter or credential path, configure a schedule, or authorize a
+production operation. Capability separation still depends on a future
+provider adapter and credential configuration and is not technically enforced
+by these library interfaces. Atomic local replacement requires Linux
+`renameat2`; unsupported platforms fail rather than use a two-rename fallback.
+Each local generation still costs O(repository size) I/O and hashing and
+requires roughly twice the repository's disk space while the sibling exists.
 
 ## Key Patterns
 

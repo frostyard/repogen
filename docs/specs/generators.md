@@ -156,9 +156,52 @@ unsigned `InRelease` behavior.
 R7 reads and hashes the complete prior repository and copies all retained
 content, including `pool/`. A generation therefore incurs O(repository size)
 read, write, hashing, and synchronization work and requires roughly 2x
-transient repository space. The namespace switch is atomic, but R7 does not
-fsync the output parent after `renameat2`; it does not yet claim crash
-durability. Parent-directory persistence and recovery are R8 responsibilities.
+transient repository space.
+
+R8 persists an exclusive sibling recovery journal containing the output name,
+generation name, existence state, and exact prior/candidate tree digests
+before the atomic namespace switch. It synchronizes the output parent after
+both journal creation and `renameat2`. Recovery re-hashes both possible trees:
+it completes a pending switch only when the sibling is the exact candidate
+and the output is the exact prior, or cleans private prior bytes when the
+output is already the exact candidate. Unknown, corrupt, missing, symlinked,
+or third-state trees fail closed. Cleanup after the durable switch is private
+and cannot roll a visible candidate backward.
+
+### Durable Debian intake and recovery (R8)
+
+`internal/intake` defines retained, create-only records for provenance,
+artifacts, canonical requests, per-target receipts, attempts, result
+manifests, and result pointers. The local store synchronizes immutable files
+and newly created directories, performs read-after-write verification, lists
+receipts by prefix, and uses filesystem locks for process-safe target
+serialization. A submission key can replay identical request bytes but cannot
+name different bytes. The adapter-provided authenticated principal must match
+the request producer; policy digests are retained and a non-nil current-policy
+authorizer runs before every writer attempt.
+
+Scheduled and manual recovery use the same full receipt enumeration. Receipts
+for one Debian codename run in increasing sequence and stop on the first
+failure; different codenames run independently. Every referenced object is
+re-hashed on replay. Attempts are append-only, and neither workflow dispatch
+nor process success records completion. A content-addressed result manifest
+and its create-only request pointer are written only after the writer verifies
+the complete public object set.
+
+`ProductionRecoveryWriter` rebuilds the signed B5 transaction through a
+caller-supplied intake-only builder. `RecoverProductionTransaction` holds the
+codename lock and classifies every planned object before writing: exact
+candidate bytes are idempotent no-ops, exact prior mutable bytes may advance,
+and authoritatively absent immutable bytes may be created. Any permission or
+transport error, unknown initialize-prefix object, missing reconcile prior,
+checksum mismatch, incomplete body, or other third state stops before another
+write. Shared-pool objects retain conditional-create and full-byte read-back,
+and `InRelease` remains the final write.
+
+This package supplies no HTTP service, object-store adapter, workflow,
+credential, signer configuration, or production authorization. The local
+store and tests are explicitly fixtures/protected-local primitives; a real
+adapter must separately prove authentication and least-privilege enforcement.
 
 ## Debian/APT (`internal/generator/deb/`)
 

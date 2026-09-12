@@ -67,18 +67,20 @@ type ProductionRequestManifest struct {
 	RequestID                  string                     `json:"request_id"`
 	Operation                  string                     `json:"operation"`
 	Target                     string                     `json:"target"`
+	SigningKeyFingerprint      string                     `json:"signing_key_fingerprint"`
 	ExpectedPriorReleaseSHA256 string                     `json:"expected_prior_release_sha256,omitempty"`
 	Packages                   []ProductionManifestObject `json:"packages"`
 	Objects                    []ProductionManifestObject `json:"objects"`
 }
 
 type ProductionResultManifest struct {
-	SchemaVersion   int                        `json:"schema_version"`
-	RequestSHA256   string                     `json:"request_sha256"`
-	Target          string                     `json:"target"`
-	ReleaseSHA256   string                     `json:"release_sha256"`
-	InReleaseSHA256 string                     `json:"inrelease_sha256"`
-	Objects         []ProductionManifestObject `json:"objects"`
+	SchemaVersion         int                        `json:"schema_version"`
+	RequestSHA256         string                     `json:"request_sha256"`
+	Target                string                     `json:"target"`
+	SigningKeyFingerprint string                     `json:"signing_key_fingerprint"`
+	ReleaseSHA256         string                     `json:"release_sha256"`
+	InReleaseSHA256       string                     `json:"inrelease_sha256"`
+	Objects               []ProductionManifestObject `json:"objects"`
 }
 
 type productionObjectKind int
@@ -99,14 +101,15 @@ type stagedProductionObject struct {
 }
 
 type ProductionTransaction struct {
-	Codename           string
-	Operation          string
-	StageDir           string
-	RequestManifest    ProductionRequestManifest
-	RequestSHA256      string
-	ExpectedPrior      map[string]ProductionObjectDigest
-	VerifiedSharedPool map[string]PoolDigest
-	objects            []stagedProductionObject
+	Codename              string
+	Operation             string
+	StageDir              string
+	RequestManifest       ProductionRequestManifest
+	RequestSHA256         string
+	SigningKeyFingerprint string
+	ExpectedPrior         map[string]ProductionObjectDigest
+	VerifiedSharedPool    map[string]PoolDigest
+	objects               []stagedProductionObject
 }
 
 type ProductionPublicationLock interface {
@@ -123,6 +126,7 @@ type ProductionPublicationStore interface {
 		expectedSHA256 string,
 	) error
 	PrefixExists(ctx context.Context, prefix string) (bool, error)
+	ListPrefix(ctx context.Context, prefix string) ([]string, error)
 	Acquire(ctx context.Context, target string) (ProductionPublicationLock, error)
 }
 
@@ -229,6 +233,11 @@ func stageProductionTransaction(
 	if err := verifyStagedProductionSignatures(publicKey, release, inRelease, releaseSignature); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPublicationCandidate, err)
 	}
+	publicEntities, err := parseProductionKeyRing(publicKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: parse signing public key: %v", ErrPublicationCandidate, err)
+	}
+	transaction.SigningKeyFingerprint = fmt.Sprintf("%X", publicEntities[0].PrimaryKey.Fingerprint)
 
 	suitePrefix := path.Join("dists", request.Codename)
 	for _, object := range []struct {
@@ -273,6 +282,7 @@ func stageProductionTransaction(
 		RequestID:                  request.RequestID,
 		Operation:                  request.Operation,
 		Target:                     suitePrefix,
+		SigningKeyFingerprint:      transaction.SigningKeyFingerprint,
 		ExpectedPriorReleaseSHA256: request.ExpectedPriorReleaseSHA256,
 		Packages:                   packageManifest,
 		Objects:                    manifestObjects,
@@ -363,10 +373,11 @@ func PublishProductionTransaction(
 	}
 
 	result := &ProductionResultManifest{
-		SchemaVersion: productionManifestVersion,
-		RequestSHA256: transaction.RequestSHA256,
-		Target:        path.Join("dists", transaction.Codename),
-		Objects:       make([]ProductionManifestObject, 0, len(transaction.objects)),
+		SchemaVersion:         productionManifestVersion,
+		RequestSHA256:         transaction.RequestSHA256,
+		Target:                path.Join("dists", transaction.Codename),
+		SigningKeyFingerprint: transaction.SigningKeyFingerprint,
+		Objects:               make([]ProductionManifestObject, 0, len(transaction.objects)),
 	}
 	for _, object := range transaction.objects {
 		result.Objects = append(result.Objects, object.ProductionManifestObject)
@@ -380,12 +391,199 @@ func PublishProductionTransaction(
 	return result, nil
 }
 
+// RecoverProductionTransaction resumes an interrupted publication by
+// accepting only exact prior or exact candidate bytes. It never rewrites a
+// candidate object and rejects every third state before another write.
+func RecoverProductionTransaction(
+	ctx context.Context,
+	store ProductionPublicationStore,
+	transaction *ProductionTransaction,
+) (_ *ProductionResultManifest, retErr error) {
+	if store == nil || transaction == nil {
+		return nil, fmt.Errorf("%w: store and transaction are required", ErrPublicationCandidate)
+	}
+	if err := validateProductionTransactionIdentity(transaction); err != nil {
+		return nil, err
+	}
+	if err := validateStagedProductionObjects(transaction); err != nil {
+		return nil, err
+	}
+
+	lock, err := store.Acquire(ctx, transaction.Codename)
+	if err != nil {
+		return nil, fmt.Errorf("%w: acquire %s recovery serialization: %v", ErrPublicationState, transaction.Codename, err)
+	}
+	if lock == nil {
+		return nil, fmt.Errorf("%w: store returned no recovery serialization lock", ErrPublicationState)
+	}
+	defer func() {
+		if err := lock.Release(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("%w: release %s recovery serialization: %v", ErrPublicationState, transaction.Codename, err)
+		}
+	}()
+
+	candidatePresent, err := classifyRecoverableProductionObjects(ctx, store, transaction)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := NewSharedPool(store, transaction.VerifiedSharedPool)
+	if err != nil {
+		return nil, err
+	}
+	for _, object := range transaction.objects {
+		if candidatePresent[object.Path] {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file, err := os.Open(object.localPath)
+		if err != nil {
+			return nil, fmt.Errorf("%w: open staged %s: %v", ErrPublicationCandidate, object.Path, err)
+		}
+		switch object.kind {
+		case productionPoolObject:
+			_, err = pool.Ensure(ctx, PoolCandidate{
+				Path:    object.Path,
+				SHA256:  object.SHA256,
+				Size:    object.Size,
+				Content: file,
+			})
+		case productionByHashObject:
+			err = createImmutableProductionObject(ctx, store, object, file)
+		default:
+			err = writeMutableProductionObject(ctx, store, transaction, object, file)
+		}
+		closeErr := file.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("%w: close staged %s: %v", ErrPublicationCandidate, object.Path, closeErr)
+		}
+		if err := verifyPublishedProductionObject(ctx, store, object.ProductionManifestObject); err != nil {
+			return nil, err
+		}
+	}
+	for _, object := range transaction.objects {
+		if err := verifyPublishedProductionObject(ctx, store, object.ProductionManifestObject); err != nil {
+			return nil, err
+		}
+	}
+	return productionResultForTransaction(transaction), nil
+}
+
 func (r *ProductionResultManifest) Marshal() ([]byte, error) {
 	data, err := json.Marshal(r)
 	if err != nil {
 		return nil, err
 	}
 	return append(data, '\n'), nil
+}
+
+func classifyRecoverableProductionObjects(
+	ctx context.Context,
+	store ProductionPublicationStore,
+	transaction *ProductionTransaction,
+) (map[string]bool, error) {
+	if transaction.Operation == "initialize" {
+		prefix := path.Join("dists", transaction.Codename) + "/"
+		keys, err := store.ListPrefix(ctx, prefix)
+		if err != nil {
+			return nil, fmt.Errorf("%w: enumerate initialize target: %v", ErrPublicationState, err)
+		}
+		planned := make(map[string]struct{})
+		for _, object := range transaction.objects {
+			if strings.HasPrefix(object.Path, prefix) {
+				planned[object.Path] = struct{}{}
+			}
+		}
+		for _, key := range keys {
+			if _, ok := planned[key]; !ok {
+				return nil, fmt.Errorf("%w: initialize target contains unexpected object %s", ErrPublicationState, key)
+			}
+		}
+	}
+
+	candidatePresent := make(map[string]bool, len(transaction.objects))
+	for _, object := range transaction.objects {
+		observed, exists, err := inspectPublishedProductionObject(ctx, store, object.Path)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			if transaction.Operation == "reconcile" && object.kind >= productionIndexObject {
+				return nil, fmt.Errorf("%w: prior mutable object %s is absent", ErrPublicationState, object.Path)
+			}
+			continue
+		}
+		if observed.SHA256 == object.SHA256 && observed.Size == object.Size {
+			candidatePresent[object.Path] = true
+			continue
+		}
+		if transaction.Operation == "reconcile" && object.kind >= productionIndexObject {
+			prior, ok := transaction.ExpectedPrior[object.Path]
+			if ok && observed.SHA256 == prior.SHA256 && observed.Size == prior.Size {
+				continue
+			}
+		}
+		return nil, fmt.Errorf("%w: object %s is neither prior nor candidate bytes", ErrPublicationState, object.Path)
+	}
+	commitPath := path.Join("dists", transaction.Codename, "InRelease")
+	if candidatePresent[commitPath] {
+		for _, object := range transaction.objects {
+			if !candidatePresent[object.Path] {
+				return nil, fmt.Errorf(
+					"%w: candidate InRelease is visible while %s is not candidate bytes",
+					ErrPublicationState,
+					object.Path,
+				)
+			}
+		}
+	}
+	return candidatePresent, nil
+}
+
+func inspectPublishedProductionObject(
+	ctx context.Context,
+	store ProductionPublicationStore,
+	key string,
+) (ProductionObjectDigest, bool, error) {
+	object, err := store.Open(ctx, key)
+	if errors.Is(err, ErrPoolObjectNotFound) {
+		return ProductionObjectDigest{}, false, nil
+	}
+	if err != nil {
+		return ProductionObjectDigest{}, false, fmt.Errorf("%w: inspect %s: %v", ErrPublicationReadBack, key, err)
+	}
+	if object == nil || object.Body == nil {
+		return ProductionObjectDigest{}, false, fmt.Errorf("%w: store returned no body for %s", ErrPublicationReadBack, key)
+	}
+	observed, err := hashRemote(ctx, object.Body)
+	if err != nil {
+		return ProductionObjectDigest{}, false, fmt.Errorf("%w: hash %s: %v", ErrPublicationReadBack, key, err)
+	}
+	return ProductionObjectDigest(observed), true, nil
+}
+
+func productionResultForTransaction(transaction *ProductionTransaction) *ProductionResultManifest {
+	result := &ProductionResultManifest{
+		SchemaVersion:         productionManifestVersion,
+		RequestSHA256:         transaction.RequestSHA256,
+		Target:                path.Join("dists", transaction.Codename),
+		SigningKeyFingerprint: transaction.SigningKeyFingerprint,
+		Objects:               make([]ProductionManifestObject, 0, len(transaction.objects)),
+	}
+	for _, object := range transaction.objects {
+		result.Objects = append(result.Objects, object.ProductionManifestObject)
+		switch object.kind {
+		case productionReleaseObject:
+			result.ReleaseSHA256 = object.SHA256
+		case productionInReleaseObject:
+			result.InReleaseSHA256 = object.SHA256
+		}
+	}
+	return result
 }
 
 func validateProductionStageRequest(stageDir string, request ProductionStageRequest) error {
@@ -891,6 +1089,7 @@ func validateProductionTransactionIdentity(transaction *ProductionTransaction) e
 	if transaction.Codename == "" ||
 		transaction.RequestManifest.Target != path.Join("dists", transaction.Codename) ||
 		transaction.RequestManifest.Operation != transaction.Operation ||
+		transaction.RequestManifest.SigningKeyFingerprint != transaction.SigningKeyFingerprint ||
 		transaction.RequestManifest.SchemaVersion != productionManifestVersion {
 		return fmt.Errorf("%w: staged transaction identity changed after planning", ErrPublicationCandidate)
 	}

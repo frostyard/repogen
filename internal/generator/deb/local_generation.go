@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"sort"
 	"strings"
 )
+
+const localRecoveryVersion = 1
 
 // ErrLocalGeneration identifies a failed atomic local production generation.
 var ErrLocalGeneration = errors.New("local production generation failed")
@@ -27,6 +30,23 @@ type localTreeEntry struct {
 	Size   int64
 	SHA256 string
 	IsDir  bool
+}
+
+type localRecoveryJournal struct {
+	SchemaVersion    int    `json:"schema_version"`
+	Output           string `json:"output"`
+	Generation       string `json:"generation"`
+	OutputExisted    bool   `json:"output_existed"`
+	PriorSHA256      string `json:"prior_sha256,omitempty"`
+	GenerationSHA256 string `json:"generation_sha256"`
+}
+
+type localTreeDigestEntry struct {
+	Path   string `json:"path"`
+	Mode   uint32 `json:"mode"`
+	Size   int64  `json:"size,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
+	IsDir  bool   `json:"is_dir"`
 }
 
 // GenerateLocalProductionRepository stages and atomically commits one signed
@@ -78,6 +98,9 @@ func commitLocalProductionTransaction(
 	if err := validateLocalGenerationPaths(outputDir, transaction.StageDir); err != nil {
 		return err
 	}
+	if err := recoverLocalProductionRepository(ctx, outputDir); err != nil {
+		return err
+	}
 	if err := beforeProductionLocalStep(ctx, hooks, "commit:validate-stage"); err != nil {
 		return err
 	}
@@ -105,9 +128,10 @@ func commitLocalProductionTransaction(
 		_ = os.RemoveAll(generationDir)
 		return fmt.Errorf("%w: set generation permissions: %v", ErrLocalGeneration, err)
 	}
-	committed := false
+	switched := false
+	preserveForRecovery := false
 	defer func() {
-		if !committed || outputExists {
+		if !switched && !preserveForRecovery {
 			_ = os.RemoveAll(generationDir)
 		}
 	}()
@@ -143,13 +167,144 @@ func commitLocalProductionTransaction(
 	if err := syncLocalGeneration(ctx, generationDir, hooks); err != nil {
 		return err
 	}
+	generationSHA256, err := digestLocalTree(ctx, generationDir)
+	if err != nil {
+		return err
+	}
+	priorSHA256 := ""
+	if outputExists {
+		priorSHA256, err = digestLocalTreeSnapshot(priorSnapshot)
+		if err != nil {
+			return err
+		}
+	}
+	journal := localRecoveryJournal{
+		SchemaVersion:    localRecoveryVersion,
+		Output:           filepath.Base(outputDir),
+		Generation:       filepath.Base(generationDir),
+		OutputExisted:    outputExists,
+		PriorSHA256:      priorSHA256,
+		GenerationSHA256: generationSHA256,
+	}
+	if err := beforeProductionLocalStep(ctx, hooks, "commit:write-recovery"); err != nil {
+		return err
+	}
+	if err := writeLocalRecoveryJournal(filepath.Dir(outputDir), journal); err != nil {
+		if cleanupErr := removeLocalRecoveryJournal(filepath.Dir(outputDir), journal.Output); cleanupErr != nil {
+			preserveForRecovery = true
+			return errors.Join(err, fmt.Errorf("%w: preserve failed recovery journal: %v", ErrLocalGeneration, cleanupErr))
+		}
+		return err
+	}
 	if err := beforeProductionLocalStep(ctx, hooks, "commit:atomic-switch"); err != nil {
+		if cleanupErr := removeLocalRecoveryJournal(filepath.Dir(outputDir), journal.Output); cleanupErr != nil {
+			preserveForRecovery = true
+			return errors.Join(err, fmt.Errorf("%w: preserve failed recovery journal: %v", ErrLocalGeneration, cleanupErr))
+		}
 		return err
 	}
 	if err := atomicReplaceDirectory(generationDir, outputDir, outputExists); err != nil {
-		return fmt.Errorf("%w: atomic directory switch: %v", ErrLocalGeneration, err)
+		switchErr := fmt.Errorf("%w: atomic directory switch: %v", ErrLocalGeneration, err)
+		if cleanupErr := removeLocalRecoveryJournal(filepath.Dir(outputDir), journal.Output); cleanupErr != nil {
+			preserveForRecovery = true
+			return errors.Join(switchErr, fmt.Errorf("%w: preserve failed recovery journal: %v", ErrLocalGeneration, cleanupErr))
+		}
+		return switchErr
 	}
-	committed = true
+	switched = true
+	if err := syncLocalDirectory(filepath.Dir(outputDir)); err != nil {
+		return fmt.Errorf("%w: persist atomic directory switch: %v", ErrLocalGeneration, err)
+	}
+	_ = finishLocalRecovery(filepath.Dir(outputDir), journal)
+	return nil
+}
+
+// RecoverLocalProductionRepository completes or cleans a journaled local
+// production commit without rolling a visible generation backward.
+func RecoverLocalProductionRepository(ctx context.Context, outputDir string) error {
+	if outputDir == "" || filepath.Clean(outputDir) != outputDir {
+		return fmt.Errorf("%w: output path must be explicit and clean", ErrLocalGeneration)
+	}
+	parent := filepath.Dir(outputDir)
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return fmt.Errorf("%w: inspect output parent: %v", ErrLocalGeneration, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%w: output parent is not a regular directory", ErrLocalGeneration)
+	}
+	return recoverLocalProductionRepository(ctx, outputDir)
+}
+
+func recoverLocalProductionRepository(ctx context.Context, outputDir string) error {
+	parent := filepath.Dir(outputDir)
+	journalPath := localRecoveryJournalPath(parent, filepath.Base(outputDir))
+	data, err := os.ReadFile(journalPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w: read recovery journal: %v", ErrLocalGeneration, err)
+	}
+	var journal localRecoveryJournal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		return fmt.Errorf("%w: decode recovery journal: %v", ErrLocalGeneration, err)
+	}
+	canonical, err := json.Marshal(journal)
+	if err != nil {
+		return fmt.Errorf("%w: encode recovery journal: %v", ErrLocalGeneration, err)
+	}
+	canonical = append(canonical, '\n')
+	if !reflect.DeepEqual(data, canonical) ||
+		journal.SchemaVersion != localRecoveryVersion ||
+		journal.Output != filepath.Base(outputDir) ||
+		filepath.Base(journal.Output) != journal.Output ||
+		filepath.Base(journal.Generation) != journal.Generation ||
+		!strings.HasPrefix(journal.Generation, "."+journal.Output+".repogen-generation-") ||
+		!isLowerHexDigest(journal.GenerationSHA256) ||
+		(journal.OutputExisted && !isLowerHexDigest(journal.PriorSHA256)) ||
+		(!journal.OutputExisted && journal.PriorSHA256 != "") {
+		return fmt.Errorf("%w: invalid recovery journal", ErrLocalGeneration)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	generationDir := filepath.Join(parent, journal.Generation)
+	outputDigest, outputExists, err := digestLocalTreeIfExists(ctx, outputDir)
+	if err != nil {
+		return err
+	}
+	generationDigest, generationExists, err := digestLocalTreeIfExists(ctx, generationDir)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case outputExists && outputDigest == journal.GenerationSHA256:
+		if generationExists && (!journal.OutputExisted || generationDigest != journal.PriorSHA256) {
+			return fmt.Errorf("%w: obsolete generation does not match journaled prior state", ErrLocalGeneration)
+		}
+	case generationExists && generationDigest == journal.GenerationSHA256:
+		if journal.OutputExisted {
+			if !outputExists || outputDigest != journal.PriorSHA256 {
+				return fmt.Errorf("%w: output does not match journaled prior state", ErrLocalGeneration)
+			}
+		} else if outputExists {
+			return fmt.Errorf("%w: initialize output appeared during recovery", ErrLocalGeneration)
+		}
+		if err := atomicReplaceDirectory(generationDir, outputDir, journal.OutputExisted); err != nil {
+			return fmt.Errorf("%w: recover atomic directory switch: %v", ErrLocalGeneration, err)
+		}
+		if err := syncLocalDirectory(parent); err != nil {
+			return fmt.Errorf("%w: persist recovered directory switch: %v", ErrLocalGeneration, err)
+		}
+	default:
+		return fmt.Errorf("%w: neither output nor generation matches recovery journal", ErrLocalGeneration)
+	}
+	if err := finishLocalRecovery(parent, journal); err != nil {
+		return fmt.Errorf("%w: finish recovery: %v", ErrLocalGeneration, err)
+	}
 	return nil
 }
 
@@ -610,4 +765,141 @@ func syncLocalGeneration(
 		}
 	}
 	return nil
+}
+
+func digestLocalTree(ctx context.Context, root string) (string, error) {
+	snapshot, err := snapshotLocalTree(ctx, root, nil, "recovery:snapshot")
+	if err != nil {
+		return "", err
+	}
+	return digestLocalTreeSnapshot(snapshot)
+}
+
+func digestLocalTreeSnapshot(snapshot map[string]localTreeEntry) (string, error) {
+	paths := make([]string, 0, len(snapshot))
+	for relative := range snapshot {
+		paths = append(paths, relative)
+	}
+	sort.Strings(paths)
+	entries := make([]localTreeDigestEntry, 0, len(paths))
+	for _, relative := range paths {
+		entry := snapshot[relative]
+		entries = append(entries, localTreeDigestEntry{
+			Path:   filepath.ToSlash(relative),
+			Mode:   uint32(entry.Mode),
+			Size:   entry.Size,
+			SHA256: entry.SHA256,
+			IsDir:  entry.IsDir,
+		})
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return "", fmt.Errorf("%w: encode tree digest: %v", ErrLocalGeneration, err)
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func digestLocalTreeIfExists(ctx context.Context, root string) (string, bool, error) {
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("%w: inspect recovery tree: %v", ErrLocalGeneration, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", false, fmt.Errorf("%w: recovery tree is not a regular directory", ErrLocalGeneration)
+	}
+	digest, err := digestLocalTree(ctx, root)
+	return digest, true, err
+}
+
+func isLowerHexDigest(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil && strings.ToLower(value) == value
+}
+
+func localRecoveryJournalPath(parent, output string) string {
+	return filepath.Join(parent, "."+output+".repogen-recovery.json")
+}
+
+func writeLocalRecoveryJournal(parent string, journal localRecoveryJournal) error {
+	data, err := json.Marshal(journal)
+	if err != nil {
+		return fmt.Errorf("%w: encode recovery journal: %v", ErrLocalGeneration, err)
+	}
+	data = append(data, '\n')
+	journalPath := localRecoveryJournalPath(parent, journal.Output)
+	file, err := os.OpenFile(journalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("%w: create recovery journal: %v", ErrLocalGeneration, err)
+	}
+	writeErr := writeAll(file, data)
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	closeErr := file.Close()
+	if writeErr != nil {
+		return fmt.Errorf("%w: write recovery journal: %v", ErrLocalGeneration, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("%w: close recovery journal: %v", ErrLocalGeneration, closeErr)
+	}
+	if err := syncLocalDirectory(parent); err != nil {
+		return fmt.Errorf("%w: persist recovery journal: %v", ErrLocalGeneration, err)
+	}
+	return nil
+}
+
+func writeAll(writer io.Writer, data []byte) error {
+	for len(data) > 0 {
+		written, err := writer.Write(data)
+		if err != nil {
+			return err
+		}
+		if written == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[written:]
+	}
+	return nil
+}
+
+func removeLocalRecoveryJournal(parent, output string) error {
+	err := os.Remove(localRecoveryJournalPath(parent, output))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return syncLocalDirectory(parent)
+}
+
+func finishLocalRecovery(parent string, journal localRecoveryJournal) error {
+	generationDir := filepath.Join(parent, journal.Generation)
+	if err := os.RemoveAll(generationDir); err != nil {
+		return err
+	}
+	if err := removeLocalRecoveryJournal(parent, journal.Output); err != nil {
+		return err
+	}
+	return syncLocalDirectory(parent)
+}
+
+func syncLocalDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }

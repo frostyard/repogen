@@ -306,6 +306,60 @@ func TestLocalProductionReconcileCommitsOneCompleteGeneration(t *testing.T) {
 	assertNoGenerationScratch(t, filepath.Dir(outputDir))
 }
 
+func TestLocalProductionRecoveryCompletesInterruptedSwitch(t *testing.T) {
+	for _, switched := range []bool{false, true} {
+		t.Run(fmt.Sprintf("switched-%t", switched), func(t *testing.T) {
+			outputDir, reconcile := prepareLocalRecoveryFixture(t, switched)
+
+			if err := RecoverLocalProductionRepository(
+				context.Background(),
+				outputDir,
+			); err != nil {
+				t.Fatalf("RecoverLocalProductionRepository() error = %v", err)
+			}
+
+			assertCompleteLocalGeneration(t, outputDir, reconcile)
+			assertStableLocalFixture(t, outputDir)
+			assertNoGenerationScratch(t, filepath.Dir(outputDir))
+			if _, err := os.Lstat(localRecoveryJournalPath(
+				filepath.Dir(outputDir),
+				filepath.Base(outputDir),
+			)); !os.IsNotExist(err) {
+				t.Fatalf("recovery journal remains: %v", err)
+			}
+		})
+	}
+}
+
+func TestLocalProductionRecoveryFailsClosedOnUnknownState(t *testing.T) {
+	outputDir, _ := prepareLocalRecoveryFixture(t, false)
+	before := localTreeSnapshotForTest(t, outputDir)
+	if err := os.WriteFile(
+		filepath.Join(outputDir, "unexpected"),
+		[]byte("drift"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RecoverLocalProductionRepository(
+		context.Background(),
+		outputDir,
+	); !errors.Is(err, ErrLocalGeneration) {
+		t.Fatalf("RecoverLocalProductionRepository() error = %v, want ErrLocalGeneration", err)
+	}
+	after := localTreeSnapshotForTest(t, outputDir)
+	if reflect.DeepEqual(after, before) {
+		t.Fatal("test fixture did not introduce output drift")
+	}
+	if _, err := os.Lstat(localRecoveryJournalPath(
+		filepath.Dir(outputDir),
+		filepath.Base(outputDir),
+	)); err != nil {
+		t.Fatalf("fail-closed recovery removed journal: %v", err)
+	}
+}
+
 func TestLocalProductionInitializeModesIgnoreRestrictiveUmask(t *testing.T) {
 	root := t.TempDir()
 	outputDir := filepath.Join(root, "repository")
@@ -319,6 +373,81 @@ func TestLocalProductionInitializeModesIgnoreRestrictiveUmask(t *testing.T) {
 	}
 
 	assertLocalGenerationModes(t, outputDir, transaction, nil)
+}
+
+func prepareLocalRecoveryFixture(
+	t *testing.T,
+	switched bool,
+) (string, *ProductionTransaction) {
+	t.Helper()
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	writeStableLocalFixture(t, outputDir)
+
+	initial := stageProductionFixture(t, "initialize", nil)
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, initial); err != nil {
+		t.Fatal(err)
+	}
+	request, closeSigner := productionFixtureRequest(t, "reconcile", priorStateFor(t, initial))
+	t.Cleanup(closeSigner)
+	request.ReleaseTime = request.ReleaseTime.Add(24 * time.Hour)
+	reconcile, err := StageProductionTransaction(filepath.Join(root, "reconcile-stage"), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationDir, err := os.MkdirTemp(root, ".repository.repogen-generation-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(generationDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prior, err := snapshotAndCopyLocalTree(
+		context.Background(),
+		outputDir,
+		generationDir,
+		filepath.Join("dists", reconcile.Codename),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installLocalGenerationObjects(
+		context.Background(),
+		generationDir,
+		reconcile,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncLocalGeneration(context.Background(), generationDir, nil); err != nil {
+		t.Fatal(err)
+	}
+	generationSHA256, err := digestLocalTree(context.Background(), generationDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorSHA256, err := digestLocalTreeSnapshot(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := localRecoveryJournal{
+		SchemaVersion:    localRecoveryVersion,
+		Output:           filepath.Base(outputDir),
+		Generation:       filepath.Base(generationDir),
+		OutputExisted:    true,
+		PriorSHA256:      priorSHA256,
+		GenerationSHA256: generationSHA256,
+	}
+	if err := writeLocalRecoveryJournal(root, journal); err != nil {
+		t.Fatal(err)
+	}
+	if switched {
+		if err := atomicReplaceDirectory(generationDir, outputDir, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return outputDir, reconcile
 }
 
 func TestLocalProductionReconcileModesIgnoreRestrictiveUmask(t *testing.T) {
