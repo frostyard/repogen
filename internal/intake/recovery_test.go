@@ -415,6 +415,38 @@ func TestReconcilerRechecksCurrentPolicyBeforeAttempt(t *testing.T) {
 	}
 }
 
+func TestReconcilerVerifiesCompletedResultAfterPolicyRevocation(t *testing.T) {
+	store := newFixtureFileStore(t)
+	request := fixtureRequest(t, store, "trixie", "initialize", nil)
+	if _, err := (Recorder{Store: store}).Accept(
+		context.Background(),
+		request.Producer,
+		"run-1",
+		fixtureDigest("policy"),
+		request,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writer := &fixtureWriter{}
+	reconciler := fixtureReconciler(store, writer)
+	if err := reconciler.ReconcileAll(context.Background()); err != nil {
+		t.Fatalf("initial ReconcileAll() error = %v", err)
+	}
+	reconciler.Authorizer = AuthorizeFunc(func(context.Context, Receipt, Request) error {
+		return errors.New("producer revoked")
+	})
+
+	if err := reconciler.ReconcileAll(context.Background()); err != nil {
+		t.Fatalf("completed-result ReconcileAll() error = %v", err)
+	}
+	if got := writer.appliedSequences(); !reflect.DeepEqual(got, []uint64{1}) {
+		t.Fatalf("completed result triggered writer attempts %v, want [1]", got)
+	}
+	if got := writer.verifyCount(); got != 2 {
+		t.Fatalf("completed result verify count = %d, want 2", got)
+	}
+}
+
 func newFixtureFileStore(t *testing.T) *FileStore {
 	t.Helper()
 	store, err := OpenFileStore(t.TempDir())

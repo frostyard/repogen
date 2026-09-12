@@ -32,9 +32,11 @@ type Lock interface {
 }
 
 // Store is the retained, enumerable boundary used by intake and recovery.
-// Create must never replace an existing key.
+// CreateIfAbsent must be one atomic provider operation: it returns true only
+// when this call installed the key, and false when the key already existed.
+// It must never replace existing bytes.
 type Store interface {
-	Create(ctx context.Context, key string, body io.Reader, size int64) error
+	CreateIfAbsent(ctx context.Context, key string, body io.Reader, size int64) (bool, error)
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 	List(ctx context.Context, prefix string) ([]string, error)
 	Acquire(ctx context.Context, target string) (Lock, error)
@@ -70,31 +72,36 @@ func OpenFileStore(root string) (*FileStore, error) {
 	return &FileStore{root: resolved}, nil
 }
 
-func (s *FileStore) Create(ctx context.Context, key string, body io.Reader, size int64) error {
+func (s *FileStore) CreateIfAbsent(
+	ctx context.Context,
+	key string,
+	body io.Reader,
+	size int64,
+) (bool, error) {
 	target, err := s.resolveKey(key)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if body == nil || size < 0 {
-		return fmt.Errorf("%w: immutable object body and size are required", ErrState)
+		return false, fmt.Errorf("%w: immutable object body and size are required", ErrState)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	parent := filepath.Dir(target)
 	if err := s.mkdirAllDurable(parent); err != nil {
-		return err
+		return false, err
 	}
 
 	temporary, err := os.CreateTemp(parent, ".repogen-intake-")
 	if err != nil {
-		return fmt.Errorf("%w: create immutable temporary object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: create immutable temporary object: %v", ErrState, err)
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0o644); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("%w: set immutable object mode: %v", ErrState, err)
+		return false, fmt.Errorf("%w: set immutable object mode: %v", ErrState, err)
 	}
 	written, err := io.Copy(
 		temporary,
@@ -102,32 +109,32 @@ func (s *FileStore) Create(ctx context.Context, key string, body io.Reader, size
 	)
 	if err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("%w: write immutable object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: write immutable object: %v", ErrState, err)
 	}
 	if written != size {
 		_ = temporary.Close()
-		return fmt.Errorf("%w: immutable object size %d does not match expected %d", ErrIntegrity, written, size)
+		return false, fmt.Errorf("%w: immutable object size %d does not match expected %d", ErrIntegrity, written, size)
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("%w: sync immutable object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: sync immutable object: %v", ErrState, err)
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("%w: close immutable object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: close immutable object: %v", ErrState, err)
 	}
 	if err := os.Link(temporaryPath, target); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return ErrConflict
+			return false, nil
 		}
-		return fmt.Errorf("%w: conditionally create immutable object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: conditionally create immutable object: %v", ErrState, err)
 	}
 	if err := os.Remove(temporaryPath); err != nil {
-		return fmt.Errorf("%w: remove immutable temporary object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: remove immutable temporary object: %v", ErrState, err)
 	}
 	if err := syncDirectory(parent); err != nil {
-		return fmt.Errorf("%w: persist immutable object: %v", ErrState, err)
+		return false, fmt.Errorf("%w: persist immutable object: %v", ErrState, err)
 	}
-	return nil
+	return true, nil
 }
 
 func (s *FileStore) Open(ctx context.Context, key string) (io.ReadCloser, error) {

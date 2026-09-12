@@ -388,21 +388,61 @@ func TestRecoverProductionTransactionRejectsUnknownOrUnreadableState(t *testing.
 	}
 }
 
-func TestRecoverProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
-	for _, command := range []string{"gpg", "gpgv", "apt-get"} {
-		if _, err := exec.LookPath(command); err != nil {
-			t.Skipf("%s is not available", command)
-		}
-	}
+func TestProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
+	requireProductionFixtureTools(t)
 
 	transaction := stageProductionFixture(t, "initialize", nil)
 	store := newProductionFixtureStore()
 	stable := []byte("stable snapshot fixture")
 	store.objects["dists/stable/InRelease"] = append([]byte(nil), stable...)
+	if _, err := PublishProductionTransaction(context.Background(), store, transaction); err != nil {
+		t.Fatal(err)
+	}
+
+	verifyProductionFixtureWithRealTools(t, store)
+	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
+		t.Fatalf("stable changed during publish fixture: %q", got)
+	}
+}
+
+func TestRecoverProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
+	requireProductionFixtureTools(t)
+
+	transaction := stageProductionFixture(t, "initialize", nil)
+	store := newProductionFixtureStore()
+	stable := []byte("stable snapshot fixture")
+	store.objects["dists/stable/InRelease"] = append([]byte(nil), stable...)
+	for index, object := range transaction.objects {
+		if index >= len(transaction.objects)/2 {
+			break
+		}
+		data, err := os.ReadFile(object.localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.objects[object.Path] = data
+	}
 	if _, err := RecoverProductionTransaction(context.Background(), store, transaction); err != nil {
 		t.Fatal(err)
 	}
 
+	verifyProductionFixtureWithRealTools(t, store)
+	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
+		t.Fatalf("stable changed during recovery fixture: %q", got)
+	}
+}
+
+func requireProductionFixtureTools(t *testing.T) {
+	t.Helper()
+	for _, command := range []string{"gpg", "gpgv", "apt-get"} {
+		if _, err := exec.LookPath(command); err != nil {
+			t.Skipf("%s is not available", command)
+		}
+	}
+}
+
+func verifyProductionFixtureWithRealTools(t *testing.T, store *productionFixtureStore) {
+	t.Helper()
 	repository := filepath.Join(t.TempDir(), "repository")
 	if err := materializeProductionFixture(repository, store); err != nil {
 		t.Fatal(err)
@@ -475,9 +515,6 @@ func TestRecoverProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
 	)
 	if output, err := aptInstall.CombinedOutput(); err != nil {
 		t.Fatalf("apt-get download-only install failed: %v\n%s", err, output)
-	}
-	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
-		t.Fatalf("stable changed during apt fixture: %q", got)
 	}
 }
 

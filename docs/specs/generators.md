@@ -147,7 +147,8 @@ detected drift. Snapshots compare each regular file's SHA-256, size, and full
 mode and each directory's full mode, including special bits. They do not
 compare or preserve uid/gid ownership, extended attributes, ACLs, or
 timestamps. After a successful exchange, obsolete prior bytes are private
-cleanup and cannot turn the committed generation into a reported failure.
+cleanup. A cleanup failure is reported while the candidate remains visible
+and the retained journal allows a later recovery pass to finish cleanup.
 Tests inject failure before every observed initialize and reconcile staging,
 signing, copy, verification, synchronization, and commit step. Production
 staging rejects a nil signer; generic generation retains its existing
@@ -166,19 +167,25 @@ it completes a pending switch only when the sibling is the exact candidate
 and the output is the exact prior, or cleans private prior bytes when the
 output is already the exact candidate. Unknown, corrupt, missing, symlinked,
 or third-state trees fail closed. Cleanup after the durable switch is private
-and cannot roll a visible candidate backward.
+and cannot roll a visible candidate backward. Cleanup errors are returned,
+not discarded; an incomplete cleanup retains the recovery journal for a
+subsequent idempotent recovery pass.
 
 ### Durable Debian intake and recovery (R8)
 
 `internal/intake` defines retained, create-only records for provenance,
 artifacts, canonical requests, per-target receipts, attempts, result
-manifests, and result pointers. The local store synchronizes immutable files
+manifests, and result pointers. Its `CreateIfAbsent` boundary requires one
+atomic provider operation that reports whether this call installed the key
+and never replaces existing bytes. A provider adapter must use its native
+conditional-create primitive; read-then-write emulation is invalid. The local
+store implements this with an atomic hard link, synchronizes immutable files
 and newly created directories, performs read-after-write verification, lists
 receipts by prefix, and uses filesystem locks for process-safe target
 serialization. A submission key can replay identical request bytes but cannot
 name different bytes. The adapter-provided authenticated principal must match
 the request producer; policy digests are retained and a non-nil current-policy
-authorizer runs before every writer attempt.
+authorizer runs immediately before every new writer attempt.
 
 Scheduled and manual recovery use the same full receipt enumeration. Receipts
 for one Debian codename run in increasing sequence and stop on the first
@@ -186,7 +193,10 @@ failure; different codenames run independently. Every referenced object is
 re-hashed on replay. Attempts are append-only, and neither workflow dispatch
 nor process success records completion. A content-addressed result manifest
 and its create-only request pointer are written only after the writer verifies
-the complete public object set.
+the complete public object set. Once that pointer exists, replay revalidates
+the result bytes and complete public object set without requiring the producer
+to remain authorized; revocation still blocks every request that lacks a
+completed result.
 
 `ProductionRecoveryWriter` rebuilds the signed B5 transaction through a
 caller-supplied intake-only builder. `RecoverProductionTransaction` holds the

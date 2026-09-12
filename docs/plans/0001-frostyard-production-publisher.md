@@ -464,16 +464,21 @@ merge and separately human-published, digest-verified release under
 - [x] Implement a retained local intake store with conditional create,
   read-after-write, prefix enumeration, process-safe target locks, immutable
   requests, monotonic receipts, append-only attempts, and result pointers.
+  The provider boundary requires native atomic create-if-absent semantics;
+  read-then-write emulation is not accepted.
 - [x] Enumerate receipts for scheduled/manual recovery, process each codename
   in sequence without cancellation, allow independent codenames to progress,
-  and recheck current policy and every referenced digest.
+  and recheck current policy before every new writer attempt and every
+  referenced digest on all replays. Completed results remain verifiable after
+  revocation without permitting a new write.
 - [x] Resume a partial Debian publication only from exact prior/candidate
   object states, preserve conditional shared-pool behavior, and create
   completion records only after complete public read-back.
 - **Done when:** crash-boundary, coalesced-wakeup, same-target ordering,
   cross-target concurrency, partial-attempt replay, permission/5xx/timeout,
-  checksum, ambiguous-state, read-back, GPG, and APT fixture tests pass under
-  the race detector.
+  checksum, ambiguous-state, read-back, concurrent conditional-create,
+  post-switch cleanup-error, direct publish, recovery, GPG, and APT fixture
+  tests pass under the race detector.
 - **Boundary:** this is local library and fixture evidence. No endpoint,
   provider adapter, credential, workflow, schedule, publication, or
   production mutation is configured or authorized.

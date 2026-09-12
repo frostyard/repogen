@@ -155,16 +155,21 @@ visible generation.
 
 R8 also adds a retained local intake store and receipt reconciler under
 `internal/intake`. Authenticated producer identity is passed separately from
-the request, immutable request objects are read back and re-hashed, receipts
-are monotonic per kind/target, attempts remain append-only, and result
-pointers are created only after public read-back. Scheduled and manual
-wake-ups call the same receipt enumeration; same-target work is ordered while
-different codenames may progress concurrently. The Debian recovery writer
-resumes only objects matching the exact prior or candidate generation and
-rejects permission failures, timeouts, missing prior objects, unknown target
-objects, checksum mismatches, and incomplete read-back. These are library and
-local-fixture primitives only: no HTTP endpoint, provider adapter, credential,
-workflow, deployment, or production permission is configured or implied.
+the request. The store contract requires one provider-level atomic
+create-if-absent operation that never replaces existing bytes; read-then-write
+emulation is not valid. Immutable request objects are read back and re-hashed,
+receipts are monotonic per kind/target, attempts remain append-only, and result
+pointers are created only after public read-back. Current policy is checked
+immediately before a new writer attempt; an already completed result remains
+replayable only after its retained bytes and public state verify again.
+Scheduled and manual wake-ups call the same receipt enumeration; same-target
+work is ordered while different codenames may progress concurrently. The
+Debian recovery writer resumes only objects matching the exact prior or
+candidate generation and rejects permission failures, timeouts, missing prior
+objects, unknown target objects, checksum mismatches, and incomplete
+read-back. These are library and local-fixture primitives only: no HTTP
+endpoint, provider adapter, credential, workflow, deployment, or production
+permission is configured or implied.
 
 Release binaries now have one contract: the sole tag workflow runs pinned
 GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.

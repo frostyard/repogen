@@ -224,8 +224,8 @@ func CreateImmutableStream(
 	if body == nil || size < 0 || !validDigest(expectedSHA256) {
 		return fmt.Errorf("%w: immutable body, size, and digest are required", ErrState)
 	}
-	err := store.Create(ctx, key, body, size)
-	if err != nil && !errors.Is(err, ErrConflict) {
+	_, err := store.CreateIfAbsent(ctx, key, body, size)
+	if err != nil {
 		return fmt.Errorf("%w: create %s: %v", ErrState, key, err)
 	}
 	observed, err := inspectDigestObject(ctx, store, key)
@@ -374,11 +374,11 @@ func (r Reconciler) ReconcileTarget(ctx context.Context, target string) (retErr 
 			(request.ExpectedPrior == nil || *request.ExpectedPrior != previousState) {
 			return fmt.Errorf("%w: request sequence breaks prior-state continuity", ErrState)
 		}
-		if err := r.Authorizer.Authorize(ctx, receipt, request); err != nil {
-			return fmt.Errorf("%w: current policy denied request: %v", ErrState, err)
-		}
 		result, err := r.loadResult(ctx, receipt, request)
 		if errors.Is(err, ErrNotFound) {
+			if err := r.Authorizer.Authorize(ctx, receipt, request); err != nil {
+				return fmt.Errorf("%w: current policy denied request: %v", ErrState, err)
+			}
 			result, err = r.apply(ctx, receipt, request)
 		}
 		if err != nil {
@@ -813,8 +813,8 @@ func resultPointerKey(requestDigest string) string {
 }
 
 func createAndVerify(ctx context.Context, store Store, key string, body []byte) error {
-	err := store.Create(ctx, key, bytes.NewReader(body), int64(len(body)))
-	if err != nil && !errors.Is(err, ErrConflict) {
+	_, err := store.CreateIfAbsent(ctx, key, bytes.NewReader(body), int64(len(body)))
+	if err != nil {
 		return fmt.Errorf("%w: create %s: %v", ErrState, key, err)
 	}
 	observed, readErr := readRecord(ctx, store, key)

@@ -331,6 +331,48 @@ func TestLocalProductionRecoveryCompletesInterruptedSwitch(t *testing.T) {
 	}
 }
 
+func TestLocalProductionCommitReportsPostSwitchCleanupFailure(t *testing.T) {
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	writeStableLocalFixture(t, outputDir)
+
+	initial := stageProductionFixture(t, "initialize", nil)
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, initial); err != nil {
+		t.Fatal(err)
+	}
+	request, closeSigner := productionFixtureRequest(t, "reconcile", priorStateFor(t, initial))
+	defer closeSigner()
+	request.ReleaseTime = request.ReleaseTime.Add(24 * time.Hour)
+	reconcile, err := StageProductionTransaction(filepath.Join(root, "reconcile-stage"), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = commitLocalProductionTransaction(
+		context.Background(),
+		outputDir,
+		reconcile,
+		&productionLocalHooks{
+			finishRecovery: func(string, localRecoveryJournal) error {
+				return errors.New("injected cleanup failure")
+			},
+		},
+	)
+	if !errors.Is(err, ErrLocalGeneration) || !strings.Contains(err.Error(), "injected cleanup failure") {
+		t.Fatalf("cleanup error = %v, want explicit ErrLocalGeneration", err)
+	}
+	assertCompleteLocalGeneration(t, outputDir, reconcile)
+	assertStableLocalFixture(t, outputDir)
+	if _, err := os.Lstat(localRecoveryJournalPath(root, filepath.Base(outputDir))); err != nil {
+		t.Fatalf("cleanup failure did not preserve recovery journal: %v", err)
+	}
+
+	if err := RecoverLocalProductionRepository(context.Background(), outputDir); err != nil {
+		t.Fatalf("RecoverLocalProductionRepository() error = %v", err)
+	}
+	assertNoGenerationScratch(t, root)
+}
+
 func TestLocalProductionRecoveryFailsClosedOnUnknownState(t *testing.T) {
 	outputDir, _ := prepareLocalRecoveryFixture(t, false)
 	before := localTreeSnapshotForTest(t, outputDir)

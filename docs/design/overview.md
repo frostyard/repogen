@@ -155,20 +155,27 @@ the parent before reporting success. Recovery accepts only three safe facts:
 the output is the exact candidate, the sibling is the exact candidate while
 the output is the exact prior, or the output is the exact candidate after
 private cleanup already completed. Any other state stops without another
-rename. A visible candidate is never rolled back.
+rename. A visible candidate is never rolled back. Failure to remove private
+prior bytes or the journal is returned to the caller, with the journal
+retained whenever cleanup is incomplete so a later recovery can retry it.
 
 R8 also introduces `internal/intake` for retained immutable records. Its local
-file store uses create-if-absent links, file and directory synchronization,
-read-back, prefix enumeration, and process-safe target locks. The recorder
-binds an adapter-provided authenticated principal to the request, verifies
-digest-addressed provenance and artifacts, and allocates monotonic
-per-target receipts. The reconciler enumerates receipts rather than workflow
-history, processes one target in sequence, permits independent targets to run
-concurrently, rechecks current authorization, retains append-only attempts,
-and creates a result pointer only after public verification. The Debian
-adapter uses the scoped production transaction and can resume a partial
-publication only when each observed object is exact prior bytes, exact
-candidate bytes, or authoritatively absent where allowed.
+file store uses an atomic hard-link create-if-absent operation, file and
+directory synchronization, read-back, prefix enumeration, and process-safe
+target locks. Every provider adapter must supply an equivalent single atomic
+create-if-absent operation; a read followed by an unconditional write does
+not satisfy the interface. The recorder binds an adapter-provided
+authenticated principal to the request, verifies digest-addressed provenance
+and artifacts, and allocates monotonic per-target receipts. The reconciler
+enumerates receipts rather than workflow history, processes one target in
+sequence, permits independent targets to run concurrently, rechecks current
+authorization before each new writer attempt, retains append-only attempts,
+and creates a result pointer only after public verification. A completed
+result bypasses the new-write authorization check but must pass retained
+integrity and public-state verification on every replay. The Debian adapter
+uses the scoped production transaction and can resume a partial publication
+only when each observed object is exact prior bytes, exact candidate bytes,
+or authoritatively absent where allowed.
 
 These primitives do not connect `validate-production` to a network endpoint,
 provide an R2 adapter or credential path, configure a schedule, or authorize a

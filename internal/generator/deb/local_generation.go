@@ -22,7 +22,8 @@ const localRecoveryVersion = 1
 var ErrLocalGeneration = errors.New("local production generation failed")
 
 type productionLocalHooks struct {
-	before func(string) error
+	before         func(string) error
+	finishRecovery func(string, localRecoveryJournal) error
 }
 
 type localTreeEntry struct {
@@ -215,7 +216,13 @@ func commitLocalProductionTransaction(
 	if err := syncLocalDirectory(filepath.Dir(outputDir)); err != nil {
 		return fmt.Errorf("%w: persist atomic directory switch: %v", ErrLocalGeneration, err)
 	}
-	_ = finishLocalRecovery(filepath.Dir(outputDir), journal)
+	finishRecovery := finishLocalRecovery
+	if hooks != nil && hooks.finishRecovery != nil {
+		finishRecovery = hooks.finishRecovery
+	}
+	if err := finishRecovery(filepath.Dir(outputDir), journal); err != nil {
+		return fmt.Errorf("%w: finish committed recovery cleanup: %v", ErrLocalGeneration, err)
+	}
 	return nil
 }
 
