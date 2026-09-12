@@ -35,6 +35,7 @@ Supported package types:
 
 	// Add subcommands
 	rootCmd.AddCommand(NewGenerateCmd())
+	rootCmd.AddCommand(NewValidateProductionCmd())
 
 	return rootCmd
 }

@@ -1,13 +1,15 @@
 # Plan: Frostyard production publisher boundary
 
 This plan defines the repository-local implementation contract for the
-Frostyard APT publisher. It implements
+Frostyard APT publisher. R1 records the contract and R2 now implements its
+write-free production preflight; later phases remain unimplemented. The plan
+implements
 [core ADR-0048](https://github.com/frostyard/core/blob/main/docs/adr/0048-publish-debian-packages-to-explicit-codenames.md)
 and the Repogen R1-R10 sequence in
 [core Plan 0007](https://github.com/frostyard/core/blob/main/docs/plans/0007-support-suites-in-repogen.md).
-It is a documentation-only candidate: none of the production behavior below
-is implemented, merged, released, configured, or authorized for operation by
-this plan.
+No production generation, restoration, signing, publication, remote
+mutation, merge, release, or operation is implemented or authorized by the
+R2 preflight.
 
 ## Current behavior and compatibility boundary
 
@@ -223,9 +225,9 @@ acceptance; it cannot waive
 
 ## Phase 2 - Validate before writes (R2)
 
-- Add production-only target, identity, path, architecture, component, format,
+- [x] Add production-only target, identity, path, architecture, component, format,
   control-character, and Debian-only input validation.
-- Preserve the generic command and its existing non-production use.
+- [x] Preserve the generic command and its existing non-production use.
 - **Done when:** table-driven negative tests prove every invalid or ambiguous
   request fails before output or remote state changes.
 

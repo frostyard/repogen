@@ -85,8 +85,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 ### Plans
 
 - [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
-  — documentation-only R1 contract for the proposed generic/production split,
+  — R1 contract plus the implemented write-free R2 production preflight;
   strict suite transactions, immutable shared pool, and bounded Trixie canary
+  remain later phases
 
 ### Uncategorized
 

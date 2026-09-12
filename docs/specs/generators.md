@@ -12,6 +12,33 @@ Each generator implements `generator.Generator` and produces a complete
 repository structure from a list of `models.Package` entries — the exact
 output layout, metadata file formats, and signing behavior per format.
 
+## Frostyard production Debian preflight (`internal/cli/production.go`)
+
+`repogen validate-production` is an R2 validation boundary, not a generator.
+It accepts no implicit target values and writes no output. A valid request
+must provide:
+
+- distinct, non-overlapping input and future output paths;
+- a lowercase immutable codename and an exactly matching suite (moving names
+  including `stable`, `testing`, and `unstable` are rejected);
+- exactly component `main`;
+- exactly the initial architecture set `all,amd64`; and
+- a tree containing at least one regular, non-symlink `.deb` and no other
+  recognized package format.
+
+Every Debian package is parsed strictly before success. Package names,
+versions, architectures, control-field names, and emitted single-line values
+are validated against the fixed production identity and for path/control
+character ambiguity. Invalid, corrupt, mixed-format, traversal, symlink, and
+identity-drift requests return a typed error without creating or modifying
+the output path.
+
+The preflight fixes `Origin: Repogen Repository` and
+`Label: Frostyard Repository` internally rather than accepting caller
+overrides. It does not restore existing metadata, generate repository files,
+initialize a suite, sign, or publish. Those capabilities remain gated by
+[Plan 0001](../plans/0001-frostyard-production-publisher.md) R3-R5.
+
 ## Debian/APT (`internal/generator/deb/`)
 
 **Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`

@@ -64,6 +64,31 @@ repogen generate --input-dir /path/to/packages --output-dir /path/to/repo
 repogen generate -v
 ```
 
+### Frostyard Production Preflight
+
+R2 adds a separate, fail-closed preflight for Frostyard production Debian
+requests. It requires explicit non-moving suite identity, the fixed
+Frostyard Release identity, component `main`, the initial `all,amd64`
+architecture allowlist, non-overlapping input/output paths, and Debian-only
+package input:
+
+```bash
+repogen validate-production \
+  --input-dir ./debs \
+  --output-dir ./staging \
+  --codename trixie \
+  --suite trixie \
+  --components main \
+  --arch all,amd64
+```
+
+This command only validates. It never creates the output directory or writes,
+signs, restores, or publishes repository state. Production generation remains
+unavailable until strict restore, immutable pool handling, staged signing,
+publication, and read-back are implemented in later phases. The existing
+`repogen generate` command remains generic and keeps its current defaults,
+supported formats, and unsigned behavior.
+
 ### Incremental Mode
 
 Incremental mode allows you to add new packages to an existing repository without regenerating everything from scratch. This is useful when:
