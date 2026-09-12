@@ -56,6 +56,9 @@ Debian structurally rather than claiming that behavior can initialize or
 reconcile Frostyard Trixie/Forky. The separate provider-neutral production
 transaction and its migration sequence are documented in
 [Plan 0001](../plans/0001-frostyard-production-publisher.md).
+For sysext, a restore error is fatal and the calling workflow must serialize
+the complete cycle globally because `ext/index` is shared. The action does not
+make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 
 ### How It Works
 
@@ -69,7 +72,7 @@ transaction and its migration sequence are documented in
 4. **Sync existing metadata** — downloads only metadata files (not package
    binaries) from R2 for incremental mode. Sync strategy varies by format:
    - deb: `dists/` directory
-   - sysext: `ext/` excluding `.raw*` files
+   - sysext: `ext/` excluding `.raw*` files; any restore error aborts
    - rpm: `repodata/` directory
    - apk: everything except `.apk` files
    - pacman: everything except `.pkg.tar.*` and `.sig` files

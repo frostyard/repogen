@@ -473,6 +473,20 @@ reconstructs package metadata from bottle URLs and SHA256 values.
 - Extension names and SHA256SUMS entries are sorted. Entries are deduplicated
   by filename only when their digests agree; conflicting duplicate filenames
   fail generation.
+- Sysext package identity is
+  `name:version:OSVersion:architecture`. OS 13 and OS 14 artifacts therefore
+  coexist even when every other field matches. `--skip-duplicates` skips only
+  an exact logical identity with the same SHA-256; changed or missing digest
+  evidence fails closed.
+- Generation takes a repository-wide sysext lock, re-reads current manifests
+  after acquiring it, stages the complete `ext/` tree, and atomically switches
+  the tree into place. Concurrent reconciles retain both batches and a failure
+  before the switch preserves the prior tree byte-for-byte. Linux
+  `renameat2`/`flock` are required for this local transaction.
+- Restored manifests, detached signatures, transfer files, and the exhaustive
+  index are verified before merge. Staged payloads available locally are
+  checked against their manifest digest, and every incoming payload must be
+  present. Missing or malformed current metadata is not empty initialization.
 - With `--gpg-key`, each manifest gets a detached binary `SHA256SUMS.gpg`
   signature and the generated transfer sets `Verify=true`; without a signer,
   the signature is omitted and the transfer sets `Verify=false`.
@@ -488,3 +502,11 @@ from the filename using `_` as delimiter (exactly 4 parts expected).
 package metadata from the filenames listed in each checksums file. Index
 generation also enumerates those manifests, so a partial publish preserves
 all previously published extension names in `ext/index`.
+
+The legacy `publish-to-r2` action remains a compatibility path for Snosi
+sysexts and other non-Debian formats. It rejects `package-type: deb` before
+credential setup and no longer converts a failed sysext metadata restore into
+empty initialization. Remote R2 still has no atomic multi-object rename:
+the caller must serialize the complete restore/generate/upload cycle, and
+production activation remains blocked until its dedicated storage boundary
+and failure-safe commit protocol are independently reviewed and configured.

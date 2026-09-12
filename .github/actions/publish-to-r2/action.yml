@@ -1,5 +1,5 @@
 name: 'Publish Packages to Repogen R2 Repository'
-description: 'Publish supported non-Debian packages to an existing repogen repository hosted on Cloudflare R2'
+description: 'Legacy non-Debian publisher; Debian uses the protected durable writer'
 author: 'frostyard'
 
 branding:
@@ -296,7 +296,7 @@ runs:
               --exclude "*.raw.zst" \
               --exclude "*.raw.xz" \
               --exclude "*.raw.gz" \
-              2>&1 || echo "No existing ext directory found (this is OK for first run)"
+              2>&1
             ;;
           rpm)
             # Sync repodata directory

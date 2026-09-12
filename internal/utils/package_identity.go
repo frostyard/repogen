@@ -2,6 +2,8 @@ package utils
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/frostyard/repogen/internal/models"
 	"github.com/frostyard/repogen/internal/scanner"
@@ -21,10 +23,39 @@ func PackageIdentity(pkg models.Package, pkgType scanner.PackageType) string {
 	case scanner.TypeHomebrewBottle:
 		return fmt.Sprintf("%s:%s", pkg.Name, pkg.Version)
 	case scanner.TypeSysext:
-		return fmt.Sprintf("%s:%s:%s", pkg.Name, pkg.Version, pkg.Architecture)
+		osVersion, _ := pkg.Metadata["OSVersion"].(string)
+		return fmt.Sprintf("%s:%s:%s:%s", pkg.Name, pkg.Version, osVersion, pkg.Architecture)
 	default:
 		return fmt.Sprintf("%s:%s", pkg.Name, pkg.Version)
 	}
+}
+
+// DetectDigestConflicts returns packages whose logical identity already exists
+// with another filename or with different or missing SHA-256 evidence.
+func DetectDigestConflicts(existing, newPackages []models.Package, pkgType scanner.PackageType) []models.Package {
+	type artifact struct {
+		filename string
+		digest   string
+	}
+	existingArtifacts := make(map[string]artifact, len(existing))
+	for _, pkg := range existing {
+		existingArtifacts[PackageIdentity(pkg, pkgType)] = artifact{
+			filename: filepath.Base(pkg.Filename),
+			digest:   pkg.SHA256Sum,
+		}
+	}
+
+	var conflicts []models.Package
+	for _, pkg := range newPackages {
+		existingArtifact, exists := existingArtifacts[PackageIdentity(pkg, pkgType)]
+		if exists && (existingArtifact.filename != filepath.Base(pkg.Filename) ||
+			existingArtifact.digest == "" ||
+			pkg.SHA256Sum == "" ||
+			!strings.EqualFold(existingArtifact.digest, pkg.SHA256Sum)) {
+			conflicts = append(conflicts, pkg)
+		}
+	}
+	return conflicts
 }
 
 // DetectConflicts returns packages from newPackages that conflict with existing

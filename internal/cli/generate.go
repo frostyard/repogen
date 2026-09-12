@@ -246,6 +246,22 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 
 				// Detect conflicts
 				conflicts := utils.DetectConflicts(existingPackages, newPackages, pkgType)
+				if pkgType == scanner.TypeSysext {
+					digestConflicts := utils.DetectDigestConflicts(existingPackages, newPackages, pkgType)
+					if len(digestConflicts) > 0 {
+						var conflictNames []string
+						for _, pkg := range digestConflicts {
+							conflictNames = append(conflictNames, filepath.Base(pkg.Filename))
+						}
+						return &models.RepoGenError{
+							Type: models.ErrInvalidConfig,
+							Err: fmt.Errorf(
+								"incremental sysext reconciliation: changed or unverifiable bytes for existing logical identity: %s",
+								strings.Join(conflictNames, ", "),
+							),
+						}
+					}
+				}
 				if len(conflicts) > 0 {
 					var conflictNames []string
 					for _, pkg := range conflicts {

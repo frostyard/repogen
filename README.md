@@ -1109,8 +1109,19 @@ jobs:
 The action uses incremental mode, which means:
 
 - Existing packages are preserved
-- Only metadata files are synced locally
-- Conflicts are detected if you try to add a package that already exists
+- Only metadata files are synced locally; a sysext metadata restore failure
+  aborts instead of being treated as an empty repository
+- Sysext identity includes OSVersion, so matching OS 13 and OS 14 artifacts
+  coexist
+- A same-identity sysext is skipped only when its SHA-256 is unchanged;
+  changed or unverifiable bytes fail
+
+The action is not a Debian publisher. Debian uses the separate protected
+writer. A sysext caller must serialize the full restore/generate/upload cycle
+across all extensions because `ext/index` is shared. The current R2 upload
+cannot atomically replace `SHA256SUMS` and `SHA256SUMS.gpg`; do not activate
+new production credentials until that provider-side commit boundary has been
+reviewed and approved.
 
 ### Setting Up R2 Credentials
 
