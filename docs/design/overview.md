@@ -199,6 +199,18 @@ Package-type detection: [ADR-0008](../adr/0008-magic-bytes-detection-with-extens
 See [CI/CD and GitHub Action](ci-cd.md) for the test/release workflows
 and the `publish-to-r2` composite action.
 
+## Planned Frostyard Production Boundary
+
+The generic command and action behavior described above is the current
+implementation. A separate, fail-closed Frostyard production publisher is
+specified but not yet implemented in
+[Plan 0001](../plans/0001-frostyard-production-publisher.md). The plan
+preserves generic local and unsigned generation while defining the proposed
+production-only target, identity, restore, shared-pool, staging, manifest,
+publication, and rollback contracts. The architectural rationale is recorded
+in proposed
+[ADR-0013](../adr/0013-separate-generic-generation-from-production-publishing.md).
+
 ## Dependencies
 
 | Module | Purpose |

@@ -58,6 +58,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   — one canonical `AGENTS.md` plus committed relative symlinks satisfy the
   Hive ACMM path checks; directory criteria get real trees; the alias table
   is the registry
+- [ADR-0013 — Separate generic generation from production publishing](adr/0013-separate-generic-generation-from-production-publishing.md)
+  — proposed structural boundary that preserves generic callers while making
+  Frostyard production publication explicit and fail closed
 
 ### Design
 
@@ -81,7 +84,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 
 ### Plans
 
-*(none yet)*
+- [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
+  — documentation-only R1 contract for the proposed generic/production split,
+  strict suite transactions, immutable shared pool, and bounded Trixie canary
 
 ### Uncategorized
 

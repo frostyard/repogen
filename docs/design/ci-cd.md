@@ -47,6 +47,13 @@ A reusable composite action that publishes packages to an existing repogen
 repository hosted on Cloudflare R2. Designed for CI/CD pipelines that
 build packages and want to add them to a repository incrementally.
 
+This section describes current behavior, not a hardened Frostyard production
+contract. The action defaults to a mutable release, restores partial paths,
+uses generic incremental fallback behavior, and broadly synchronizes output.
+It must not initialize or reconcile Frostyard Trixie/Forky. The proposed
+separate production path and its migration sequence are documented in
+[Plan 0001](../plans/0001-frostyard-production-publisher.md).
+
 ### How It Works
 
 1. **Validate inputs** — checks package type, required flags (base-url for

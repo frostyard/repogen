@@ -876,6 +876,13 @@ This ensures compatibility with both old (Bookworm) and new (Trixie) Debian rele
 
 Repogen provides a reusable GitHub Action for publishing packages to repositories hosted on Cloudflare R2 storage. This is ideal for CI/CD workflows that build `.deb` packages or systemd-sysext images.
 
+> **Production status:** The current action is the generic legacy publisher.
+> It defaults to a mutable Repogen release, uses broad synchronization, and
+> does not implement the proposed fail-closed Frostyard multi-suite contract.
+> Do not use it to initialize or reconcile Frostyard Trixie/Forky. That work
+> is tracked in
+> [Plan 0001](docs/plans/0001-frostyard-production-publisher.md).
+
 ### Quick Start
 
 ```yaml
