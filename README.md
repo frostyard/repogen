@@ -111,11 +111,14 @@ tampered, or mismatched prior state fails without changing prior bytes.
 
 This command only validates and restores metadata into memory. It never
 creates the output directory or writes, generates, signs, or publishes
-repository state. Production generation remains unavailable until immutable
-pool handling, staged signing, publication, and read-back are implemented in
-later phases. The existing `repogen generate` command remains generic and
-keeps its current defaults, supported formats, unsigned behavior, and legacy
-incremental fallback.
+repository state. R4 provides an internal,
+provider-neutral shared-pool primitive that stream-hashes existing bytes and
+uses conditional create without overwrite; it has only fake-S3 test coverage
+and is not connected to this command or to production credentials.
+Production generation remains unavailable until staged signing, publication,
+and read-back are implemented in later phases. The existing
+`repogen generate` command remains generic and keeps its current defaults,
+supported formats, unsigned behavior, and legacy incremental fallback.
 
 ### Incremental Mode
 

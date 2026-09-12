@@ -237,7 +237,9 @@ acceptance; it cannot waive
 ## Phase 3 - Restore and protect immutable state (R3-R4)
 
 - [x] Add strict signed restore and explicit initialization without writes.
-- Add verified shared-pool digest authority and conditional creation.
+- [x] Add the provider-neutral verified shared-pool digest authority and
+  conditional-create primitive, with fake-S3 indexed/unindexed reuse,
+  collision, unreadable, race, opaque-ETag, and cross-suite tests.
 - **Done when:** valid initialize/reconcile pass while missing, corrupt,
   tampered, partial, collision, unreadable, and race cases fail without
   changing prior bytes.
