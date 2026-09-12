@@ -141,9 +141,12 @@ no-replace or exchange operation. Internal fault injection runs before every
 staging, signing, copy, install, verification, synchronization, and commit
 step; every pre-commit failure leaves the prior output unchanged unless an
 external writer caused the detected drift. Unrelated regular-file content,
-size, and complete file/directory modes are copied unchanged. Ownership,
-extended attributes, ACLs, and timestamps are not preserved or compared.
-The generic generator still supports unsigned output and direct local writes.
+size, and complete file/directory modes are copied unchanged. Regenerated
+suite directories and newly created pool parents receive fixed `0755` modes,
+independent of the process umask, while newly installed generated files
+receive `0644`. Ownership, extended attributes, ACLs, and timestamps are not
+preserved or compared. The generic generator still supports unsigned output
+and direct local writes.
 
 These primitives do not connect `validate-production` to a writer, provide
 an R2 adapter or credential path, make local filesystem locking enforceable,

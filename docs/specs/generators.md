@@ -130,8 +130,9 @@ filesystem as the output:
 2. copy the existing repository while excluding the target codename, rejecting
    symlinks and non-regular files;
 3. preserve unrelated suite regular-file bytes, sizes, and complete
-   file/directory modes, and accept an existing pool object only when its size
-   and SHA-256 match;
+   file/directory modes; create regenerated suite directories and new pool
+   parents at a fixed `0755` independent of process umask; and accept an
+   existing pool object only when its size and SHA-256 match;
 4. install and re-hash every staged pool, index, by-hash, Release, InRelease,
    and Release.gpg object;
 5. verify the prior tree did not change during staging and synchronize the
@@ -147,10 +148,10 @@ mode and each directory's full mode, including special bits. They do not
 compare or preserve uid/gid ownership, extended attributes, ACLs, or
 timestamps. After a successful exchange, obsolete prior bytes are private
 cleanup and cannot turn the committed generation into a reported failure.
-Tests inject failure before every observed staging, signing, copy,
-verification, synchronization, and commit step. Production staging rejects a
-nil signer; generic generation retains its existing unsigned `InRelease`
-behavior.
+Tests inject failure before every observed initialize and reconcile staging,
+signing, copy, verification, synchronization, and commit step. Production
+staging rejects a nil signer; generic generation retains its existing
+unsigned `InRelease` behavior.
 
 R7 reads and hashes the complete prior repository and copies all retained
 content, including `pool/`. A generation therefore incurs O(repository size)

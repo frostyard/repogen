@@ -428,7 +428,11 @@ func installLocalGenerationObjects(
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("%w: inspect destination %s: %v", ErrLocalGeneration, object.Path, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		if err := createLocalGenerationDirectories(
+			generationDir,
+			filepath.Dir(destination),
+			0o755,
+		); err != nil {
 			return fmt.Errorf("%w: create destination parent for %s: %v", ErrLocalGeneration, object.Path, err)
 		}
 		observed, err := copyAndHashLocalFile(object.localPath, destination, 0o644)
@@ -437,6 +441,36 @@ func installLocalGenerationObjects(
 		}
 		if observed.SHA256 != object.SHA256 || observed.Size != object.Size {
 			return fmt.Errorf("%w: installed object %s differs from staging", ErrLocalGeneration, object.Path)
+		}
+	}
+	return nil
+}
+
+func createLocalGenerationDirectories(root, path string, mode fs.FileMode) error {
+	if !localPathContains(root, path) {
+		return fmt.Errorf("destination parent escapes generation root")
+	}
+
+	var missing []string
+	for current := path; current != root; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return fmt.Errorf("%s is not a regular directory", current)
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		missing = append(missing, current)
+	}
+	for index := len(missing) - 1; index >= 0; index-- {
+		if err := os.Mkdir(missing[index], mode.Perm()); err != nil {
+			return err
+		}
+		if err := os.Chmod(missing[index], mode); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -530,11 +564,16 @@ func syncLocalGeneration(
 		if walkErr != nil {
 			return walkErr
 		}
+		relative, err := filepath.Rel(generationDir, currentPath)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
-			directories = append(directories, currentPath)
+			directories = append(directories, relative)
 			return nil
 		}
-		if err := beforeProductionLocalStep(ctx, hooks, "commit:sync-file:"+currentPath); err != nil {
+		if err := beforeProductionLocalStep(ctx, hooks, "commit:sync-file:"+relative); err != nil {
 			return err
 		}
 		file, err := os.Open(currentPath)
@@ -552,10 +591,11 @@ func syncLocalGeneration(
 		return fmt.Errorf("%w: sync generation files: %v", ErrLocalGeneration, err)
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(directories)))
-	for _, directory := range directories {
-		if err := beforeProductionLocalStep(ctx, hooks, "commit:sync-directory:"+directory); err != nil {
+	for _, relative := range directories {
+		if err := beforeProductionLocalStep(ctx, hooks, "commit:sync-directory:"+relative); err != nil {
 			return err
 		}
+		directory := filepath.Join(generationDir, filepath.FromSlash(relative))
 		handle, err := os.Open(directory)
 		if err != nil {
 			return fmt.Errorf("%w: open generation directory: %v", ErrLocalGeneration, err)

@@ -442,8 +442,9 @@ merge and separately human-published, digest-verified release under
 - [x] Synchronize the candidate and switch it into place with one Linux
   `renameat2` no-replace or exchange operation; never use a remove/rename or
   two-rename rollback sequence.
-- [x] Inject failure before every observed local package, index, Release,
-  signing, copy, install, verification, synchronization, and commit step.
+- [x] Inject failure before every observed initialize and reconcile package,
+  index, Release, signing, copy, install, verification, synchronization, and
+  commit step.
 - [x] Reject unsigned production staging while retaining generic unsigned
   generation unchanged.
 - **Done when:** each injected failure leaves the old output tree

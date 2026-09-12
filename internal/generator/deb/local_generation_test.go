@@ -79,6 +79,70 @@ func TestLocalProductionStageFailurePreservesPriorTree(t *testing.T) {
 	}
 }
 
+func TestLocalProductionReconcileStageFailurePreservesPriorTree(t *testing.T) {
+	initial := stageProductionFixture(t, "initialize", nil)
+	request, closeSigner := productionFixtureRequest(t, "reconcile", priorStateFor(t, initial))
+	defer closeSigner()
+	request.ReleaseTime = request.ReleaseTime.Add(24 * time.Hour)
+
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, initial); err != nil {
+		t.Fatalf("initial CommitLocalProductionTransaction() error = %v", err)
+	}
+	before := localTreeSnapshotForTest(t, outputDir)
+
+	var steps []string
+	traceStage := filepath.Join(root, "trace-reconcile-stage")
+	transaction, err := stageProductionTransaction(
+		context.Background(),
+		traceStage,
+		request,
+		&productionLocalHooks{before: func(step string) error {
+			steps = append(steps, step)
+			return nil
+		}},
+	)
+	if err != nil {
+		t.Fatalf("trace reconcile StageProductionTransaction() error = %v", err)
+	}
+	if err := os.RemoveAll(transaction.StageDir); err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("reconcile staging exposed no injectable steps")
+	}
+
+	for failAt, step := range steps {
+		t.Run(fmt.Sprintf("%02d-%s", failAt+1, sanitizeTestName(step)), func(t *testing.T) {
+			stageDir := filepath.Join(root, fmt.Sprintf("failed-reconcile-stage-%02d", failAt+1))
+			call := 0
+			_, err := stageProductionTransaction(
+				context.Background(),
+				stageDir,
+				request,
+				&productionLocalHooks{before: func(string) error {
+					call++
+					if call == failAt+1 {
+						return errors.New("injected reconcile stage failure")
+					}
+					return nil
+				}},
+			)
+			if !errors.Is(err, ErrLocalGeneration) {
+				t.Fatalf("error = %v, want ErrLocalGeneration", err)
+			}
+			if _, statErr := os.Lstat(stageDir); !os.IsNotExist(statErr) {
+				t.Fatalf("failed staging directory remains: %v", statErr)
+			}
+			after := localTreeSnapshotForTest(t, outputDir)
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("prior tree changed after failure before %s", step)
+			}
+		})
+	}
+}
+
 func TestLocalProductionCommitFailurePreservesPriorTree(t *testing.T) {
 	transaction := stageProductionFixture(t, "initialize", nil)
 	root := t.TempDir()
@@ -102,6 +166,7 @@ func TestLocalProductionCommitFailurePreservesPriorTree(t *testing.T) {
 	if len(steps) == 0 {
 		t.Fatal("commit exposed no injectable steps")
 	}
+	assertStableGenerationSyncSteps(t, steps)
 
 	for failAt, step := range steps {
 		t.Run(fmt.Sprintf("%03d-%s", failAt+1, sanitizeTestName(step)), func(t *testing.T) {
@@ -117,6 +182,73 @@ func TestLocalProductionCommitFailurePreservesPriorTree(t *testing.T) {
 					call++
 					if call == failAt+1 {
 						return errors.New("injected commit failure")
+					}
+					return nil
+				}},
+			)
+			if !errors.Is(err, ErrLocalGeneration) {
+				t.Fatalf("error = %v, want ErrLocalGeneration", err)
+			}
+			after := localTreeSnapshotForTest(t, outputDir)
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("prior tree changed after failure before %s", step)
+			}
+			assertNoGenerationScratch(t, filepath.Dir(outputDir))
+		})
+	}
+}
+
+func TestLocalProductionReconcileFailurePreservesPriorTree(t *testing.T) {
+	initial := stageProductionFixture(t, "initialize", nil)
+	prior := priorStateFor(t, initial)
+	request, closeSigner := productionFixtureRequest(t, "reconcile", prior)
+	defer closeSigner()
+	request.ReleaseTime = request.ReleaseTime.Add(24 * time.Hour)
+	reconcileStage := filepath.Join(t.TempDir(), "reconcile-stage")
+	reconcile, err := StageProductionTransaction(reconcileStage, request)
+	if err != nil {
+		t.Fatalf("reconcile StageProductionTransaction() error = %v", err)
+	}
+	root := t.TempDir()
+
+	traceOutput := filepath.Join(root, "trace-repository")
+	if err := CommitLocalProductionTransaction(context.Background(), traceOutput, initial); err != nil {
+		t.Fatalf("initial CommitLocalProductionTransaction() error = %v", err)
+	}
+	var steps []string
+	if err := commitLocalProductionTransaction(
+		context.Background(),
+		traceOutput,
+		reconcile,
+		&productionLocalHooks{before: func(step string) error {
+			steps = append(steps, step)
+			return nil
+		}},
+	); err != nil {
+		t.Fatalf("trace reconcile CommitLocalProductionTransaction() error = %v", err)
+	}
+	assertCompleteLocalGeneration(t, traceOutput, reconcile)
+	if len(steps) == 0 {
+		t.Fatal("reconcile commit exposed no injectable steps")
+	}
+	assertStableGenerationSyncSteps(t, steps)
+
+	for failAt, step := range steps {
+		t.Run(fmt.Sprintf("%03d-%s", failAt+1, sanitizeTestName(step)), func(t *testing.T) {
+			outputDir := filepath.Join(root, fmt.Sprintf("repository-%03d", failAt+1))
+			if err := CommitLocalProductionTransaction(context.Background(), outputDir, initial); err != nil {
+				t.Fatalf("initial CommitLocalProductionTransaction() error = %v", err)
+			}
+			before := localTreeSnapshotForTest(t, outputDir)
+			call := 0
+			err := commitLocalProductionTransaction(
+				context.Background(),
+				outputDir,
+				reconcile,
+				&productionLocalHooks{before: func(string) error {
+					call++
+					if call == failAt+1 {
+						return errors.New("injected reconcile failure")
 					}
 					return nil
 				}},
@@ -174,7 +306,46 @@ func TestLocalProductionReconcileCommitsOneCompleteGeneration(t *testing.T) {
 	assertNoGenerationScratch(t, filepath.Dir(outputDir))
 }
 
-func TestLocalProductionPreservesUnrelatedDirectoryModesWithNonzeroUmask(t *testing.T) {
+func TestLocalProductionInitializeModesIgnoreRestrictiveUmask(t *testing.T) {
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	transaction := stageProductionFixture(t, "initialize", nil)
+
+	previousUmask := syscall.Umask(0o077)
+	defer syscall.Umask(previousUmask)
+
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, transaction); err != nil {
+		t.Fatalf("CommitLocalProductionTransaction() error = %v", err)
+	}
+
+	assertLocalGenerationModes(t, outputDir, transaction, nil)
+}
+
+func TestLocalProductionReconcileModesIgnoreRestrictiveUmask(t *testing.T) {
+	for _, umask := range []int{0o027, 0o077} {
+		t.Run(fmt.Sprintf("%04o", umask), func(t *testing.T) {
+			root := t.TempDir()
+			outputDir := filepath.Join(root, "repository")
+			initial := stageProductionFixture(t, "initialize", nil)
+			if err := CommitLocalProductionTransaction(context.Background(), outputDir, initial); err != nil {
+				t.Fatalf("initial CommitLocalProductionTransaction() error = %v", err)
+			}
+			prior := localTreeSnapshotForTest(t, outputDir)
+
+			reconcile := stageProductionFixture(t, "reconcile", priorStateFor(t, initial))
+			previousUmask := syscall.Umask(umask)
+			defer syscall.Umask(previousUmask)
+
+			if err := CommitLocalProductionTransaction(context.Background(), outputDir, reconcile); err != nil {
+				t.Fatalf("reconcile CommitLocalProductionTransaction() error = %v", err)
+			}
+
+			assertLocalGenerationModes(t, outputDir, reconcile, prior)
+		})
+	}
+}
+
+func TestLocalProductionPreservesUnrelatedDirectoryModesWithRestrictiveUmask(t *testing.T) {
 	root := t.TempDir()
 	outputDir := filepath.Join(root, "repository")
 	writeStableLocalFixture(t, outputDir)
@@ -193,8 +364,9 @@ func TestLocalProductionPreservesUnrelatedDirectoryModesWithNonzeroUmask(t *test
 			t.Fatal(err)
 		}
 	}
+	prior := localTreeSnapshotForTest(t, outputDir)
 
-	previousUmask := syscall.Umask(0o022)
+	previousUmask := syscall.Umask(0o077)
 	defer syscall.Umask(previousUmask)
 
 	transaction := stageProductionFixture(t, "initialize", nil)
@@ -205,6 +377,7 @@ func TestLocalProductionPreservesUnrelatedDirectoryModesWithNonzeroUmask(t *test
 	assertLocalMode(t, outputDir, os.ModeDir|os.ModeSetgid|0o775)
 	assertLocalMode(t, groupWritable, os.ModeDir|0o775)
 	assertLocalMode(t, setgid, os.ModeDir|os.ModeSetgid|0o775)
+	assertLocalGenerationModes(t, outputDir, transaction, prior)
 }
 
 func TestLocalProductionRejectsPriorSpecialModeDrift(t *testing.T) {
@@ -498,6 +671,51 @@ func assertLocalMode(t *testing.T, path string, want fs.FileMode) {
 	}
 }
 
+func assertLocalGenerationModes(
+	t *testing.T,
+	root string,
+	transaction *ProductionTransaction,
+	prior map[string]localTreeEntry,
+) {
+	t.Helper()
+	target := filepath.Join("dists", transaction.Codename)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		priorEntry, retained := prior[relative]
+		replaced := relative == target ||
+			strings.HasPrefix(relative, target+string(filepath.Separator))
+		if retained && !replaced {
+			if info, err := entry.Info(); err != nil {
+				return err
+			} else if info.Mode() != priorEntry.Mode {
+				t.Errorf("%s retained mode = %v, want %v", relative, info.Mode(), priorEntry.Mode)
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		want := fs.FileMode(0o644)
+		if entry.IsDir() {
+			want = os.ModeDir | 0o755
+		}
+		if info.Mode() != want {
+			t.Errorf("%s generated mode = %v, want %v", relative, info.Mode(), want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertNoGenerationScratch(t *testing.T, parent string) {
 	t.Helper()
 	entries, err := os.ReadDir(parent)
@@ -508,6 +726,32 @@ func assertNoGenerationScratch(t *testing.T, parent string) {
 		if strings.Contains(entry.Name(), ".repogen-generation-") {
 			t.Fatalf("generation scratch remains: %s", entry.Name())
 		}
+	}
+}
+
+func assertStableGenerationSyncSteps(t *testing.T, steps []string) {
+	t.Helper()
+	const filePrefix = "commit:sync-file:"
+	const directoryPrefix = "commit:sync-directory:"
+	count := 0
+	for _, step := range steps {
+		relative := ""
+		switch {
+		case strings.HasPrefix(step, filePrefix):
+			relative = strings.TrimPrefix(step, filePrefix)
+		case strings.HasPrefix(step, directoryPrefix):
+			relative = strings.TrimPrefix(step, directoryPrefix)
+		default:
+			continue
+		}
+		count++
+		if filepath.IsAbs(filepath.FromSlash(relative)) ||
+			strings.Contains(relative, ".repogen-generation-") {
+			t.Errorf("unstable generation sync step %q", step)
+		}
+	}
+	if count == 0 {
+		t.Fatal("commit exposed no generation synchronization steps")
 	}
 }
 
