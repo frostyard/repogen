@@ -34,7 +34,7 @@ internal/
     detector.go               Magic-byte + extension detection for all package formats
   generator/
     generator.go              Generator interface (Generate, ValidatePackages, ParseExistingMetadata)
-    deb/                      Debian/APT generator plus isolated R4 shared-pool safety primitive
+    deb/                      Debian/APT generator plus R3-R5 production transaction primitives
     rpm/                      Yum/DNF repository generator
     apk/                      Alpine APK repository generator
     pacman/                   Arch Linux Pacman repository generator
@@ -92,8 +92,6 @@ request digest, verify both signed forms with one accepted public key,
 enforce fixed Release identity and by-hash policy, validate all four checksum
 sections over the exact all/amd64 index set, require gzip/plain equivalence,
 and strictly parse every package stanza. Both operations are read-only.
-Shared-pool verification, generation, signing, and publication remain later
-production phases.
 
 R4 adds `generator/deb.SharedPool` as a provider-neutral boundary for
 immutable `pool/main` objects. It consumes digest authority from already
@@ -102,9 +100,19 @@ existing object, and permits only conditional create-if-absent. An indexed
 path must already exist with the exact indexed bytes; an unindexed path can
 be created once, and a lost create race is resolved only by hashing the
 winner. ETags are exposed only as informational provider metadata and never
-participate in equality. This primitive has no S3/R2 adapter, credentials,
-CLI wiring, metadata writer, or publication authority; R3 and R5 must supply
-strict restore, clean staging, scoped writes, signing, and read-back.
+participate in equality.
+
+R5 composes strict restore and the shared pool in
+`production_transaction.go`. Staging requires a new directory, validated
+package bytes, an explicit release time, and a real signer. It creates
+canonical and SHA-256 by-hash indexes, a signed Release set, and compact
+secret-free manifests. Publication holds a target lock, verifies complete
+expected-prior state before writes, conditionally creates shared/immutable
+objects, compare-and-replaces only the enumerated suite metadata, reads every
+object back, and writes InRelease last. The provider-neutral interface has
+failure-injected fake-store and real local `gpgv`/apt fixture coverage; there
+is intentionally no R2 adapter, production CLI, credential path, or claim
+that repository permissions enforce the interface.
 
 ## Key Patterns
 

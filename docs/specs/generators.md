@@ -55,16 +55,18 @@ against the local bytes. The gzip stream must contain no trailing bytes and
 must expand exactly to its plain peer. Every package stanza must parse,
 contain all required identity/path/size/digest fields, match its architecture
 index, and use a safe `pool/main/` path. One successful architecture never
-masks another architecture's failure.
+masks another architecture's failure. Each canonical index's SHA-256
+by-hash object must also exist and be byte-identical, so the prior InRelease
+remains usable while reconcile updates canonical paths.
 
-Neither operation writes. Production shared-pool verification, generation,
-signing, staging, publication, and read-back remain gated by
-[Plan 0001](../plans/0001-frostyard-production-publisher.md) R4-R5.
+Neither validation operation writes. The separate R4-R5 library boundary
+described below is not invoked by this command and has no provider
+credentials or external publication authority.
 
 ### Shared immutable pool primitive (R4)
 
 `internal/generator/deb/pool.go` defines a provider-neutral `SharedPool` used
-only by later production phases. Its input is one stable, seekable staged
+by the R5 production transaction. Its input is one stable, seekable staged
 object plus a copied map of `pool/main/...` paths to size and lowercase
 SHA-256 values obtained from signature- and checksum-verified Packages
 indexes.
@@ -83,10 +85,32 @@ indexes.
 
 The fake-S3 tests cover indexed and unindexed reuse, opaque ETags, collisions,
 unreadable streams, conditional-create races, concurrent same-byte writers,
-and shared Trixie/Forky path safety. No provider adapter or advisory
-permission is claimed to enforce the contract. R3 must still produce the
-verified digest map, and R5 must wire a real conditional provider operation,
-clean staging, ordered publication, and remote read-back.
+and shared Trixie/Forky path safety.
+
+### Signed publication transaction (R5)
+
+`StageProductionTransaction` and `PublishProductionTransaction` compose
+strict restore authority and `SharedPool`. Staging rejects an existing
+directory, missing signing, unsafe package metadata, package digest drift,
+mutable suite names, and incomplete reconcile authority. It emits canonical
+all/amd64 indexes, deterministic gzip framing, SHA-256 by-hash copies,
+Release/InRelease/Release.gpg, and compact request/result manifests.
+
+Publishing first verifies the full expected-prior mutable object map under a
+codename lock, then writes only:
+
+1. conditionally created or verified `pool/main` objects;
+2. immutable by-hash indexes;
+3. canonical Packages indexes;
+4. Release and Release.gpg; and
+5. InRelease last.
+
+Every successful write is streamed back and checked for exact size and
+SHA-256. Reconcile uses compare-and-replace against each verified prior
+digest. The interface exposes neither broad sync nor deletion. It has no
+S3/R2 adapter, credentials, production CLI, or publication authority;
+fake-store failure injection and local GPG/APT fixtures demonstrate the
+transaction semantics without representing a production canary.
 
 ## Debian/APT (`internal/generator/deb/`)
 
@@ -107,6 +131,7 @@ clean staging, ordered publication, and remote read-back.
     main/binary-{arch}/
       Packages                              # Package index (plaintext)
       Packages.gz                           # Gzip-compressed index
+      by-hash/SHA256/{digest}               # Production transaction only
 ```
 
 ### Key Behaviors
@@ -118,6 +143,8 @@ clean staging, ordered publication, and remote read-back.
   apt compatibility (`[trusted=yes]`).
 - Cleartext signing (InRelease) shells out to `gpg` CLI because go-crypto's
   implementation doesn't produce apt-verifiable signatures.
+- The production transaction never emits unsigned metadata and switches the
+  visible generation only by writing the fully read-back InRelease last.
 
 ### Parser
 

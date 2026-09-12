@@ -1,5 +1,5 @@
 name: 'Publish Packages to Repogen R2 Repository'
-description: 'Add .deb or sysext packages to an existing repogen repository hosted on Cloudflare R2'
+description: 'Publish supported non-Debian packages to an existing repogen repository hosted on Cloudflare R2'
 author: 'frostyard'
 
 branding:
@@ -105,9 +105,11 @@ inputs:
 
   # Repogen version
   repogen-version:
-    description: 'Version of repogen to use (e.g., v0.1.0, or "latest")'
-    required: false
-    default: 'latest'
+    description: 'Exact v-prefixed repogen release tag'
+    required: true
+  repogen-commit:
+    description: 'Exact 40-character commit embedded in the release binary'
+    required: true
 
   # Incremental mode options
   skip-duplicates:
@@ -159,6 +161,13 @@ runs:
             exit 1
             ;;
         esac
+
+        # The legacy broad-sync path is not the Frostyard Debian production
+        # transaction. Keep it structurally unavailable for Debian.
+        if [[ "${{ inputs.package-type }}" == "deb" ]]; then
+          echo "::error::Debian publication requires the reviewed target-scoped production writer; this legacy sync action is disabled for deb"
+          exit 1
+        fi
 
         # Validate base-url is provided for sysext
         if [[ "${{ inputs.package-type }}" == "sysext" && -z "${{ inputs.base-url }}" ]]; then
@@ -213,48 +222,11 @@ runs:
         set -e
         echo "::group::Installing repogen"
 
-        REPOGEN_VERSION="${{ inputs.repogen-version }}"
-
-        if [[ "$REPOGEN_VERSION" == "latest" ]]; then
-          # Get latest release
-          echo "Fetching latest release version..."
-          RELEASE_INFO=$(curl -sS https://api.github.com/repos/frostyard/repogen/releases/latest)
-          REPOGEN_VERSION=$(echo "$RELEASE_INFO" | jq -r .tag_name)
-
-          if [[ -z "$REPOGEN_VERSION" || "$REPOGEN_VERSION" == "null" ]]; then
-            echo "::error::Could not determine latest repogen version. API response:"
-            echo "$RELEASE_INFO" | head -20
-            exit 1
-          fi
-        fi
-
-        echo "Installing repogen $REPOGEN_VERSION..."
-
-        # Detect architecture
-        ARCH=$(uname -m)
-        case "$ARCH" in
-          x86_64) ARCH="amd64" ;;
-          aarch64) ARCH="arm64" ;;
-        esac
-        echo "Detected architecture: $ARCH"
-
-        # Download repogen
-        DOWNLOAD_URL="https://github.com/frostyard/repogen/releases/download/${REPOGEN_VERSION}/repogen-linux-${ARCH}"
-        echo "Downloading from: $DOWNLOAD_URL"
-
-        HTTP_CODE=$(curl -sS -L -w "%{http_code}" -o /tmp/repogen "$DOWNLOAD_URL")
-        if [[ "$HTTP_CODE" != "200" ]]; then
-          echo "::error::Failed to download repogen (HTTP $HTTP_CODE)"
-          echo "URL: $DOWNLOAD_URL"
-          exit 1
-        fi
-
-        chmod +x /tmp/repogen
-
-        # Verify installation
-        echo "Verifying installation..."
-        /tmp/repogen --version || /tmp/repogen --help > /dev/null
-        echo "✓ repogen installed successfully"
+        "$GITHUB_ACTION_PATH/../../../scripts/install-release.sh" \
+          "${{ inputs.repogen-version }}" \
+          "${{ inputs.repogen-commit }}" \
+          "$(uname -m)" \
+          /tmp/repogen
 
         echo "::endgroup::"
 

@@ -26,18 +26,16 @@ Runs on PRs and pushes to main/master, two jobs:
 ### Release (`.github/workflows/release.yml`)
 
 Triggered by `v*.*.*` tags:
-1. Cross-compiles repogen for linux/darwin × amd64/arm64.
-2. Creates `.deb`, `.rpm`, `.apk`, and `.bottle.tar.gz` packages.
-3. Runs repogen itself to generate a repository from its own packages.
-4. Archives the repository as zip and tar.gz.
-5. Creates a GitHub release with all artifacts.
+1. Uses commit-pinned checkout, Go setup, and GoReleaser actions.
+2. Runs exact GoReleaser version `v2.18.1`.
+3. Builds raw linux amd64/arm64 binaries with the exact tag version and full
+   source commit embedded.
+4. Generates the authoritative `SHA256SUMS`.
+5. Creates the GitHub release with those assets.
 
-### GoReleaser (`.github/workflows/goreleaser.yml`)
-
-Alternative release mechanism using GoReleaser (`.goreleaser.yml`):
-- Builds linux amd64/arm64 only (CGO_ENABLED=0).
-- Produces tar.gz archives with README and LICENSE.
-- Auto-generates changelog excluding docs/test/ci commits.
+The former parallel hand-built workflow and its unrelated package/repository
+artifacts were removed. The sole GoReleaser contract publishes
+`repogen-linux-amd64`, `repogen-linux-arm64`, and `SHA256SUMS`.
 
 ## GitHub Action: `publish-to-r2`
 
@@ -48,18 +46,20 @@ repository hosted on Cloudflare R2. Designed for CI/CD pipelines that
 build packages and want to add them to a repository incrementally.
 
 This section describes current behavior, not a hardened Frostyard production
-contract. The action defaults to a mutable release, restores partial paths,
-uses generic incremental fallback behavior, and broadly synchronizes output.
-It must not initialize or reconcile Frostyard Trixie/Forky. The proposed
-separate production path and its migration sequence are documented in
+contract. The action still restores partial paths, uses generic incremental
+fallback behavior, and broadly synchronizes non-Debian output. It rejects
+Debian structurally rather than claiming that behavior can initialize or
+reconcile Frostyard Trixie/Forky. The separate provider-neutral production
+transaction and its migration sequence are documented in
 [Plan 0001](../plans/0001-frostyard-production-publisher.md).
 
 ### How It Works
 
 1. **Validate inputs** — checks package type, required flags (base-url for
    sysext, repo-name for pacman), directory existence.
-2. **Install repogen** — downloads the specified version (or latest) from
-   GitHub releases.
+2. **Install repogen** — requires an exact tag and commit, downloads the exact
+   architecture asset plus `SHA256SUMS`, verifies the selected digest, and
+   verifies the embedded version/commit before installation.
 3. **Configure AWS CLI** — sets up R2 endpoint credentials.
 4. **Sync existing metadata** — downloads only metadata files (not package
    binaries) from R2 for incremental mode. Sync strategy varies by format:
@@ -88,7 +88,9 @@ separate production path and its migration sequence are documented in
 | `r2-secret-access-key` | R2 Secret Access Key |
 | `r2-bucket` | R2 Bucket name |
 | `packages-dir` | Directory containing packages |
-| `package-type` | One of: deb, sysext, rpm, apk, pacman, homebrew |
+| `package-type` | Listed format; `deb` is rejected by this legacy action |
+| `repogen-version` | Exact v-prefixed release tag |
+| `repogen-commit` | Exact 40-character embedded source commit |
 
 ### Notable Optional Inputs
 
@@ -99,7 +101,6 @@ separate production path and its migration sequence are documented in
 | `skip-duplicates` | `false` | Useful for nightly builds |
 | `html-index` | `true` | Generates browsable directory pages |
 | `purge-cache` | `false` | Requires `cloudflare-zone` and `cloudflare-api-token` |
-| `repogen-version` | `latest` | Pin to specific version for reproducibility |
 
 ### Outputs
 

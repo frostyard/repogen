@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+
+	"github.com/frostyard/repogen/internal/buildinfo"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -10,6 +13,11 @@ func NewRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "repogen",
 		Short: "Generate static repository structures for multiple package managers",
+		Version: fmt.Sprintf(
+			"%s (commit %s)",
+			buildinfo.Version,
+			buildinfo.Commit,
+		),
 		Long: `Repogen scans directories for package files and generates static
 repository structures that can be served as websites.
 
@@ -36,6 +44,7 @@ Supported package types:
 	// Add subcommands
 	rootCmd.AddCommand(NewGenerateCmd())
 	rootCmd.AddCommand(NewValidateProductionCmd())
+	rootCmd.AddCommand(NewVersionCmd())
 
 	return rootCmd
 }

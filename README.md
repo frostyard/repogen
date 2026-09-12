@@ -106,19 +106,41 @@ Reconcile verifies both InRelease and Release.gpg against that key, requires
 the clear-signed payload to equal Release byte-for-byte, checks the expected
 Release digest and fixed production identity, verifies every MD5/SHA1/SHA256/
 SHA512 index entry, requires the exact all/amd64 index set, and strictly
-parses every plain and gzip index. Missing, partial, malformed, wrong-key,
-tampered, or mismatched prior state fails without changing prior bytes.
+parses every plain and gzip index. Each prior SHA-256 by-hash object must
+exist and be byte-identical to its canonical index. Missing, partial,
+malformed, wrong-key, tampered, or mismatched prior state fails without
+changing prior bytes.
 
 This command only validates and restores metadata into memory. It never
 creates the output directory or writes, generates, signs, or publishes
 repository state. R4 provides a separate, provider-neutral shared-pool
 primitive that stream-hashes existing bytes and uses conditional create
-without overwrite; it has only fake-S3 test coverage and is not connected to
-this command or to production credentials. Production generation remains
-unavailable until clean staging, signing, publication, and read-back are
-implemented in later phases. The existing `repogen generate` command remains
-generic and keeps its current defaults, supported formats, unsigned behavior,
-and legacy incremental fallback.
+without overwrite.
+
+R5 adds a separate library transaction in
+`internal/generator/deb/production_transaction.go`. It requires a clean
+staging directory and a signer, emits `Acquire-By-Hash: yes` plus SHA-256
+by-hash copies, records compact request/result manifests, verifies exact prior
+object digests before reconcile, serializes by immutable codename, and limits
+writes to conditional `pool/main` objects and one `dists/<codename>` target.
+Every write is read back; indexes precede Release and Release.gpg, and
+InRelease is always last. The implementation has fake-store failure
+injection and real local `gpgv`/apt fixture coverage. It deliberately has no
+R2 credential or provider adapter, no production CLI, and no authority to run
+a canary. The legacy composite action rejects Debian rather than fall back to
+broad sync.
+
+Release binaries now have one contract: the sole tag workflow runs pinned
+GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
+Each binary embeds the exact version and full commit shown by
+`repogen version --short`. Consumers must name an exact tag and commit;
+`scripts/install-release.sh` retrieves both files, verifies the selected
+SHA-256 entry, and checks embedded identity before installation. No `latest`
+lookup is accepted.
+
+The existing `repogen generate` command remains generic and keeps its current
+defaults, supported formats, unsigned behavior, and legacy incremental
+fallback.
 
 ### Incremental Mode
 
@@ -930,64 +952,31 @@ This ensures compatibility with both old (Bookworm) and new (Trixie) Debian rele
 
 ## GitHub Action
 
-Repogen provides a reusable GitHub Action for publishing packages to repositories hosted on Cloudflare R2 storage. This is ideal for CI/CD workflows that build `.deb` packages or systemd-sysext images.
+Repogen provides a legacy reusable GitHub Action for publishing non-Debian
+package formats to repositories hosted on Cloudflare R2 storage.
 
 > **Production status:** The current action is the generic legacy publisher.
-> It defaults to a mutable Repogen release, uses broad synchronization, and
-> does not implement the proposed fail-closed Frostyard multi-suite contract.
-> Do not use it to initialize or reconcile Frostyard Trixie/Forky. That work
-> is tracked in
+> It requires an exact Repogen tag and commit but still uses broad
+> synchronization for supported non-Debian formats. Debian is rejected
+> structurally; the action cannot initialize or reconcile Frostyard
+> Trixie/Forky. Provider wiring and the retained canary remain tracked in
 > [Plan 0001](docs/plans/0001-frostyard-production-publisher.md).
 
 ### Quick Start
 
 ```yaml
 - name: Publish to repository
-  uses: frostyard/repogen/.github/actions/publish-to-r2@main
+  uses: frostyard/repogen/.github/actions/publish-to-r2@<reviewed-action-commit>
   with:
     r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
     r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
     r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     r2-bucket: my-repo-bucket
     packages-dir: ./dist
-    package-type: deb
-```
-
-### Full Example: Publishing Debian Packages
-
-```yaml
-name: Build and Publish
-on:
-  push:
-    tags:
-      - "v*.*.*"
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build .deb package
-        run: |
-          # Your build steps here
-          dpkg-deb --build mypackage dist/mypackage_1.0.0_amd64.deb
-
-      - name: Publish to repository
-        uses: frostyard/repogen/.github/actions/publish-to-r2@main
-        with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: my-packages
-          packages-dir: ./dist
-          package-type: deb
-          codename: stable
-          origin: My Organization
-          label: My Packages
-          architectures: amd64,arm64
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+    package-type: sysext
+    base-url: https://extensions.example.com/repo
+    repogen-version: v1.2.3
+    repogen-commit: <40-character-release-commit>
 ```
 
 ### Full Example: Publishing Sysext Images
@@ -1003,7 +992,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@<reviewed-checkout-commit>
 
       - name: Build sysext image
         run: |
@@ -1012,7 +1001,7 @@ jobs:
           # Output: dist/myext_1.0.0_13_x86-64.raw.zst
 
       - name: Publish to repository
-        uses: frostyard/repogen/.github/actions/publish-to-r2@main
+        uses: frostyard/repogen/.github/actions/publish-to-r2@<reviewed-action-commit>
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
           r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -1022,6 +1011,8 @@ jobs:
           packages-dir: ./dist
           package-type: sysext
           base-url: https://extensions.example.com/repo
+          repogen-version: v1.2.3
+          repogen-commit: <40-character-release-commit>
 ```
 
 ### Action Inputs
@@ -1033,7 +1024,7 @@ jobs:
 | `r2-secret-access-key` | Yes      | -           | Cloudflare R2 Secret Access Key                                                          |
 | `r2-bucket`            | Yes      | -           | Cloudflare R2 Bucket name                                                                |
 | `packages-dir`         | Yes      | -           | Directory containing packages to add                                                     |
-| `package-type`         | Yes      | -           | Package type: `deb`, `sysext`, `rpm`, `apk`, `pacman`, `homebrew`                        |
+| `package-type`         | Yes      | -           | Package type; `deb` is rejected by this legacy action                                    |
 | `base-url`             | No\*     | -           | Base URL for the repository (\*required for `sysext`)                                    |
 | `repo-prefix`          | No       | -           | Path prefix in R2 bucket                                                                 |
 | `gpg-private-key`      | No       | -           | GPG private key (base64 or ASCII armored)                                                |
@@ -1050,7 +1041,8 @@ jobs:
 | `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                                                |
 | `distro-variant`       | No       | `fedora`    | Distribution for RPM repos                                                               |
 | `version`              | No       | -           | Release version for RPM repos                                                            |
-| `repogen-version`      | No       | `latest`    | Version of repogen to use                                                                |
+| `repogen-version`      | Yes      | -           | Exact v-prefixed Repogen release tag                                                     |
+| `repogen-commit`       | Yes      | -           | Exact 40-character commit embedded in the binary                                         |
 | `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
 | `purge-cache`          | No       | `false`     | Purge Cloudflare cache after upload                                                      |
 | `cloudflare-zone`      | No\*     | -           | Cloudflare Zone ID (\*required if `purge-cache` is `true`)                               |
@@ -1099,7 +1091,7 @@ If your R2 bucket is served through a Cloudflare domain, you can configure the a
 6. Enable cache purging in your workflow:
 
 ```yaml
-- uses: frostyard/repogen/.github/actions/publish-to-r2@main
+- uses: frostyard/repogen/.github/actions/publish-to-r2@<reviewed-action-commit>
   with:
     # ... other inputs ...
     purge-cache: "true"

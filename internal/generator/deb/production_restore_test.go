@@ -62,6 +62,40 @@ func TestRestoreProductionStateFailsClosedWithoutChangingPriorBytes(t *testing.T
 			wantError: "cannot read prior index",
 		},
 		{
+			name: "missing by-hash metadata",
+			prepare: func(t *testing.T, config *models.RepositoryConfig) (string, string) {
+				digest := writeProductionRestoreFixture(t, config, nil)
+				index, err := os.ReadFile(productionIndexPath(config, "amd64", "Packages"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(productionByHashIndexPath(config, "amd64", "Packages", index)); err != nil {
+					t.Fatal(err)
+				}
+				return digest, productionPublicKeyFixture()
+			},
+			wantError: "cannot read prior by-hash index",
+		},
+		{
+			name: "mismatched by-hash metadata",
+			prepare: func(t *testing.T, config *models.RepositoryConfig) (string, string) {
+				digest := writeProductionRestoreFixture(t, config, nil)
+				index, err := os.ReadFile(productionIndexPath(config, "amd64", "Packages"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(
+					productionByHashIndexPath(config, "amd64", "Packages", index),
+					[]byte("drifted"),
+					0o644,
+				); err != nil {
+					t.Fatal(err)
+				}
+				return digest, productionPublicKeyFixture()
+			},
+			wantError: "is not byte-identical",
+		},
+		{
 			name: "missing InRelease",
 			prepare: func(t *testing.T, config *models.RepositoryConfig) (string, string) {
 				digest := writeProductionRestoreFixture(t, config, nil)
@@ -293,6 +327,18 @@ func writeProductionRestoreFixture(
 		if err := os.WriteFile(filepath.Join(indexDir, "Packages.gz"), compressed, 0o644); err != nil {
 			t.Fatal(err)
 		}
+		for name, data := range map[string][]byte{
+			"Packages":    plain,
+			"Packages.gz": compressed,
+		} {
+			byHashPath := productionByHashIndexPath(config, architecture, name, data)
+			if err := os.MkdirAll(filepath.Dir(byHashPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(byHashPath, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 		metadataPaths = append(
 			metadataPaths,
 			filepath.ToSlash(filepath.Join("main", "binary-"+architecture, "Packages")),
@@ -372,6 +418,20 @@ func productionIndexPath(config *models.RepositoryConfig, architecture, name str
 		"main",
 		"binary-"+architecture,
 		name,
+	)
+}
+
+func productionByHashIndexPath(
+	config *models.RepositoryConfig,
+	architecture string,
+	name string,
+	data []byte,
+) string {
+	return filepath.Join(
+		filepath.Dir(productionIndexPath(config, architecture, name)),
+		"by-hash",
+		"SHA256",
+		sha256Hex(data),
 	)
 }
 

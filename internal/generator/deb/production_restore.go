@@ -49,6 +49,9 @@ type ProductionState struct {
 	ReleaseSHA256         string
 	SigningKeyFingerprint string
 	Packages              []models.Package
+	objects               map[string]ProductionObjectDigest
+	poolDigests           map[string]PoolDigest
+	verified              bool
 }
 
 type releaseChecksum struct {
@@ -134,15 +137,37 @@ func RestoreProductionState(
 		return nil, err
 	}
 
-	packages, err := verifyProductionIndexes(suiteDir, release, config.Arches)
+	packages, indexObjects, err := verifyProductionIndexes(suiteDir, release, config.Arches)
 	if err != nil {
 		return nil, err
+	}
+
+	objects := map[string]ProductionObjectDigest{
+		path.Join("dists", config.Codename, "Release"): {
+			SHA256: observedReleaseSHA256,
+			Size:   int64(len(releaseData)),
+		},
+		path.Join("dists", config.Codename, "InRelease"):   productionDigestForBytes(inReleaseData),
+		path.Join("dists", config.Codename, "Release.gpg"): productionDigestForBytes(releaseSignature),
+	}
+	for relativePath, digest := range indexObjects {
+		objects[path.Join("dists", config.Codename, relativePath)] = digest
+	}
+	poolDigests := make(map[string]PoolDigest, len(packages))
+	for _, pkg := range packages {
+		poolDigests[pkg.Filename] = PoolDigest{
+			SHA256: pkg.SHA256Sum,
+			Size:   pkg.Size,
+		}
 	}
 
 	return &ProductionState{
 		ReleaseSHA256:         observedReleaseSHA256,
 		SigningKeyFingerprint: fingerprint,
 		Packages:              packages,
+		objects:               objects,
+		poolDigests:           poolDigests,
+		verified:              true,
 	}, nil
 }
 
@@ -338,7 +363,7 @@ func verifyProductionIndexes(
 	suiteDir string,
 	release *productionRelease,
 	architectures []string,
-) ([]models.Package, error) {
+) ([]models.Package, map[string]ProductionObjectDigest, error) {
 	expectedPaths := make(map[string]string, len(architectures)*2)
 	for _, architecture := range architectures {
 		base := path.Join("main", "binary-"+architecture, "Packages")
@@ -349,10 +374,10 @@ func verifyProductionIndexes(
 	for section := range productionChecksumLengths {
 		entries, ok := release.checksums[section]
 		if !ok {
-			return nil, fmt.Errorf("prior Release is missing checksum section %s", section)
+			return nil, nil, fmt.Errorf("prior Release is missing checksum section %s", section)
 		}
 		if len(entries) != len(expectedPaths) {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"prior Release section %s advertises %d indexes, want %d",
 				section,
 				len(entries),
@@ -361,23 +386,38 @@ func verifyProductionIndexes(
 		}
 		for expectedPath := range expectedPaths {
 			if _, ok := entries[expectedPath]; !ok {
-				return nil, fmt.Errorf("prior Release section %s is missing %q", section, expectedPath)
+				return nil, nil, fmt.Errorf("prior Release section %s is missing %q", section, expectedPath)
 			}
 		}
 	}
 
 	verifiedBytes := make(map[string][]byte, len(expectedPaths))
+	objectDigests := make(map[string]ProductionObjectDigest, len(expectedPaths))
 	for indexPath := range expectedPaths {
 		data, err := readProductionMetadata(filepath.Join(suiteDir, filepath.FromSlash(indexPath)))
 		if err != nil {
-			return nil, fmt.Errorf("cannot read prior index %q: %w", indexPath, err)
+			return nil, nil, fmt.Errorf("cannot read prior index %q: %w", indexPath, err)
 		}
 		for section := range productionChecksumLengths {
 			if err := verifyReleaseChecksum(section, release.checksums[section][indexPath], data); err != nil {
-				return nil, fmt.Errorf("prior index %q failed %s verification: %w", indexPath, section, err)
+				return nil, nil, fmt.Errorf("prior index %q failed %s verification: %w", indexPath, section, err)
 			}
 		}
+		byHashPath := path.Join(
+			path.Dir(indexPath),
+			"by-hash",
+			"SHA256",
+			release.checksums["SHA256"][indexPath].digest,
+		)
+		byHashData, err := readProductionMetadata(filepath.Join(suiteDir, filepath.FromSlash(byHashPath)))
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot read prior by-hash index %q: %w", byHashPath, err)
+		}
+		if !bytes.Equal(byHashData, data) {
+			return nil, nil, fmt.Errorf("prior by-hash index %q is not byte-identical to %q", byHashPath, indexPath)
+		}
 		verifiedBytes[indexPath] = data
+		objectDigests[indexPath] = productionDigestForBytes(data)
 	}
 
 	var packages []models.Package
@@ -387,25 +427,33 @@ func verifyProductionIndexes(
 		gzipPath := plainPath + ".gz"
 		uncompressed, err := decompressProductionIndex(verifiedBytes[gzipPath])
 		if err != nil {
-			return nil, fmt.Errorf("prior index %q is invalid: %w", gzipPath, err)
+			return nil, nil, fmt.Errorf("prior index %q is invalid: %w", gzipPath, err)
 		}
 		if !bytes.Equal(uncompressed, verifiedBytes[plainPath]) {
-			return nil, fmt.Errorf("prior indexes %q and %q are not byte-identical after decompression", plainPath, gzipPath)
+			return nil, nil, fmt.Errorf("prior indexes %q and %q are not byte-identical after decompression", plainPath, gzipPath)
 		}
 
 		indexPackages, err := parseProductionPackages(verifiedBytes[plainPath], architecture)
 		if err != nil {
-			return nil, fmt.Errorf("prior index %q cannot be parsed: %w", plainPath, err)
+			return nil, nil, fmt.Errorf("prior index %q cannot be parsed: %w", plainPath, err)
 		}
 		for _, pkg := range indexPackages {
 			if _, duplicate := seenFilenames[pkg.Filename]; duplicate {
-				return nil, fmt.Errorf("prior package path %q is advertised more than once", pkg.Filename)
+				return nil, nil, fmt.Errorf("prior package path %q is advertised more than once", pkg.Filename)
 			}
 			seenFilenames[pkg.Filename] = struct{}{}
 			packages = append(packages, pkg)
 		}
 	}
-	return packages, nil
+	return packages, objectDigests, nil
+}
+
+func productionDigestForBytes(data []byte) ProductionObjectDigest {
+	digest := sha256.Sum256(data)
+	return ProductionObjectDigest{
+		SHA256: hex.EncodeToString(digest[:]),
+		Size:   int64(len(data)),
+	}
 }
 
 func verifyReleaseChecksum(section string, expected releaseChecksum, data []byte) error {

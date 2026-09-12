@@ -86,8 +86,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 
 - [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
   — R1 contract plus the implemented write-free R2 input and R3 signed
-  prior-state validation; immutable shared-pool handling and the bounded
-  Trixie canary remain later phases
+  prior-state validation, R4 immutable shared-pool handling, and the
+  provider-neutral R5 signed transaction; a real provider adapter and the
+  bounded Trixie canary remain later phases
 
 ### Uncategorized
 

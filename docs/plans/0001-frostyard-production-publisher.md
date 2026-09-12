@@ -333,19 +333,22 @@ release.
 ## Release artifact blocker
 
 [frostyard/repogen#34](https://github.com/frostyard/repogen/issues/34) remained
-open when this plan was rechecked on 2026-09-12. Tag pushes currently trigger
-two incompatible release pipelines: hand-built
+open when this plan was rechecked on 2026-09-12. The accepted baseline has two
+incompatible release pipelines: hand-built
 `repogen-{os}-{arch}` binaries with `SHA256SUMS`, and GoReleaser archives
 with different names and `checksums.txt`. The action assumes the hand-built
 name, verifies only HTTP success, and cannot verify a real embedded
 version/commit identity.
 
-R1 records but does not resolve that defect. R5 must select one authoritative
-asset name, checksum file, embedded version/commit output, and action download
-path, then test digest-verified installation. No canary or downstream release
-acceptance can proceed while the contract is ambiguous. An exception must
-establish the same exact, digest-verified contract and receive separate human
-acceptance; it cannot waive
+The R5 candidate replaces the hand-built workflow with one pinned GoReleaser
+path and removes the parallel workflow. Its authoritative consumer
+contract is an exact `vMAJOR.MINOR.PATCH` tag, exact 40-character source
+commit, `repogen-linux-{amd64,arm64}`, and `SHA256SUMS`. The binary reports
+its embedded identity through `repogen version --short`; the installer
+downloads both assets, verifies exactly one matching SHA-256 entry, and
+rejects any identity mismatch. This local candidate does not close issue 34,
+publish a release, or prove an external release. D5 still requires the exact
+reviewed merge and separately human-published, digest-verified release under
 [core ADR-0023](https://github.com/frostyard/core/blob/main/docs/adr/0023-verified-pinned-downloads.md).
 
 ## Phase 1 - Record the boundary (R1)
@@ -393,9 +396,12 @@ acceptance; it cannot waive
 
 ## Phase 4 - Publish one bounded canary (R5)
 
-- Add clean staging, mandatory signing/by-hash, compact manifests,
+- [x] Add clean staging, mandatory signing/by-hash, compact manifests,
   expected-prior checks, target-scoped ordered writes, and remote read-back.
-- Resolve the authoritative Repogen release artifact contract.
+- [x] Resolve the authoritative Repogen release artifact contract in the
+  local candidate; external issue closure and release remain separate.
+- [ ] Merge/configure a real provider adapter and execute the separately
+  authorized retained `gchlog` canary.
 - **Done when:** failure injection exposes no incomplete generation and the
   separately authorized `gchlog` canary passes real `gpgv` and apt install
   while `stable` remains byte-identical.
@@ -409,11 +415,12 @@ and acceptance matrix remain authoritative in core Plan 0007.
 
 ## Open questions
 
-- **Release artifact contract:** resolve frostyard/repogen#34 by R5 or obtain
-  an exact reviewed and human-accepted exception with the same digest and
-  embedded-identity guarantees.
-- **Production API spelling:** choose a dedicated command or explicit mode in
-  R2; either must make the production boundary structural and fail closed.
+- **Release publication:** issue 34 remains externally open; D5 must prove
+  the reviewed merged workflow and separately published release satisfy this
+  candidate contract.
+- **Production adapter/API:** select and separately approve the real provider
+  adapter and external command/service wiring. The current library boundary
+  and fixtures do not carry credentials or publication authority.
 
 ## References
 
