@@ -1,15 +1,18 @@
 # Plan: Frostyard production publisher boundary
 
 This plan defines the repository-local implementation contract for the
-Frostyard APT publisher. R1 records the contract and R2 now implements its
-write-free production preflight; later phases remain unimplemented. The plan
+Frostyard APT publisher. R1 records the contract, R2 implements its
+write-free input preflight, and R3 implements explicit absent-target
+initialize plus strict signed prior-state reconciliation. Later phases remain
+unimplemented. The plan
 implements
 [core ADR-0048](https://github.com/frostyard/core/blob/main/docs/adr/0048-publish-debian-packages-to-explicit-codenames.md)
 and the Repogen R1-R10 sequence in
 [core Plan 0007](https://github.com/frostyard/core/blob/main/docs/plans/0007-support-suites-in-repogen.md).
-No production generation, restoration, signing, publication, remote
-mutation, merge, release, or operation is implemented or authorized by the
-R2 preflight.
+No production generation, signing, publication, remote mutation, merge,
+release, or production operation is implemented or authorized by the
+R2-R3 validation path. R3's "restore" is read-only verification and in-memory
+parsing of an already local prior tree.
 
 ## Current behavior and compatibility boundary
 
@@ -233,7 +236,7 @@ acceptance; it cannot waive
 
 ## Phase 3 - Restore and protect immutable state (R3-R4)
 
-- Add strict signed restore and explicit initialization.
+- [x] Add strict signed restore and explicit initialization without writes.
 - Add verified shared-pool digest authority and conditional creation.
 - **Done when:** valid initialize/reconcile pass while missing, corrupt,
   tampered, partial, collision, unreadable, and race cases fail without

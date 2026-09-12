@@ -79,13 +79,21 @@ The `generate` subcommand (`cli/generate.go:runGeneration`) drives this pipeline
    writes an `index.html` at every directory level.
 
 The separate `validate-production` command is deliberately not another
-generator yet. It validates explicit Frostyard Debian target identity,
+generator. It validates explicit Frostyard Debian target identity,
 non-overlapping paths, the fixed component and architecture set, regular
 non-symlink package paths, strict `.deb` parsing, allowed package
 architectures, and control-field safety. It rejects every other recognized
-package format in the input tree and returns before creating or changing the
-output path. Strict restore, generation, signing, and publication remain
-later production phases.
+package format in the input tree.
+
+The same command then requires one explicit prior-state operation.
+`initialize` proves only that `dists/<codename>` is absent. `reconcile`
+uses `generator/deb/production_restore.go` to verify Release against the
+request digest, verify both signed forms with one accepted public key,
+enforce fixed Release identity and by-hash policy, validate all four checksum
+sections over the exact all/amd64 index set, require gzip/plain equivalence,
+and strictly parse every package stanza. Both operations are read-only.
+Shared-pool verification, generation, signing, and publication remain later
+production phases.
 
 ## Key Patterns
 
@@ -212,8 +220,9 @@ and the `publish-to-r2` composite action.
 ## Planned Frostyard Production Boundary
 
 The generic command and action behavior described above remains unchanged.
-The R2 `validate-production` preflight implements the fail-before-write target
-and Debian-input boundary, but it intentionally cannot generate or publish.
+The R2-R3 `validate-production` path implements the fail-before-write target,
+Debian-input, explicit initialize, and strict signed-reconcile boundaries,
+but it intentionally cannot generate or publish.
 The complete fail-closed Frostyard production publisher remains specified in
 [Plan 0001](../plans/0001-frostyard-production-publisher.md). The plan
 preserves generic local and unsigned generation while defining the proposed

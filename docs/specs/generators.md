@@ -12,11 +12,11 @@ Each generator implements `generator.Generator` and produces a complete
 repository structure from a list of `models.Package` entries — the exact
 output layout, metadata file formats, and signing behavior per format.
 
-## Frostyard production Debian preflight (`internal/cli/production.go`)
+## Frostyard production Debian validation (`internal/cli/production.go`)
 
-`repogen validate-production` is an R2 validation boundary, not a generator.
-It accepts no implicit target values and writes no output. A valid request
-must provide:
+`repogen validate-production` is an R2-R3 validation and strict-restore
+boundary, not a generator. It accepts no implicit target values and writes no
+output. A valid request must provide:
 
 - distinct, non-overlapping input and future output paths;
 - a lowercase immutable codename and an exactly matching suite (moving names
@@ -35,9 +35,31 @@ the output path.
 
 The preflight fixes `Origin: Repogen Repository` and
 `Label: Frostyard Repository` internally rather than accepting caller
-overrides. It does not restore existing metadata, generate repository files,
-initialize a suite, sign, or publish. Those capabilities remain gated by
-[Plan 0001](../plans/0001-frostyard-production-publisher.md) R3-R5.
+overrides. It then requires exactly one explicit operation:
+
+- `initialize` requires no trusted key or expected prior digest and succeeds
+  only when `dists/<codename>` is authoritatively absent; or
+- `reconcile` requires one trusted public key and a 64-character lowercase
+  expected prior Release SHA-256.
+
+Reconcile reads only regular, non-symlink metadata files. It requires Release,
+InRelease, and Release.gpg; verifies both signatures resolve to the same
+trusted fingerprint; requires InRelease's signed payload to equal Release
+byte-for-byte; enforces fixed Origin, Label, Suite, Codename, component,
+architectures, `Acquire-By-Hash: yes`, a valid Date, and no Valid-Until; and
+rejects unknown or repeated Release fields.
+
+Each MD5Sum, SHA1, SHA256, and SHA512 section must advertise exactly
+`main/binary-{all,amd64}/Packages{,.gz}`. Every size and digest is checked
+against the local bytes. The gzip stream must contain no trailing bytes and
+must expand exactly to its plain peer. Every package stanza must parse,
+contain all required identity/path/size/digest fields, match its architecture
+index, and use a safe `pool/main/` path. One successful architecture never
+masks another architecture's failure.
+
+Neither operation writes. Production shared-pool verification, generation,
+signing, staging, publication, and read-back remain gated by
+[Plan 0001](../plans/0001-frostyard-production-publisher.md) R4-R5.
 
 ## Debian/APT (`internal/generator/deb/`)
 
@@ -79,7 +101,10 @@ parses Debian control format (key: value with continuation lines).
 ### Incremental Mode
 
 `ParseExistingMetadata()` reads `Packages` or `Packages.gz` files from
-existing `dists/` structure and reconstructs `Package` structs.
+existing `dists/` structure and reconstructs `Package` structs for the
+generic incremental command. Its legacy fallback behavior is not used by the
+production path; production reconcile uses the strict signed verifier
+described above.
 
 ---
 

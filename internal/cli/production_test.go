@@ -30,6 +30,7 @@ func TestValidateProductionCommandAcceptsExactDebianRequestWithoutWriting(t *tes
 		"--suite", "trixie",
 		"--components", "main",
 		"--arch", "amd64,all",
+		"--operation", "initialize",
 	})
 
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
@@ -43,6 +44,99 @@ func TestValidateProductionCommandAcceptsExactDebianRequestWithoutWriting(t *tes
 	}
 	if strings.Join(config.Arches, ",") != "all,amd64" {
 		t.Fatalf("canonical architectures = %v, want [all amd64]", config.Arches)
+	}
+}
+
+func TestValidateProductionInitializeRequiresAbsentTarget(t *testing.T) {
+	t.Parallel()
+
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	copyValidDebFixture(t, inputDir)
+	targetDir := filepath.Join(outputDir, "dists", "trixie")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(targetDir, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewValidateProductionCmd()
+	cmd.SetArgs(productionArgs(inputDir, outputDir))
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error = %v, want existing-target failure", err)
+	}
+
+	data, readErr := os.ReadFile(sentinel)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "unchanged" {
+		t.Fatalf("sentinel changed to %q", data)
+	}
+}
+
+func TestValidateProductionOperationContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		args           []string
+		operation      string
+		key            string
+		expectedDigest string
+		wantError      string
+	}{
+		{
+			name:      "operation is explicit",
+			wantError: "--operation must be provided explicitly",
+		},
+		{
+			name:      "unknown operation",
+			args:      []string{"--operation", "inspect"},
+			operation: "inspect",
+			wantError: "exactly initialize or reconcile",
+		},
+		{
+			name:           "initialize rejects prior digest",
+			args:           []string{"--operation", "initialize", "--expected-prior-release-sha256", strings.Repeat("a", 64)},
+			operation:      "initialize",
+			expectedDigest: strings.Repeat("a", 64),
+			wantError:      "must be absent for initialize",
+		},
+		{
+			name:      "reconcile requires key",
+			args:      []string{"--operation", "reconcile", "--expected-prior-release-sha256", strings.Repeat("a", 64)},
+			operation: "reconcile",
+			wantError: "--trusted-public-key must be provided explicitly",
+		},
+		{
+			name:           "reconcile rejects malformed digest",
+			args:           []string{"--operation", "reconcile", "--trusted-public-key", "public.asc", "--expected-prior-release-sha256", "ABC"},
+			operation:      "reconcile",
+			key:            "public.asc",
+			expectedDigest: "ABC",
+			wantError:      "64 lowercase hexadecimal",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := NewValidateProductionCmd()
+			cmd.SetArgs(tt.args)
+			if err := cmd.ParseFlags(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			err := validateProductionOperation(cmd, tt.operation, tt.key, tt.expectedDigest)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -337,6 +431,7 @@ func productionArgs(inputDir, outputDir string, omit ...string) []string {
 		"--suite", "trixie",
 		"--components", "main",
 		"--arch", "all,amd64",
+		"--operation", "initialize",
 	}
 	var args []string
 	for i := 0; i < len(values); i += 2 {

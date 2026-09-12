@@ -23,6 +23,7 @@ const (
 
 var (
 	productionIdentifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.+-]*$`)
+	productionSHA256Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	debianPackageNamePattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
 	debianVersionPattern        = regexp.MustCompile(`^[0-9][A-Za-z0-9.+:~-]*$`)
 	debianFieldNamePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
@@ -48,16 +49,28 @@ func NewValidateProductionCmd() *cobra.Command {
 }
 
 func newValidateProductionCmd(config *models.RepositoryConfig) *cobra.Command {
+	var operation string
+	var trustedPublicKeyPath string
+	var expectedPriorReleaseSHA256 string
+
 	cmd := &cobra.Command{
 		Use:   "validate-production",
-		Short: "Validate a Frostyard production Debian request without writing output",
+		Short: "Validate a Frostyard production Debian request and prior state without writing output",
 		Long: `Validates one Frostyard production Debian request before any repository
-files are written. This R2 preflight does not generate, sign, restore, or
-publish a repository; those operations remain unavailable until their later
-fail-closed phases are implemented.`,
+files are written. Initialize proves the target suite is absent. Reconcile
+strictly verifies the expected signed prior Release and every architecture
+index. This command does not generate, sign, or publish a repository.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateProductionConfig(cmd, config); err != nil {
+				return err
+			}
+			if err := validateProductionOperation(
+				cmd,
+				operation,
+				trustedPublicKeyPath,
+				expectedPriorReleaseSHA256,
+			); err != nil {
 				return err
 			}
 
@@ -66,11 +79,33 @@ fail-closed phases are implemented.`,
 				return err
 			}
 
-			logrus.Infof(
-				"Validated production Debian request for %s with %d package(s); no output was written",
-				config.Codename,
-				len(packages),
-			)
+			switch operation {
+			case "initialize":
+				if err := deb.VerifyProductionInitialization(config.OutputDir, config.Codename); err != nil {
+					return productionStateError("%v", err)
+				}
+				logrus.Infof(
+					"Validated production initialize for absent suite %s with %d package(s); no output was written",
+					config.Codename,
+					len(packages),
+				)
+			case "reconcile":
+				state, err := deb.RestoreProductionState(
+					config,
+					trustedPublicKeyPath,
+					expectedPriorReleaseSHA256,
+				)
+				if err != nil {
+					return productionStateError("%v", err)
+				}
+				logrus.Infof(
+					"Validated production reconcile for suite %s at Release %s with %d retained and %d incoming package(s); no output was written",
+					config.Codename,
+					state.ReleaseSHA256,
+					len(state.Packages),
+					len(packages),
+				)
+			}
 			return nil
 		},
 	}
@@ -81,8 +116,51 @@ fail-closed phases are implemented.`,
 	cmd.Flags().StringVar(&config.Suite, "suite", "", "Explicit Debian suite; must equal codename")
 	cmd.Flags().StringSliceVar(&config.Components, "components", nil, "Explicit components; must be exactly main")
 	cmd.Flags().StringSliceVar(&config.Arches, "arch", nil, "Explicit architectures; initial allowlist is all,amd64")
+	cmd.Flags().StringVar(&operation, "operation", "", "Explicit operation: initialize or reconcile")
+	cmd.Flags().StringVar(&trustedPublicKeyPath, "trusted-public-key", "", "Accepted public key for reconcile signature verification")
+	cmd.Flags().StringVar(
+		&expectedPriorReleaseSHA256,
+		"expected-prior-release-sha256",
+		"",
+		"Expected prior Release SHA-256 for reconcile",
+	)
 
 	return cmd
+}
+
+func validateProductionOperation(
+	cmd *cobra.Command,
+	operation string,
+	trustedPublicKeyPath string,
+	expectedPriorReleaseSHA256 string,
+) error {
+	if !cmd.Flags().Changed("operation") {
+		return invalidProductionConfig("--operation must be provided explicitly")
+	}
+	switch operation {
+	case "initialize":
+		if cmd.Flags().Changed("trusted-public-key") || trustedPublicKeyPath != "" {
+			return invalidProductionConfig("--trusted-public-key is not valid for initialize")
+		}
+		if cmd.Flags().Changed("expected-prior-release-sha256") || expectedPriorReleaseSHA256 != "" {
+			return invalidProductionConfig("--expected-prior-release-sha256 must be absent for initialize")
+		}
+	case "reconcile":
+		if !cmd.Flags().Changed("trusted-public-key") || trustedPublicKeyPath == "" {
+			return invalidProductionConfig("--trusted-public-key must be provided explicitly for reconcile")
+		}
+		if !cmd.Flags().Changed("expected-prior-release-sha256") {
+			return invalidProductionConfig("--expected-prior-release-sha256 must be provided explicitly for reconcile")
+		}
+		if !productionSHA256Pattern.MatchString(expectedPriorReleaseSHA256) {
+			return invalidProductionConfig(
+				"--expected-prior-release-sha256 must be 64 lowercase hexadecimal characters",
+			)
+		}
+	default:
+		return invalidProductionConfig("--operation must be exactly initialize or reconcile")
+	}
+	return nil
 }
 
 func validateProductionConfig(cmd *cobra.Command, config *models.RepositoryConfig) error {
@@ -441,6 +519,13 @@ func invalidProductionConfig(format string, args ...interface{}) error {
 func productionFileError(format string, args ...interface{}) error {
 	return &models.RepoGenError{
 		Type: models.ErrFileOp,
+		Err:  fmt.Errorf(format, args...),
+	}
+}
+
+func productionStateError(format string, args ...interface{}) error {
+	return &models.RepoGenError{
+		Type: models.ErrMetadataGen,
 		Err:  fmt.Errorf(format, args...),
 	}
 }

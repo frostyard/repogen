@@ -64,13 +64,16 @@ repogen generate --input-dir /path/to/packages --output-dir /path/to/repo
 repogen generate -v
 ```
 
-### Frostyard Production Preflight
+### Frostyard Production Validation
 
-R2 adds a separate, fail-closed preflight for Frostyard production Debian
-requests. It requires explicit non-moving suite identity, the fixed
-Frostyard Release identity, component `main`, the initial `all,amd64`
-architecture allowlist, non-overlapping input/output paths, and Debian-only
-package input:
+R2-R3 add a separate, fail-closed validation path for Frostyard production
+Debian requests and prior state. It requires explicit non-moving suite
+identity, the fixed Frostyard Release identity, component `main`, the initial
+`all,amd64` architecture allowlist, non-overlapping input/output paths, and
+Debian-only package input.
+
+An initialize request must explicitly name `--operation initialize`. It
+succeeds only when `dists/<codename>` is absent:
 
 ```bash
 repogen validate-production \
@@ -79,15 +82,40 @@ repogen validate-production \
   --codename trixie \
   --suite trixie \
   --components main \
-  --arch all,amd64
+  --arch all,amd64 \
+  --operation initialize
 ```
 
-This command only validates. It never creates the output directory or writes,
-signs, restores, or publishes repository state. Production generation remains
-unavailable until strict restore, immutable pool handling, staged signing,
-publication, and read-back are implemented in later phases. The existing
-`repogen generate` command remains generic and keeps its current defaults,
-supported formats, and unsigned behavior.
+A reconcile request must also supply the accepted public key and exact
+expected prior Release SHA-256:
+
+```bash
+repogen validate-production \
+  --input-dir ./debs \
+  --output-dir ./restored-repository \
+  --codename trixie \
+  --suite trixie \
+  --components main \
+  --arch all,amd64 \
+  --operation reconcile \
+  --trusted-public-key ./frostyard-public-key.asc \
+  --expected-prior-release-sha256 <64-lowercase-hex-characters>
+```
+
+Reconcile verifies both InRelease and Release.gpg against that key, requires
+the clear-signed payload to equal Release byte-for-byte, checks the expected
+Release digest and fixed production identity, verifies every MD5/SHA1/SHA256/
+SHA512 index entry, requires the exact all/amd64 index set, and strictly
+parses every plain and gzip index. Missing, partial, malformed, wrong-key,
+tampered, or mismatched prior state fails without changing prior bytes.
+
+This command only validates and restores metadata into memory. It never
+creates the output directory or writes, generates, signs, or publishes
+repository state. Production generation remains unavailable until immutable
+pool handling, staged signing, publication, and read-back are implemented in
+later phases. The existing `repogen generate` command remains generic and
+keeps its current defaults, supported formats, unsigned behavior, and legacy
+incremental fallback.
 
 ### Incremental Mode
 

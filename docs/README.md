@@ -85,9 +85,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 ### Plans
 
 - [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
-  — R1 contract plus the implemented write-free R2 production preflight;
-  strict suite transactions, immutable shared pool, and bounded Trixie canary
-  remain later phases
+  — R1 contract plus the implemented write-free R2 input and R3 signed
+  prior-state validation; immutable shared-pool handling and the bounded
+  Trixie canary remain later phases
 
 ### Uncategorized
 
