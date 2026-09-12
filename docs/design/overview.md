@@ -114,6 +114,27 @@ failure-injected fake-store and real local `gpgv`/apt fixture coverage; there
 is intentionally no R2 adapter, production CLI, credential path, or claim
 that repository permissions enforce the interface.
 
+R6 makes the existing Debian metadata generator deterministic. Package
+stanzas use a total name/lexicographic-version-string/architecture/filename
+order with sorted arbitrary fields, gzip headers are fixed, Release
+architectures, components, and checksum entries are sorted, and
+`NewGeneratorWithClock` supplies one controlled publication timestamp. All
+selected Debian pool destinations are validated before output is created:
+same-path inputs can be reused only when their size and SHA-256 agree, using
+local source bytes when available and retained metadata identity for an
+unavailable incremental object. Conflicting contents fail closed. A repeated
+generation re-renders Release with the prior Date and skips rewriting or
+signing only when the bytes match exactly and both prior signatures verify
+against the configured signer's public key. Changed metadata uses the current
+controlled timestamp and signs a new generation. Sysext extension processing
+and checksum manifests are sorted, and a duplicate filename with conflicting
+digests fails instead of depending on map iteration.
+
+These are local generation primitives. They do not connect
+`validate-production` to a writer, add staging or publication, provide an
+R2 adapter, or authorize a production operation. R5 and R7-R10 retain those
+separate boundaries.
+
 ## Key Patterns
 
 ### Generator Interface

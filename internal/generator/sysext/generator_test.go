@@ -381,6 +381,57 @@ func TestGeneratorSignsChecksumManifest(t *testing.T) {
 	if !strings.Contains(string(transfer), "Verify=true") {
 		t.Errorf("signed transfer does not enable verification:\n%s", transfer)
 	}
+
+}
+
+func TestGeneratorCanonicalChecksumOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputDir := filepath.Join(tmpDir, "input")
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	alpha := filepath.Join(inputDir, "same_1.0_13_x86-64.raw")
+	beta := filepath.Join(inputDir, "same_2.0_13_x86-64.raw")
+	if err := os.WriteFile(alpha, []byte("alpha"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(beta, []byte("beta"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	first := models.Package{Name: "same", Version: "1.0", Architecture: "x86-64", Filename: alpha}
+	second := models.Package{Name: "same", Version: "2.0", Architecture: "x86-64", Filename: beta}
+
+	outputOne := filepath.Join(tmpDir, "one")
+	outputTwo := filepath.Join(tmpDir, "two")
+	if err := NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputOne},
+		[]models.Package{second, first},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputTwo},
+		[]models.Package{first, second},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	firstManifest, err := os.ReadFile(filepath.Join(outputOne, "ext", "same", "SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondManifest, err := os.ReadFile(filepath.Join(outputTwo, "ext", "same", "SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstManifest) != string(secondManifest) {
+		t.Fatalf("shuffled sysext input produced different manifests:\n%s\n---\n%s", firstManifest, secondManifest)
+	}
+	if strings.Index(string(firstManifest), filepath.Base(alpha)) > strings.Index(string(firstManifest), filepath.Base(beta)) {
+		t.Fatalf("SHA256SUMS entries are not sorted:\n%s", firstManifest)
+	}
 }
 
 func TestIncrementalMode(t *testing.T) {

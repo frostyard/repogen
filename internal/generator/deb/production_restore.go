@@ -176,9 +176,13 @@ func readProductionKeyRing(keyPath string) (openpgp.EntityList, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read trusted production public key: %w", err)
 	}
+	return parseProductionKeyRing(data)
+}
 
+func parseProductionKeyRing(data []byte) (openpgp.EntityList, error) {
 	entities, armoredErr := openpgp.ReadArmoredKeyRing(bytes.NewReader(data))
 	if armoredErr != nil {
+		var err error
 		entities, err = openpgp.ReadKeyRing(bytes.NewReader(data))
 		if err != nil {
 			return nil, fmt.Errorf(

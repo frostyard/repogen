@@ -13,12 +13,12 @@ import (
 func GeneratePackagesFile(packages []models.Package) ([]byte, error) {
 	var buf bytes.Buffer
 
-	// Sort packages alphabetically by name
-	sort.Slice(packages, func(i, j int) bool {
-		return packages[i].Name < packages[j].Name
+	ordered := append([]models.Package(nil), packages...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return packageLess(ordered[i], ordered[j])
 	})
 
-	for _, pkg := range packages {
+	for _, pkg := range ordered {
 		// Required fields
 		fmt.Fprintf(&buf, "Package: %s\n", pkg.Name)
 		fmt.Fprintf(&buf, "Version: %s\n", pkg.Version)
@@ -49,14 +49,19 @@ func GeneratePackagesFile(packages []models.Package) ([]byte, error) {
 			fmt.Fprintf(&buf, "Depends: %s\n", strings.Join(pkg.Dependencies, ", "))
 		}
 
-		// Add other metadata fields
-		for key, value := range pkg.Metadata {
+		metadataKeys := make([]string, 0, len(pkg.Metadata))
+		for key := range pkg.Metadata {
 			// Skip fields we've already handled
 			if key == "Package" || key == "Version" || key == "Architecture" ||
 				key == "Maintainer" || key == "Homepage" || key == "Description" ||
 				key == "Depends" {
 				continue
 			}
+			metadataKeys = append(metadataKeys, key)
+		}
+		sort.Strings(metadataKeys)
+		for _, key := range metadataKeys {
+			value := pkg.Metadata[key]
 			fmt.Fprintf(&buf, "%s: %v\n", key, value)
 		}
 
@@ -65,6 +70,44 @@ func GeneratePackagesFile(packages []models.Package) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func packageLess(left, right models.Package) bool {
+	leftFields := []string{
+		left.Name, left.Version, left.Architecture, left.Filename,
+		left.MD5Sum, left.SHA1Sum, left.SHA256Sum, left.SHA512Sum,
+		left.Maintainer, left.Homepage, left.Description,
+		strings.Join(left.Dependencies, "\x00"),
+	}
+	rightFields := []string{
+		right.Name, right.Version, right.Architecture, right.Filename,
+		right.MD5Sum, right.SHA1Sum, right.SHA256Sum, right.SHA512Sum,
+		right.Maintainer, right.Homepage, right.Description,
+		strings.Join(right.Dependencies, "\x00"),
+	}
+	for index := range leftFields {
+		if leftFields[index] != rightFields[index] {
+			return leftFields[index] < rightFields[index]
+		}
+	}
+	if left.Size != right.Size {
+		return left.Size < right.Size
+	}
+	return canonicalMetadata(left.Metadata) < canonicalMetadata(right.Metadata)
+}
+
+func canonicalMetadata(metadata map[string]interface{}) string {
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var buf strings.Builder
+	for _, key := range keys {
+		fmt.Fprintf(&buf, "%s=%v\x00", key, metadata[key])
+	}
+	return buf.String()
 }
 
 // formatDescription renders a package description as a valid multi-line Debian
