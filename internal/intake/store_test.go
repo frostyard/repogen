@@ -95,13 +95,13 @@ func TestCreateAndVerifyConcurrentConflictFailsClosed(t *testing.T) {
 		switch {
 		case err == nil:
 			successes++
-		case errors.Is(err, ErrIntegrity):
+		case errors.Is(err, ErrConflict):
 			conflicts++
 		default:
 			t.Fatalf("concurrent create error = %v", err)
 		}
 	}
 	if successes != 1 || conflicts != 1 {
-		t.Fatalf("successes = %d, integrity conflicts = %d, want 1 each", successes, conflicts)
+		t.Fatalf("successes = %d, byte conflicts = %d, want 1 each", successes, conflicts)
 	}
 }

@@ -89,6 +89,33 @@ func TestRecorderConcurrentReplayCreatesOneReceipt(t *testing.T) {
 	}
 }
 
+func TestRecorderDoesNotMisclassifySubmissionReadFailureAsConflict(t *testing.T) {
+	base := newFixtureFileStore(t)
+	request := fixtureRequest(t, base, "trixie", "initialize", nil)
+	store := &faultStore{
+		Store:      base,
+		readPrefix: "submissions/v1/",
+		readErr:    errors.New("503 unavailable"),
+	}
+
+	_, err := (Recorder{Store: store}).Accept(
+		context.Background(),
+		request.Producer,
+		"run-1",
+		fixtureDigest("policy"),
+		request,
+	)
+	if err == nil {
+		t.Fatal("Accept() unexpectedly succeeded")
+	}
+	if errors.Is(err, ErrConflict) {
+		t.Fatalf("submission read failure misclassified as ErrConflict: %v", err)
+	}
+	if !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("submission read failure = %v, want ErrIntegrity", err)
+	}
+}
+
 func TestReconcilerEnumeratesMissedWakeupsInOrderAndReplaysAsNoOp(t *testing.T) {
 	store := newFixtureFileStore(t)
 	recorder := Recorder{Store: store}

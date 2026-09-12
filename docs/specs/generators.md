@@ -183,9 +183,11 @@ store implements this with an atomic hard link, synchronizes immutable files
 and newly created directories, performs read-after-write verification, lists
 receipts by prefix, and uses filesystem locks for process-safe target
 serialization. A submission key can replay identical request bytes but cannot
-name different bytes. The adapter-provided authenticated principal must match
-the request producer; policy digests are retained and a non-nil current-policy
-authorizer runs immediately before every new writer attempt.
+name different bytes. Only that observed byte conflict is classified as a
+submission conflict; provider and read-back failures retain their state or
+integrity classification. The adapter-provided authenticated principal must
+match the request producer; policy digests are retained and a non-nil
+current-policy authorizer runs immediately before every new writer attempt.
 
 Scheduled and manual recovery use the same full receipt enumeration. Receipts
 for one Debian codename run in increasing sequence and stop on the first

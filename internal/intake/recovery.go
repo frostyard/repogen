@@ -151,7 +151,10 @@ func (r Recorder) Accept(
 		path.Join("submissions/v1/sha256", submissionDigest+".json"),
 		submissionData,
 	); err != nil {
-		return nil, fmt.Errorf("%w: submission key was reused with different request bytes: %v", ErrConflict, err)
+		if errors.Is(err, ErrConflict) {
+			return nil, fmt.Errorf("%w: submission key was reused with different request bytes", err)
+		}
+		return nil, err
 	}
 
 	lock, err := r.Store.Acquire(ctx, "receipt-"+request.Kind+"-"+request.Target)
@@ -813,7 +816,7 @@ func resultPointerKey(requestDigest string) string {
 }
 
 func createAndVerify(ctx context.Context, store Store, key string, body []byte) error {
-	_, err := store.CreateIfAbsent(ctx, key, bytes.NewReader(body), int64(len(body)))
+	created, err := store.CreateIfAbsent(ctx, key, bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return fmt.Errorf("%w: create %s: %v", ErrState, key, err)
 	}
@@ -822,6 +825,9 @@ func createAndVerify(ctx context.Context, store Store, key string, body []byte) 
 		return fmt.Errorf("%w: read back %s: %v", ErrIntegrity, key, readErr)
 	}
 	if !bytes.Equal(observed, body) {
+		if !created {
+			return fmt.Errorf("%w: existing bytes differ for %s", ErrConflict, key)
+		}
 		return fmt.Errorf("%w: read-back bytes differ for %s", ErrIntegrity, key)
 	}
 	return nil
