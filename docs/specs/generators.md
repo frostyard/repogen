@@ -169,7 +169,10 @@ output is already the exact candidate. Unknown, corrupt, missing, symlinked,
 or third-state trees fail closed. Cleanup after the durable switch is private
 and cannot roll a visible candidate backward. Cleanup errors are returned,
 not discarded; an incomplete cleanup retains the recovery journal for a
-subsequent idempotent recovery pass.
+subsequent idempotent recovery pass. When the visible output still matches
+the journaled candidate digest, that pass removes the randomly named obsolete
+sibling without requiring its partially deleted contents to match the prior
+digest.
 
 ### Durable Debian intake and recovery (R8)
 

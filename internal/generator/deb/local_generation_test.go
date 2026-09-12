@@ -331,7 +331,7 @@ func TestLocalProductionRecoveryCompletesInterruptedSwitch(t *testing.T) {
 	}
 }
 
-func TestLocalProductionCommitReportsPostSwitchCleanupFailure(t *testing.T) {
+func TestLocalProductionRecoveryConvergesAfterPartialPostSwitchCleanup(t *testing.T) {
 	root := t.TempDir()
 	outputDir := filepath.Join(root, "repository")
 	writeStableLocalFixture(t, outputDir)
@@ -353,7 +353,17 @@ func TestLocalProductionCommitReportsPostSwitchCleanupFailure(t *testing.T) {
 		outputDir,
 		reconcile,
 		&productionLocalHooks{
-			finishRecovery: func(string, localRecoveryJournal) error {
+			finishRecovery: func(parent string, journal localRecoveryJournal) error {
+				obsoleteRelease := filepath.Join(
+					parent,
+					journal.Generation,
+					"dists",
+					"stable",
+					"Release",
+				)
+				if err := os.Remove(obsoleteRelease); err != nil {
+					return fmt.Errorf("partially remove obsolete generation: %w", err)
+				}
 				return errors.New("injected cleanup failure")
 			},
 		},
@@ -370,6 +380,24 @@ func TestLocalProductionCommitReportsPostSwitchCleanupFailure(t *testing.T) {
 	if err := RecoverLocalProductionRepository(context.Background(), outputDir); err != nil {
 		t.Fatalf("RecoverLocalProductionRepository() error = %v", err)
 	}
+	assertNoGenerationScratch(t, root)
+
+	nextRequest, closeNextSigner := productionFixtureRequest(
+		t,
+		"reconcile",
+		priorStateFor(t, reconcile),
+	)
+	defer closeNextSigner()
+	nextRequest.ReleaseTime = nextRequest.ReleaseTime.Add(48 * time.Hour)
+	next, err := StageProductionTransaction(filepath.Join(root, "next-stage"), nextRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, next); err != nil {
+		t.Fatalf("subsequent CommitLocalProductionTransaction() error = %v", err)
+	}
+	assertCompleteLocalGeneration(t, outputDir, next)
+	assertStableLocalFixture(t, outputDir)
 	assertNoGenerationScratch(t, root)
 }
 

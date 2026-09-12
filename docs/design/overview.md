@@ -158,6 +158,9 @@ private cleanup already completed. Any other state stops without another
 rename. A visible candidate is never rolled back. Failure to remove private
 prior bytes or the journal is returned to the caller, with the journal
 retained whenever cleanup is incomplete so a later recovery can retry it.
+Once the visible output matches the journaled candidate digest, the sibling
+is unconditionally obsolete; recovery removes it even when an interrupted
+cleanup already deleted only part of that private tree.
 
 R8 also introduces `internal/intake` for retained immutable records. Its local
 file store uses an atomic hard-link create-if-absent operation, file and

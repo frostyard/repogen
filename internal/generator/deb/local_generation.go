@@ -289,9 +289,8 @@ func recoverLocalProductionRepository(ctx context.Context, outputDir string) err
 
 	switch {
 	case outputExists && outputDigest == journal.GenerationSHA256:
-		if generationExists && (!journal.OutputExisted || generationDigest != journal.PriorSHA256) {
-			return fmt.Errorf("%w: obsolete generation does not match journaled prior state", ErrLocalGeneration)
-		}
+		// The visible candidate proves the switch completed. Its randomly named
+		// sibling is obsolete even when an interrupted cleanup partially removed it.
 	case generationExists && generationDigest == journal.GenerationSHA256:
 		if journal.OutputExisted {
 			if !outputExists || outputDigest != journal.PriorSHA256 {
