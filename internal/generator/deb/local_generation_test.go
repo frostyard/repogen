@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -170,6 +172,70 @@ func TestLocalProductionReconcileCommitsOneCompleteGeneration(t *testing.T) {
 		t.Fatal("reconcile did not expose the new complete generation")
 	}
 	assertNoGenerationScratch(t, filepath.Dir(outputDir))
+}
+
+func TestLocalProductionPreservesUnrelatedDirectoryModesWithNonzeroUmask(t *testing.T) {
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	writeStableLocalFixture(t, outputDir)
+
+	groupWritable := filepath.Join(outputDir, "dists", "stable", "group-writable")
+	setgid := filepath.Join(outputDir, "dists", "stable", "setgid")
+	for path, mode := range map[string]fs.FileMode{
+		outputDir:     os.ModeSetgid | 0o775,
+		groupWritable: 0o775,
+		setgid:        os.ModeSetgid | 0o775,
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	previousUmask := syscall.Umask(0o022)
+	defer syscall.Umask(previousUmask)
+
+	transaction := stageProductionFixture(t, "initialize", nil)
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, transaction); err != nil {
+		t.Fatalf("CommitLocalProductionTransaction() error = %v", err)
+	}
+
+	assertLocalMode(t, outputDir, os.ModeDir|os.ModeSetgid|0o775)
+	assertLocalMode(t, groupWritable, os.ModeDir|0o775)
+	assertLocalMode(t, setgid, os.ModeDir|os.ModeSetgid|0o775)
+}
+
+func TestLocalProductionRejectsPriorSpecialModeDrift(t *testing.T) {
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	writeStableLocalFixture(t, outputDir)
+	watched := filepath.Join(outputDir, "dists", "stable")
+	if err := os.Chmod(watched, os.ModeSetgid|0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	transaction := stageProductionFixture(t, "initialize", nil)
+	changed := false
+	err := commitLocalProductionTransaction(
+		context.Background(),
+		outputDir,
+		transaction,
+		&productionLocalHooks{before: func(step string) error {
+			if step == "commit:verify-prior:." {
+				changed = true
+				return os.Chmod(watched, 0o755)
+			}
+			return nil
+		}},
+	)
+	if !changed {
+		t.Fatal("special-mode drift hook was not exercised")
+	}
+	if !errors.Is(err, ErrLocalGeneration) {
+		t.Fatalf("special-mode drift error = %v, want ErrLocalGeneration", err)
+	}
 }
 
 func TestLocalProductionInitializeCommitsToAbsentOutput(t *testing.T) {
@@ -419,6 +485,17 @@ func localTreeSnapshotForTest(t *testing.T, root string) map[string]localTreeEnt
 		t.Fatal(err)
 	}
 	return snapshot
+}
+
+func assertLocalMode(t *testing.T, path string, want fs.FileMode) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode() != want {
+		t.Fatalf("%s mode = %v, want %v", path, info.Mode(), want)
+	}
 }
 
 func assertNoGenerationScratch(t *testing.T, parent string) {

@@ -136,12 +136,17 @@ broad sync.
 
 R7 adds a Linux-only local production commit path. It stages a complete
 signed repository tree in the output directory's filesystem, preserving
-unrelated suites and verified shared-pool bytes, then switches the complete
-directory into place with one `renameat2` operation. Initialize uses
-no-replace and reconcile uses atomic exchange. Failures during package,
-index, Release, signing, copy, verification, or synchronization leave the
-prior output tree byte-identical. This library path has no CLI or external
-publication adapter.
+unrelated regular-file bytes, sizes, and complete file/directory modes plus
+verified shared-pool bytes, then switches the complete directory into place
+with one `renameat2` operation. Ownership, extended attributes, ACLs, and
+timestamps are not preserved. Initialize uses no-replace and reconcile uses
+atomic exchange. Failures during package, index, Release, signing, copy,
+verification, or synchronization leave the prior output unchanged unless a
+concurrent external writer caused the detected drift. Each generation reads
+and hashes the complete prior tree, copies all retained content, and needs
+roughly 2x transient repository space. The switch is atomically visible but
+not crash-durable until R8 adds parent-directory fsync and recovery. This
+library path has no CLI or external publication adapter.
 
 Release binaries now have one contract: the sole tag workflow runs pinned
 GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.

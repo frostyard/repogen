@@ -129,8 +129,9 @@ filesystem as the output:
 1. verify every staged object and the exact reconcile prior;
 2. copy the existing repository while excluding the target codename, rejecting
    symlinks and non-regular files;
-3. preserve unrelated suite bytes and accept an existing pool object only
-   when its size and SHA-256 match;
+3. preserve unrelated suite regular-file bytes, sizes, and complete
+   file/directory modes, and accept an existing pool object only when its size
+   and SHA-256 match;
 4. install and re-hash every staged pool, index, by-hash, Release, InRelease,
    and Release.gpg object;
 5. verify the prior tree did not change during staging and synchronize the
@@ -140,12 +141,23 @@ filesystem as the output:
 
 There is no remove-then-rename interval and no rollback-shaped second rename.
 Any error before the atomic switch removes only the private candidate and
-leaves the old tree byte-identical. After a successful exchange, obsolete
-prior bytes are private cleanup and cannot turn the committed generation into
-a reported failure. Tests inject failure before every observed staging,
-signing, copy, verification, synchronization, and commit step. Production
-staging rejects a nil signer; generic generation retains its existing
-unsigned `InRelease` behavior.
+leaves the old tree unchanged unless a concurrent external writer caused the
+detected drift. Snapshots compare each regular file's SHA-256, size, and full
+mode and each directory's full mode, including special bits. They do not
+compare or preserve uid/gid ownership, extended attributes, ACLs, or
+timestamps. After a successful exchange, obsolete prior bytes are private
+cleanup and cannot turn the committed generation into a reported failure.
+Tests inject failure before every observed staging, signing, copy,
+verification, synchronization, and commit step. Production staging rejects a
+nil signer; generic generation retains its existing unsigned `InRelease`
+behavior.
+
+R7 reads and hashes the complete prior repository and copies all retained
+content, including `pool/`. A generation therefore incurs O(repository size)
+read, write, hashing, and synchronization work and requires roughly 2x
+transient repository space. The namespace switch is atomic, but R7 does not
+fsync the output parent after `renameat2`; it does not yet claim crash
+durability. Parent-directory persistence and recovery are R8 responsibilities.
 
 ## Debian/APT (`internal/generator/deb/`)
 

@@ -285,6 +285,7 @@ func snapshotAndCopyLocalTree(
 	hooks *productionLocalHooks,
 ) (map[string]localTreeEntry, error) {
 	snapshot := make(map[string]localTreeEntry)
+	directoryModes := make(map[string]fs.FileMode)
 	err := filepath.WalkDir(sourceRoot, func(sourcePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -306,15 +307,15 @@ func snapshotAndCopyLocalTree(
 		excluded := relative == excludedRelative ||
 			strings.HasPrefix(relative, excludedRelative+string(filepath.Separator))
 		if entry.IsDir() {
-			snapshot[relative] = localTreeEntry{Mode: info.Mode().Perm(), IsDir: true}
+			snapshot[relative] = localTreeEntry{Mode: info.Mode(), IsDir: true}
 			if relative == "." {
-				if err := os.Chmod(destinationRoot, info.Mode().Perm()); err != nil {
-					return err
-				}
+				directoryModes[destinationRoot] = info.Mode()
 			} else if !excluded {
-				if err := os.Mkdir(filepath.Join(destinationRoot, relative), info.Mode().Perm()); err != nil {
+				destination := filepath.Join(destinationRoot, relative)
+				if err := os.Mkdir(destination, 0o700); err != nil {
 					return err
 				}
+				directoryModes[destination] = info.Mode()
 			}
 			return nil
 		}
@@ -325,12 +326,12 @@ func snapshotAndCopyLocalTree(
 		if !excluded {
 			destination = filepath.Join(destinationRoot, relative)
 		}
-		copied, err := copyAndHashLocalFile(sourcePath, destination, info.Mode().Perm())
+		copied, err := copyAndHashLocalFile(sourcePath, destination, info.Mode())
 		if err != nil {
 			return err
 		}
 		snapshot[relative] = localTreeEntry{
-			Mode:   info.Mode().Perm(),
+			Mode:   info.Mode(),
 			Size:   copied.Size,
 			SHA256: copied.SHA256,
 		}
@@ -338,6 +339,16 @@ func snapshotAndCopyLocalTree(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: copy prior output: %v", ErrLocalGeneration, err)
+	}
+	directories := make([]string, 0, len(directoryModes))
+	for directory := range directoryModes {
+		directories = append(directories, directory)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(directories)))
+	for _, directory := range directories {
+		if err := os.Chmod(directory, directoryModes[directory]); err != nil {
+			return nil, fmt.Errorf("%w: preserve prior directory mode: %v", ErrLocalGeneration, err)
+		}
 	}
 	return snapshot, nil
 }
@@ -368,7 +379,7 @@ func snapshotLocalTree(
 			return fmt.Errorf("%w: output contains symlink %s", ErrLocalGeneration, relative)
 		}
 		if entry.IsDir() {
-			snapshot[relative] = localTreeEntry{Mode: info.Mode().Perm(), IsDir: true}
+			snapshot[relative] = localTreeEntry{Mode: info.Mode(), IsDir: true}
 			return nil
 		}
 		if !info.Mode().IsRegular() {
@@ -379,7 +390,7 @@ func snapshotLocalTree(
 			return err
 		}
 		snapshot[relative] = localTreeEntry{
-			Mode:   info.Mode().Perm(),
+			Mode:   info.Mode(),
 			Size:   digest.Size,
 			SHA256: digest.SHA256,
 		}

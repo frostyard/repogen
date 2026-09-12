@@ -139,15 +139,23 @@ immutable shared-pool collisions, installs and re-hashes every candidate
 object, synchronizes the complete tree, and performs one Linux `renameat2`
 no-replace or exchange operation. Internal fault injection runs before every
 staging, signing, copy, install, verification, synchronization, and commit
-step; every pre-commit failure leaves the prior output byte-identical.
-Unrelated suites are copied unchanged. The generic generator still supports
-unsigned output and direct local writes.
+step; every pre-commit failure leaves the prior output unchanged unless an
+external writer caused the detected drift. Unrelated regular-file content,
+size, and complete file/directory modes are copied unchanged. Ownership,
+extended attributes, ACLs, and timestamps are not preserved or compared.
+The generic generator still supports unsigned output and direct local writes.
 
 These primitives do not connect `validate-production` to a writer, provide
 an R2 adapter or credential path, make local filesystem locking enforceable,
 or authorize a production operation. R8-R10 retain those separate
 boundaries. Atomic local replacement requires Linux `renameat2`; unsupported
-platforms fail rather than use a two-rename fallback.
+platforms fail rather than use a two-rename fallback. R7 reads and hashes the
+complete prior tree and copies all retained content, including `pool/`, so
+each generation costs O(repository size) I/O and hashing and requires roughly
+twice the repository's disk space while the sibling generation exists.
+The switch is atomically visible but not yet crash-durable because R7 does
+not fsync the output parent after `renameat2`; parent-directory persistence
+and recovery belong to R8.
 
 ## Key Patterns
 

@@ -447,9 +447,12 @@ merge and separately human-published, digest-verified release under
 - [x] Reject unsigned production staging while retaining generic unsigned
   generation unchanged.
 - **Done when:** each injected failure leaves the old output tree
-  byte-identical; initialize and reconcile expose one complete signed
-  generation; unrelated stable fixtures remain unchanged; and unsupported
+  unchanged; initialize and reconcile expose one complete signed generation;
+  unrelated stable fixture bytes and modes remain unchanged; and unsupported
   platforms fail rather than weaken atomicity.
+- **R8 boundary:** R7 provides one atomically visible namespace switch, but
+  does not fsync the output parent or provide crash recovery. Durable
+  parent-directory persistence and recovery remain mandatory R8 work.
 
 ## Later / ideas
 
