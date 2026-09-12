@@ -116,9 +116,41 @@ S3/R2 adapter, credentials, production CLI, or publication authority;
 fake-store failure injection and local GPG/APT fixtures demonstrate the
 transaction semantics without representing a production canary.
 
+### Atomic local production generation (R7)
+
+`GenerateLocalProductionRepository` composes production staging and local
+commit. `CommitLocalProductionTransaction` accepts an already staged
+transaction. Both remain library APIs with no production CLI or provider
+credentials.
+
+The local commit creates a complete sibling generation on the same
+filesystem as the output:
+
+1. verify every staged object and the exact reconcile prior;
+2. copy the existing repository while excluding the target codename, rejecting
+   symlinks and non-regular files;
+3. preserve unrelated suite bytes and accept an existing pool object only
+   when its size and SHA-256 match;
+4. install and re-hash every staged pool, index, by-hash, Release, InRelease,
+   and Release.gpg object;
+5. verify the prior tree did not change during staging and synchronize the
+   complete candidate; and
+6. make one Linux `renameat2` commit, using no-replace for an absent output or
+   exchange for an existing output.
+
+There is no remove-then-rename interval and no rollback-shaped second rename.
+Any error before the atomic switch removes only the private candidate and
+leaves the old tree byte-identical. After a successful exchange, obsolete
+prior bytes are private cleanup and cannot turn the committed generation into
+a reported failure. Tests inject failure before every observed staging,
+signing, copy, verification, synchronization, and commit step. Production
+staging rejects a nil signer; generic generation retains its existing
+unsigned `InRelease` behavior.
+
 ## Debian/APT (`internal/generator/deb/`)
 
-**Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`
+**Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`,
+`production_transaction.go`, `local_generation.go`
 **Decisions**: [ADR-0001 (unsigned InRelease)](../adr/0001-unsigned-debian-repos-emit-inrelease.md),
 [ADR-0002 (shared pool layout)](../adr/0002-shared-debian-pool-layout.md),
 [ADR-0003 (single `main` component)](../adr/0003-single-main-component.md)

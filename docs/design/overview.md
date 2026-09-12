@@ -130,10 +130,24 @@ controlled timestamp and signs a new generation. Sysext extension processing
 and checksum manifests are sorted, and a duplicate filename with conflicting
 digests fails instead of depending on map iteration.
 
-These are local generation primitives. They do not connect
-`validate-production` to a writer, add staging or publication, provide an
-R2 adapter, or authorize a production operation. R5 and R7-R10 retain those
-separate boundaries.
+R7 adds `GenerateLocalProductionRepository` and
+`CommitLocalProductionTransaction` as production-only local primitives. A
+candidate is fully signed in its clean transaction staging directory. The
+commit path copies the prior repository into a sibling generation while
+excluding the replaced codename, verifies the expected prior state and
+immutable shared-pool collisions, installs and re-hashes every candidate
+object, synchronizes the complete tree, and performs one Linux `renameat2`
+no-replace or exchange operation. Internal fault injection runs before every
+staging, signing, copy, install, verification, synchronization, and commit
+step; every pre-commit failure leaves the prior output byte-identical.
+Unrelated suites are copied unchanged. The generic generator still supports
+unsigned output and direct local writes.
+
+These primitives do not connect `validate-production` to a writer, provide
+an R2 adapter or credential path, make local filesystem locking enforceable,
+or authorize a production operation. R8-R10 retain those separate
+boundaries. Atomic local replacement requires Linux `renameat2`; unsupported
+platforms fail rather than use a two-rename fallback.
 
 ## Key Patterns
 

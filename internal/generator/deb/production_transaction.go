@@ -138,7 +138,19 @@ func productionPoolDigests(state *ProductionState) map[string]PoolDigest {
 }
 
 func StageProductionTransaction(stageDir string, request ProductionStageRequest) (_ *ProductionTransaction, retErr error) {
+	return stageProductionTransaction(context.Background(), stageDir, request, nil)
+}
+
+func stageProductionTransaction(
+	ctx context.Context,
+	stageDir string,
+	request ProductionStageRequest,
+	hooks *productionLocalHooks,
+) (_ *ProductionTransaction, retErr error) {
 	if err := validateProductionStageRequest(stageDir, request); err != nil {
+		return nil, err
+	}
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:create"); err != nil {
 		return nil, err
 	}
 	if err := os.Mkdir(stageDir, 0o700); err != nil {
@@ -163,30 +175,56 @@ func StageProductionTransaction(stageDir string, request ProductionStageRequest)
 		transaction.VerifiedSharedPool = make(map[string]PoolDigest)
 	}
 
-	packages, packageManifest, poolObjects, err := stageProductionPackages(stageDir, request.Packages)
+	packages, packageManifest, poolObjects, err := stageProductionPackages(
+		ctx,
+		stageDir,
+		request.Packages,
+		hooks,
+	)
 	if err != nil {
 		return nil, err
 	}
 	transaction.objects = append(transaction.objects, poolObjects...)
 
-	indexObjects, releaseInputs, err := stageProductionIndexes(stageDir, request.Codename, packages)
+	indexObjects, releaseInputs, err := stageProductionIndexes(
+		ctx,
+		stageDir,
+		request.Codename,
+		packages,
+		hooks,
+	)
 	if err != nil {
 		return nil, err
 	}
 	transaction.objects = append(transaction.objects, indexObjects...)
 
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:generate-release"); err != nil {
+		return nil, err
+	}
 	release := generateProductionRelease(request.Codename, request.ReleaseTime, releaseInputs)
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:sign-inrelease"); err != nil {
+		return nil, err
+	}
 	inRelease, err := request.Signer.SignCleartext(release)
 	if err != nil {
 		return nil, fmt.Errorf("%w: sign InRelease: %v", ErrPublicationCandidate, err)
+	}
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:sign-release-gpg"); err != nil {
+		return nil, err
 	}
 	releaseSignature, err := request.Signer.SignDetached(release)
 	if err != nil {
 		return nil, fmt.Errorf("%w: sign Release.gpg: %v", ErrPublicationCandidate, err)
 	}
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:export-public-key"); err != nil {
+		return nil, err
+	}
 	publicKey, err := request.Signer.GetPublicKey()
 	if err != nil {
 		return nil, fmt.Errorf("%w: export signing public key: %v", ErrPublicationCandidate, err)
+	}
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:verify-signatures"); err != nil {
+		return nil, err
 	}
 	if err := verifyStagedProductionSignatures(publicKey, release, inRelease, releaseSignature); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPublicationCandidate, err)
@@ -202,7 +240,14 @@ func StageProductionTransaction(stageDir string, request ProductionStageRequest)
 		{name: "Release.gpg", data: releaseSignature, kind: productionReleaseSignatureObject},
 		{name: "InRelease", data: inRelease, kind: productionInReleaseObject},
 	} {
-		staged, err := stageProductionBytes(stageDir, path.Join(suitePrefix, object.name), object.data, object.kind)
+		staged, err := stageProductionBytes(
+			ctx,
+			stageDir,
+			path.Join(suitePrefix, object.name),
+			object.data,
+			object.kind,
+			hooks,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -237,6 +282,9 @@ func StageProductionTransaction(stageDir string, request ProductionStageRequest)
 		return nil, fmt.Errorf("%w: encode request manifest: %v", ErrPublicationCandidate, err)
 	}
 	manifestData = append(manifestData, '\n')
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:write-request-manifest"); err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(filepath.Join(stageDir, "request.json"), manifestData, 0o600); err != nil {
 		return nil, fmt.Errorf("%w: write request manifest: %v", ErrPublicationCandidate, err)
 	}
@@ -251,6 +299,9 @@ func PublishProductionTransaction(
 ) (_ *ProductionResultManifest, retErr error) {
 	if store == nil || transaction == nil {
 		return nil, fmt.Errorf("%w: store and transaction are required", ErrPublicationCandidate)
+	}
+	if err := validateProductionTransactionIdentity(transaction); err != nil {
+		return nil, err
 	}
 	if err := validateStagedProductionObjects(transaction); err != nil {
 		return nil, err
@@ -393,8 +444,10 @@ func validateProductionStageRequest(stageDir string, request ProductionStageRequ
 }
 
 func stageProductionPackages(
+	ctx context.Context,
 	stageDir string,
 	inputs []ProductionPackageInput,
+	hooks *productionLocalHooks,
 ) ([]models.Package, []ProductionManifestObject, []stagedProductionObject, error) {
 	packages := make([]models.Package, 0, len(inputs))
 	manifest := make([]ProductionManifestObject, 0, len(inputs))
@@ -424,6 +477,9 @@ func stageProductionPackages(
 		}
 		seen[poolPath] = struct{}{}
 
+		if err := beforeProductionLocalStep(ctx, hooks, "stage:package:"+poolPath); err != nil {
+			return nil, nil, nil, err
+		}
 		localPath := filepath.Join(stageDir, "objects", filepath.FromSlash(poolPath))
 		digest, err := copyAndHashProductionPackage(input.SourcePath, localPath)
 		if err != nil {
@@ -505,9 +561,11 @@ func validateProductionPackageForStage(pkg models.Package) error {
 }
 
 func stageProductionIndexes(
+	ctx context.Context,
 	stageDir string,
 	codename string,
 	packages []models.Package,
+	hooks *productionLocalHooks,
 ) ([]stagedProductionObject, []ReleaseFileInfo, error) {
 	var objects []stagedProductionObject
 	var releaseInputs []ReleaseFileInfo
@@ -517,6 +575,9 @@ func stageProductionIndexes(
 			if pkg.Architecture == architecture {
 				architecturePackages = append(architecturePackages, pkg)
 			}
+		}
+		if err := beforeProductionLocalStep(ctx, hooks, "stage:generate-index:"+architecture); err != nil {
+			return nil, nil, err
 		}
 		plain, err := GeneratePackagesFile(architecturePackages)
 		if err != nil {
@@ -535,7 +596,14 @@ func stageProductionIndexes(
 		} {
 			relative := path.Join("main", "binary-"+architecture, index.name)
 			key := path.Join("dists", codename, relative)
-			canonical, err := stageProductionBytes(stageDir, key, index.data, productionIndexObject)
+			canonical, err := stageProductionBytes(
+				ctx,
+				stageDir,
+				key,
+				index.data,
+				productionIndexObject,
+				hooks,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -552,7 +620,14 @@ func stageProductionIndexes(
 				"SHA256",
 				checksum.SHA256,
 			)
-			byHash, err := stageProductionBytes(stageDir, byHashKey, index.data, productionByHashObject)
+			byHash, err := stageProductionBytes(
+				ctx,
+				stageDir,
+				byHashKey,
+				index.data,
+				productionByHashObject,
+				hooks,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -564,12 +639,17 @@ func stageProductionIndexes(
 }
 
 func stageProductionBytes(
+	ctx context.Context,
 	stageDir string,
 	key string,
 	data []byte,
 	kind productionObjectKind,
+	hooks *productionLocalHooks,
 ) (stagedProductionObject, error) {
 	localPath := filepath.Join(stageDir, "objects", filepath.FromSlash(key))
+	if err := beforeProductionLocalStep(ctx, hooks, "stage:write:"+key); err != nil {
+		return stagedProductionObject{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o700); err != nil {
 		return stagedProductionObject{}, fmt.Errorf("%w: create staging parent for %s: %v", ErrPublicationCandidate, key, err)
 	}
@@ -805,6 +885,40 @@ func validateStagedProductionObjects(transaction *ProductionTransaction) error {
 		}
 	}
 	return nil
+}
+
+func validateProductionTransactionIdentity(transaction *ProductionTransaction) error {
+	if transaction.Codename == "" ||
+		transaction.RequestManifest.Target != path.Join("dists", transaction.Codename) ||
+		transaction.RequestManifest.Operation != transaction.Operation ||
+		transaction.RequestManifest.SchemaVersion != productionManifestVersion {
+		return fmt.Errorf("%w: staged transaction identity changed after planning", ErrPublicationCandidate)
+	}
+	if len(transaction.RequestManifest.Objects) != len(transaction.objects) {
+		return fmt.Errorf("%w: staged transaction object count changed after planning", ErrPublicationCandidate)
+	}
+	for index, object := range transaction.objects {
+		if transaction.RequestManifest.Objects[index] != object.ProductionManifestObject {
+			return fmt.Errorf("%w: staged transaction object plan changed after planning", ErrPublicationCandidate)
+		}
+	}
+	requestData, err := os.ReadFile(filepath.Join(transaction.StageDir, "request.json"))
+	if err != nil {
+		return fmt.Errorf("%w: read staged request manifest: %v", ErrPublicationCandidate, err)
+	}
+	canonical, err := json.Marshal(transaction.RequestManifest)
+	if err != nil {
+		return fmt.Errorf("%w: encode staged request manifest: %v", ErrPublicationCandidate, err)
+	}
+	canonical = append(canonical, '\n')
+	if !bytes.Equal(requestData, canonical) ||
+		productionSHA256Hex(requestData) != transaction.RequestSHA256 {
+		return fmt.Errorf("%w: staged request manifest changed after planning", ErrPublicationCandidate)
+	}
+	return validateProductionWritePlan(
+		transaction,
+		transaction.RequestManifest.ExpectedPriorReleaseSHA256,
+	)
 }
 
 func verifyProductionPrior(

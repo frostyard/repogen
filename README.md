@@ -134,6 +134,15 @@ R2 credential or provider adapter, no production CLI, and no authority to run
 a canary. The legacy composite action rejects Debian rather than fall back to
 broad sync.
 
+R7 adds a Linux-only local production commit path. It stages a complete
+signed repository tree in the output directory's filesystem, preserving
+unrelated suites and verified shared-pool bytes, then switches the complete
+directory into place with one `renameat2` operation. Initialize uses
+no-replace and reconcile uses atomic exchange. Failures during package,
+index, Release, signing, copy, verification, or synchronization leave the
+prior output tree byte-identical. This library path has no CLI or external
+publication adapter.
+
 Release binaries now have one contract: the sole tag workflow runs pinned
 GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
 Each binary embeds the exact version and full commit shown by

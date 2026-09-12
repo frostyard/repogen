@@ -5,7 +5,9 @@ Frostyard APT publisher. R1 records the contract, R2 implements its
 write-free input preflight, and R3 implements explicit absent-target
 initialize plus strict signed prior-state reconciliation. R4 provides the
 provider-neutral immutable pool primitive, and R6 provides deterministic
-local generation and signed no-op detection. R5 and R7-R10 remain
+local generation and signed no-op detection. R5 provides the signed,
+target-scoped publication transaction and R7 provides atomic local
+generation commit. The provider adapter/canary and R8-R10 remain
 unimplemented. The plan
 implements
 [core ADR-0048](https://github.com/frostyard/core/blob/main/docs/adr/0048-publish-debian-packages-to-explicit-codenames.md)
@@ -65,7 +67,7 @@ This separation is proposed in
 | Signing | Optional | Required with the accepted Frostyard trust root |
 | Existing state | Optional incremental parse with fallback | Signature- and checksum-verified strict reconcile |
 | New state | Implicitly possible | Explicit initialize against an absent target only |
-| Output | Direct local generation | Run-specific staging followed by scoped publication |
+| Output | Direct local generation | Run-specific staging followed by atomic local commit or scoped publication |
 | Upload | Outside the generator | Explicit object operations; no whole-tree sync |
 | Completion | Local generation returned success | Remote read-back and result manifest agree |
 
@@ -429,13 +431,33 @@ merge and separately human-published, digest-verified release under
   tests pass; a changed package set receives a new timestamp and signatures;
   and an unchanged signed generation receives neither signing call.
 
+## Phase 6 - Commit complete local generations atomically (R7)
+
+- [x] Compose signed production staging with a complete sibling repository
+  generation that retains unrelated suites and digest-identical shared-pool
+  objects.
+- [x] Verify exact reconcile prior bytes, staged object bytes, pool
+  collisions, the final generation, and a second snapshot of the prior tree
+  before commit.
+- [x] Synchronize the candidate and switch it into place with one Linux
+  `renameat2` no-replace or exchange operation; never use a remove/rename or
+  two-rename rollback sequence.
+- [x] Inject failure before every observed local package, index, Release,
+  signing, copy, install, verification, synchronization, and commit step.
+- [x] Reject unsigned production staging while retaining generic unsigned
+  generation unchanged.
+- **Done when:** each injected failure leaves the old output tree
+  byte-identical; initialize and reconcile expose one complete signed
+  generation; unrelated stable fixtures remain unchanged; and unsupported
+  platforms fail rather than weaken atomicity.
+
 ## Later / ideas
 
-R7-R10 remain mandatory before closure expansion: complete local atomicity,
-durable recovery, sysext reconciliation, and a separately human-published
-digest-verified Repogen release. Their order and acceptance matrix remain
-authoritative in core Plan 0007. R6 does not itself wire the read-only
-production validator to a writer or confer publication authority.
+R8-R10 remain mandatory before closure expansion: durable recovery, sysext
+reconciliation, and a separately human-published digest-verified Repogen
+release. Their order and acceptance matrix remain authoritative in core Plan
+0007. R7 does not wire the read-only production validator to a provider,
+configure credentials, or confer publication authority.
 
 ## Open questions
 
