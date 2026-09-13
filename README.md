@@ -182,6 +182,14 @@ same-origin, so authenticity depends on GitHub and repository release controls;
 there is no independent release signature or attestation. No `latest` lookup
 is accepted. Darwin assets from the retired workflow are not produced.
 
+The R10 candidate also exercises signed Trixie and Forky publication through
+the production transaction, including real `gpgv` and apt verification,
+shared-pool reuse, exact suite identity, by-hash, and frozen-stable
+preservation. This is local fixture evidence only. It does not claim a merged
+provider adapter, live suite, or published Repogen release; those remain
+separate human-authorized and externally verified milestones described in
+[RELEASING.md](RELEASING.md).
+
 The existing `repogen generate` command remains generic and keeps its current
 defaults, supported formats, unsigned behavior, and legacy incremental
 fallback.

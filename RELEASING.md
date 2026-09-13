@@ -12,7 +12,10 @@ repository's normal human authorization and review.
 - Confirmation that the intended semantic version and source commit are the
   ones being released.
 
-Run the repository gates before creating a tag:
+Candidate acceptance, merge, and release are separate milestones. Follow the
+[R10 runbook](.github/prompts/r10-release.prompt.md) and
+[acceptance contract](docs/specs/r10-release-acceptance.md). Run the full
+repository gate before the candidate is reviewed:
 
 ```bash
 make build
@@ -20,7 +23,14 @@ make fmt
 git diff --exit-code
 make lint
 go test -v -short -race ./...
+make test-packages-docker
+make test-integration
+node scripts/check-docs.mjs
 ```
+
+Also retain a GoReleaser `v2.18.1` snapshot proving the candidate emits the
+three authoritative names below. Snapshot evidence does not satisfy the
+separate merged-commit or published-release milestones.
 
 ## Authoritative contract
 
@@ -106,7 +116,10 @@ GitHub's HTTPS release origin and the repository's release controls.
 
 Also compare the displayed GitHub release assets with the table above. A
 missing checksum, duplicate checksum entry, unexpected archive-only output,
-or embedded identity mismatch is a failed release.
+extra asset, or embedded identity mismatch is a failed release. Verify both
+binary checksum entries and run the installer on matching amd64 and arm64
+runners; checking only the current host architecture is incomplete R10
+evidence.
 
 ## Failure and correction
 

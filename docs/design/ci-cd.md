@@ -41,6 +41,15 @@ published. `SHA256SUMS` is unsigned and same-origin with the binaries, so its
 digest check does not provide independent authenticity; consumers trust
 GitHub's HTTPS release origin and repository release controls.
 
+R10 deliberately keeps three identities separate: the independently reviewed
+candidate, the exact human-merged tree, and the separately human-published
+release. The complete local and external evidence contract is
+[R10 release acceptance](../specs/r10-release-acceptance.md), and the
+step-by-step operator procedure is
+[`r10-release.prompt.md`](../../.github/prompts/r10-release.prompt.md).
+Neither a local snapshot nor a successful release workflow alone proves the
+published assets and embedded identities.
+
 ## GitHub Action: `publish-to-r2`
 
 **Location**: `.github/actions/publish-to-r2/action.yml`

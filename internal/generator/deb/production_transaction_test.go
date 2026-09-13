@@ -399,9 +399,46 @@ func TestProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyProductionFixtureWithRealTools(t, store)
+	verifyProductionFixtureWithRealTools(t, store, "trixie")
 	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
 		t.Fatalf("stable changed during publish fixture: %q", got)
+	}
+}
+
+func TestR10SignedTwoSuitePublisherAcceptance(t *testing.T) {
+	requireProductionFixtureTools(t)
+
+	store := newProductionFixtureStore()
+	stable := []byte("frozen stable snapshot fixture")
+	store.objects["dists/stable/InRelease"] = append([]byte(nil), stable...)
+
+	results := make(map[string]*ProductionResultManifest)
+	for _, codename := range []string{"trixie", "forky"} {
+		transaction := stageProductionFixtureForCodename(t, codename)
+		result, err := PublishProductionTransaction(context.Background(), store, transaction)
+		if err != nil {
+			t.Fatalf("publish %s: %v", codename, err)
+		}
+		results[codename] = result
+		assertProductionReleaseIdentity(t, store, codename)
+		verifyProductionFixtureWithRealTools(t, store, codename)
+	}
+
+	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
+		t.Fatalf("stable changed during two-suite publication: %q", got)
+	}
+	if results["trixie"].ReleaseSHA256 == results["forky"].ReleaseSHA256 {
+		t.Fatal("suite-specific Release files unexpectedly have the same digest")
+	}
+
+	poolCreates := 0
+	for _, written := range store.writePaths() {
+		if strings.HasPrefix(written, "pool/main/") {
+			poolCreates++
+		}
+	}
+	if poolCreates != 1 {
+		t.Fatalf("shared pool object was created %d times, want exactly once", poolCreates)
 	}
 }
 
@@ -426,7 +463,7 @@ func TestRecoverProductionTransactionRealGPGVAndAPTFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyProductionFixtureWithRealTools(t, store)
+	verifyProductionFixtureWithRealTools(t, store, "trixie")
 	if got := store.objectBytes("dists/stable/InRelease"); !bytes.Equal(got, stable) {
 		t.Fatalf("stable changed during recovery fixture: %q", got)
 	}
@@ -441,7 +478,11 @@ func requireProductionFixtureTools(t *testing.T) {
 	}
 }
 
-func verifyProductionFixtureWithRealTools(t *testing.T, store *productionFixtureStore) {
+func verifyProductionFixtureWithRealTools(
+	t *testing.T,
+	store *productionFixtureStore,
+	codename string,
+) {
 	t.Helper()
 	repository := filepath.Join(t.TempDir(), "repository")
 	if err := materializeProductionFixture(repository, store); err != nil {
@@ -460,8 +501,8 @@ func verifyProductionFixtureWithRealTools(t *testing.T, store *productionFixture
 	if output, err := dearmor.CombinedOutput(); err != nil {
 		t.Fatalf("gpg --dearmor failed: %v\n%s", err, output)
 	}
-	release := filepath.Join(repository, "dists", "trixie", "Release")
-	signature := filepath.Join(repository, "dists", "trixie", "Release.gpg")
+	release := filepath.Join(repository, "dists", codename, "Release")
+	signature := filepath.Join(repository, "dists", codename, "Release.gpg")
 	gpgv := exec.Command("gpgv", "--keyring", keyring, signature, release)
 	if output, err := gpgv.CombinedOutput(); err != nil {
 		t.Fatalf("gpgv failed: %v\n%s", err, output)
@@ -478,7 +519,12 @@ func verifyProductionFixtureWithRealTools(t *testing.T, store *productionFixture
 	}
 	sourceList := filepath.Join(aptRoot, "sources.list")
 	statusFile := filepath.Join(aptRoot, "status")
-	source := fmt.Sprintf("deb [signed-by=%s] file://%s trixie main\n", keyring, repository)
+	source := fmt.Sprintf(
+		"deb [signed-by=%s] file://%s %s main\n",
+		keyring,
+		repository,
+		codename,
+	)
 	if err := os.WriteFile(sourceList, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -518,6 +564,31 @@ func verifyProductionFixtureWithRealTools(t *testing.T, store *productionFixture
 	}
 }
 
+func assertProductionReleaseIdentity(
+	t *testing.T,
+	store *productionFixtureStore,
+	codename string,
+) {
+	t.Helper()
+	release := string(store.objectBytes(path.Join("dists", codename, "Release")))
+	for _, field := range []string{
+		"Origin: Repogen Repository\n",
+		"Label: Frostyard Repository\n",
+		"Suite: " + codename + "\n",
+		"Codename: " + codename + "\n",
+		"Architectures: all amd64\n",
+		"Components: main\n",
+		"Acquire-By-Hash: yes\n",
+	} {
+		if !strings.Contains(release, field) {
+			t.Fatalf("%s Release lacks %q:\n%s", codename, field, release)
+		}
+	}
+	if strings.Contains(release, "Valid-Until:") {
+		t.Fatalf("%s Release unexpectedly contains Valid-Until", codename)
+	}
+}
+
 func assertNoIncompleteVisibleGeneration(
 	t *testing.T,
 	store *productionFixtureStore,
@@ -547,6 +618,23 @@ func stageProductionFixture(
 	transaction, err := StageProductionTransaction(stageDir, request)
 	if err != nil {
 		t.Fatalf("StageProductionTransaction() error = %v", err)
+	}
+	return transaction
+}
+
+func stageProductionFixtureForCodename(
+	t *testing.T,
+	codename string,
+) *ProductionTransaction {
+	t.Helper()
+	request, closeSigner := productionFixtureRequest(t, "initialize", nil)
+	t.Cleanup(closeSigner)
+	request.RequestID = "fixture-request-" + codename
+	request.Codename = codename
+	stageDir := filepath.Join(t.TempDir(), "stage")
+	transaction, err := StageProductionTransaction(stageDir, request)
+	if err != nil {
+		t.Fatalf("StageProductionTransaction(%s) error = %v", codename, err)
 	}
 	return transaction
 }

@@ -81,14 +81,14 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   definition and window rules; `docs/metrics.md` is its conformance alias
 - [PR review rubric](specs/pr-review-rubric.md) — the checklist every PR
   review applies; `docs/review-rubric.md` is its conformance alias
+- [R10 release acceptance](specs/r10-release-acceptance.md) — exact local,
+  merge, and published-release evidence for the hardened Repogen artifact
 
 ### Plans
 
 - [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
-  — R1 contract plus the implemented write-free R2 input and R3 signed
-  prior-state validation, R4 immutable shared-pool handling, and the
-  provider-neutral R5 signed transaction; a real provider adapter and the
-  bounded Trixie canary remain later phases
+  — R1-R9 local implementation lineage plus the R10 candidate, release, and
+  remaining provider/canary boundaries
 
 ### Uncategorized
 

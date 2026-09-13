@@ -8,8 +8,11 @@ provider-neutral immutable pool primitive, and R6 provides deterministic
 local generation and signed no-op detection. R5 provides the signed,
 target-scoped publication transaction and R7 provides atomic local
 generation commit. R8 provides crash-durable local commits plus retained
-intake and Debian writer recovery. The provider adapter/canary and R9-R10
-remain unimplemented. The plan
+intake and Debian writer recovery. The reviewed R9 predecessor adds
+OSVersion-aware, serialized sysext reconciliation. This R10 candidate adds
+the signed two-suite acceptance matrix and exact release runbook. The real
+provider adapter/canary, exact reviewed merge, and separately published
+release remain unimplemented external milestones. The plan
 implements
 [core ADR-0048](https://github.com/frostyard/core/blob/main/docs/adr/0048-publish-debian-packages-to-explicit-codenames.md)
 and the Repogen R1-R10 sequence in
@@ -483,22 +486,53 @@ merge and separately human-published, digest-verified release under
   provider adapter, credential, workflow, schedule, publication, or
   production mutation is configured or authorized.
 
+## Phase 8 - Reconcile sysext safely (R9)
+
+- [x] Include OSVersion in sysext identity and reject conflicting bytes for
+  one exact identity.
+- [x] Reconcile complete per-extension checksum state under serialization,
+  verify existing signatures before mutation, stage a complete candidate,
+  and preserve the prior visible path on failure.
+- [x] Preserve current Snosi layout and signed transfer behavior while
+  allowing OS 13 and OS 14 artifacts to coexist.
+- **Done when:** signed two-generation fixtures, conflict tests, invalid-prior
+  tests, and failure injection pass without partial visible state.
+
+## Phase 9 - Produce and release the hardened artifact (R10)
+
+- [x] Define the exact candidate, merge, release, asset, checksum, embedded
+  identity, and downstream-consumption contract in
+  [R10 release acceptance](../specs/r10-release-acceptance.md).
+- [x] Add a signed Trixie/Forky publisher acceptance fixture that verifies
+  both suites with real `gpgv` and apt, safely reuses identical shared-pool
+  bytes, and preserves frozen stable.
+- [x] Add the authority-aware
+  [R10 release runbook](../../.github/prompts/r10-release.prompt.md).
+- [ ] Human merges the exact independently reviewed candidate and records the
+  merge commit/tree.
+- [ ] Human separately publishes one immutable semantic version from that
+  merge; both architecture assets, `SHA256SUMS`, embedded identities, and the
+  fixed installer path are verified from the visible release.
+- **Done when:** the local full gate and signed two-suite matrix pass, then
+  the separate merge and release evidence satisfy the R10 contract.
+
 ## Later / ideas
 
-R9-R10 remain mandatory before closure expansion: sysext reconciliation and a
-separately human-published digest-verified Repogen release. Their order and
-acceptance matrix remain authoritative in core Plan 0007. R8 does not wire the
-read-only production validator to a provider, configure credentials, or
-confer publication authority.
+The real provider adapter/canary remains mandatory before production
+publication. R10 does not wire the read-only production validator to a
+provider, configure credentials, or confer merge, release, publication, or
+production authority.
 
 ## Open questions
 
-- **Release publication:** issue 34 remains externally open; D5 must prove
-  the reviewed merged workflow and separately published release satisfy this
-  candidate contract. Candidate review must retain or independently reproduce
-  exact GoReleaser config/snapshot output, asset names, checksums, and embedded
-  identities; the repository tests validate the contract structure but do not
-  execute GoReleaser.
+- **Release publication:** issue 34 remained externally open when rechecked on
+  2026-09-13, and the default branch still contained both incompatible
+  release workflows. D5 must prove the reviewed merged workflow and separately
+  published release satisfy
+  [the R10 contract](../specs/r10-release-acceptance.md). Candidate review must
+  retain or independently reproduce exact GoReleaser config/snapshot output,
+  asset names, checksums, and embedded identities; repository tests validate
+  the contract structure but do not execute GoReleaser.
 - **Production adapter/API:** select and separately approve the real provider
   adapter and external command/service wiring. The current library boundary
   and fixtures do not carry credentials or publication authority.
