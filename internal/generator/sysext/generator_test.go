@@ -977,6 +977,95 @@ func TestIncrementalReconciliationRejectsInvalidSignedMetadata(t *testing.T) {
 	}
 }
 
+func TestGenerateRejectsSignedExistingIdentityConflictsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name        string
+		filename    string
+		content     string
+		mutate      func(*models.Package)
+		wantMessage string
+	}{
+		{
+			name:        "same filename with different digest",
+			filename:    "incus_7.3_13_x86-64.raw",
+			content:     "changed trixie",
+			wantMessage: "conflicting sysext artifacts for identity",
+		},
+		{
+			name:        "alternate filename for same identity",
+			filename:    "incus_7.3_13_x86-64.raw.zst",
+			content:     "trixie",
+			wantMessage: "conflicting sysext artifacts for identity",
+		},
+		{
+			name:     "metadata OSVersion differs from filename",
+			filename: "incus_7.3_13_x86-64.raw",
+			content:  "trixie",
+			mutate: func(pkg *models.Package) {
+				pkg.Metadata["OSVersion"] = "14"
+			},
+			wantMessage: "does not match filename",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadataSigner := newTestSigner(t)
+			outputDir := filepath.Join(t.TempDir(), "repository")
+			initialPath := filepath.Join(t.TempDir(), "incus_7.3_13_x86-64.raw")
+			if err := os.WriteFile(initialPath, []byte("trixie"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			initial, err := ParsePackage(initialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir},
+				[]models.Package{*initial},
+			); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(
+				outputDir,
+				"ext",
+				"incus",
+				"SHA256SUMS.gpg",
+			)); err != nil {
+				t.Fatalf("initial signed manifest missing: %v", err)
+			}
+			before := snapshotTree(t, filepath.Join(outputDir, "ext"))
+
+			incomingPath := filepath.Join(t.TempDir(), testCase.filename)
+			if err := os.WriteFile(incomingPath, []byte(testCase.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			incoming, err := ParsePackage(incomingPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if testCase.mutate != nil {
+				testCase.mutate(incoming)
+			}
+
+			err = NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{
+					OutputDir:      outputDir,
+					Incremental:    true,
+					SkipDuplicates: true,
+				},
+				[]models.Package{*incoming},
+			)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantMessage) {
+				t.Fatalf("Generate() error = %v, want message %q", err, testCase.wantMessage)
+			}
+			assertTreeSnapshot(t, filepath.Join(outputDir, "ext"), before)
+		})
+	}
+}
+
 func snapshotTree(t *testing.T, root string) map[string][32]byte {
 	t.Helper()
 	snapshot := make(map[string][32]byte)
