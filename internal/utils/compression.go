@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"io"
+	"time"
 
 	"github.com/klauspost/compress/gzip"
 )
@@ -11,6 +12,7 @@ import (
 func GzipCompress(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
+	w.ModTime = time.Unix(0, 0).UTC()
 
 	if _, err := w.Write(data); err != nil {
 		return nil, err

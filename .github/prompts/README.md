@@ -11,3 +11,4 @@ Rules live in [AGENTS.md](../../AGENTS.md); a runbook here is the
 | Prompt | Task |
 | --- | --- |
 | [review.prompt.md](review.prompt.md) | Review a pull request against the repo rubric |
+| [r10-release.prompt.md](r10-release.prompt.md) | Prepare and verify the separately authorized R10 release |

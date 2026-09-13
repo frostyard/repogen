@@ -1,27 +1,70 @@
 package sysext
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/frostyard/repogen/internal/models"
 )
 
 type testSigner struct {
+	mu         sync.Mutex
+	entity     *openpgp.Entity
 	signedPath string
-	signature  []byte
 }
 
-func (s *testSigner) SignCleartext([]byte) ([]byte, error)      { return nil, nil }
-func (s *testSigner) SignDetached([]byte) ([]byte, error)       { return nil, nil }
-func (s *testSigner) SignDetachedBinary([]byte) ([]byte, error) { return nil, nil }
-func (s *testSigner) GetPublicKey() ([]byte, error)             { return nil, nil }
+func newTestSigner(t *testing.T) *testSigner {
+	t.Helper()
+	entity, err := openpgp.NewEntity("Repogen Test", "", "repogen@example.invalid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &testSigner{entity: entity}
+}
+
+func (s *testSigner) SignCleartext([]byte) ([]byte, error) { return nil, errors.New("unused") }
+func (s *testSigner) SignDetached(data []byte) ([]byte, error) {
+	return s.SignDetachedBinary(data)
+}
+func (s *testSigner) SignDetachedBinary(data []byte) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var signature bytes.Buffer
+	if err := openpgp.DetachSign(&signature, s.entity, bytes.NewReader(data), nil); err != nil {
+		return nil, err
+	}
+	return signature.Bytes(), nil
+}
+func (s *testSigner) GetPublicKey() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var publicKey bytes.Buffer
+	if err := s.entity.Serialize(&publicKey); err != nil {
+		return nil, err
+	}
+	return publicKey.Bytes(), nil
+}
 func (s *testSigner) SignDetachedBinaryFromFile(path string) ([]byte, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.signedPath = path
-	return s.signature, nil
+	var signature bytes.Buffer
+	if err := openpgp.DetachSign(&signature, s.entity, bytes.NewReader(content), nil); err != nil {
+		return nil, err
+	}
+	return signature.Bytes(), nil
 }
 
 func TestParsePackage(t *testing.T) {
@@ -348,7 +391,7 @@ func TestGeneratorSignsChecksumManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	metadataSigner := &testSigner{signature: []byte("binary-signature")}
+	metadataSigner := newTestSigner(t)
 	gen := NewGenerator("https://example.com/repo", metadataSigner)
 	config := &models.RepositoryConfig{OutputDir: outputDir}
 	packages := []models.Package{{
@@ -362,16 +405,16 @@ func TestGeneratorSignsChecksumManifest(t *testing.T) {
 
 	extDir := filepath.Join(outputDir, "ext", "myext")
 	manifestPath := filepath.Join(extDir, "SHA256SUMS")
-	if metadataSigner.signedPath != manifestPath {
-		t.Errorf("signed path = %q, want %q", metadataSigner.signedPath, manifestPath)
+	if !strings.HasSuffix(metadataSigner.signedPath, filepath.Join("ext", "myext", "SHA256SUMS")) {
+		t.Errorf("signed path = %q, want staged ext/myext/SHA256SUMS", metadataSigner.signedPath)
 	}
 
 	signature, err := os.ReadFile(manifestPath + ".gpg")
 	if err != nil {
 		t.Fatalf("reading SHA256SUMS.gpg: %v", err)
 	}
-	if string(signature) != "binary-signature" {
-		t.Errorf("signature = %q, want %q", signature, "binary-signature")
+	if len(signature) == 0 {
+		t.Error("signature is empty")
 	}
 
 	transfer, err := os.ReadFile(filepath.Join(extDir, "myext.transfer"))
@@ -380,6 +423,57 @@ func TestGeneratorSignsChecksumManifest(t *testing.T) {
 	}
 	if !strings.Contains(string(transfer), "Verify=true") {
 		t.Errorf("signed transfer does not enable verification:\n%s", transfer)
+	}
+
+}
+
+func TestGeneratorCanonicalChecksumOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputDir := filepath.Join(tmpDir, "input")
+	if err := os.MkdirAll(inputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	alpha := filepath.Join(inputDir, "same_1.0_13_x86-64.raw")
+	beta := filepath.Join(inputDir, "same_2.0_13_x86-64.raw")
+	if err := os.WriteFile(alpha, []byte("alpha"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(beta, []byte("beta"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	first := models.Package{Name: "same", Version: "1.0", Architecture: "x86-64", Filename: alpha}
+	second := models.Package{Name: "same", Version: "2.0", Architecture: "x86-64", Filename: beta}
+
+	outputOne := filepath.Join(tmpDir, "one")
+	outputTwo := filepath.Join(tmpDir, "two")
+	if err := NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputOne},
+		[]models.Package{second, first},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputTwo},
+		[]models.Package{first, second},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	firstManifest, err := os.ReadFile(filepath.Join(outputOne, "ext", "same", "SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondManifest, err := os.ReadFile(filepath.Join(outputTwo, "ext", "same", "SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstManifest) != string(secondManifest) {
+		t.Fatalf("shuffled sysext input produced different manifests:\n%s\n---\n%s", firstManifest, secondManifest)
+	}
+	if strings.Index(string(firstManifest), filepath.Base(alpha)) > strings.Index(string(firstManifest), filepath.Base(beta)) {
+		t.Fatalf("SHA256SUMS entries are not sorted:\n%s", firstManifest)
 	}
 }
 
@@ -542,15 +636,23 @@ func TestIndexUpdatedWithNewExtension(t *testing.T) {
 func TestIncrementalIndexIncludesExtensionsFromExistingManifests(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "output")
-	alphaDir := filepath.Join(outputDir, "ext", "alpha")
-	if err := os.MkdirAll(alphaDir, 0755); err != nil {
+	alphaPath := filepath.Join(tmpDir, "alpha_1.0_13_x86-64.raw")
+	if err := os.WriteFile(alphaPath, []byte("alpha content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(alphaDir, "SHA256SUMS"),
-		[]byte("abc123  alpha_1.0_13_x86-64.raw\n"),
-		0644,
+	alpha, err := ParsePackage(alphaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen := NewGenerator("https://example.com/repo", nil)
+	if err := gen.Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputDir},
+		[]models.Package{*alpha},
 	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(outputDir, "ext", "alpha", filepath.Base(alphaPath))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -559,7 +661,6 @@ func TestIncrementalIndexIncludesExtensionsFromExistingManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gen := NewGenerator("https://example.com/repo", nil)
 	config := &models.RepositoryConfig{
 		OutputDir:   outputDir,
 		Incremental: true,
@@ -596,8 +697,8 @@ func TestValidatePackages(t *testing.T) {
 		{
 			name: "valid packages",
 			packages: []models.Package{
-				{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_13_x86-64.raw"},
-				{Name: "ext2", Version: "2.0", Filename: "/path/to/ext2_2.0_13_arm64.raw"},
+				{Name: "ext1", Version: "1.0", Filename: "/path/to/ext1_1.0_13_x86-64.raw", Metadata: map[string]interface{}{"OSVersion": "13"}},
+				{Name: "ext2", Version: "2.0", Filename: "/path/to/ext2_2.0_13_arm64.raw", Metadata: map[string]interface{}{"OSVersion": "13"}},
 			},
 			wantErr: false,
 		},
@@ -624,6 +725,384 @@ func TestValidatePackages(t *testing.T) {
 				t.Errorf("ValidatePackages() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestConcurrentIncrementalReconciliationRetainsBothOSVersionsAndExtensions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "repository")
+	files := []string{
+		"incus_7.3_13_x86-64.raw",
+		"incus_7.3_14_x86-64.raw",
+		"docker_27.0_13_x86-64.raw",
+		"podman_5.4_14_x86-64.raw",
+	}
+	packages := make([]models.Package, 0, len(files))
+	for _, name := range files {
+		filename := filepath.Join(inputDir, name)
+		if err := os.WriteFile(filename, []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pkg, err := ParsePackage(filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packages = append(packages, *pkg)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, len(packages))
+	var ready sync.WaitGroup
+	ready.Add(len(packages))
+	metadataSigner := newTestSigner(t)
+	for i := range packages {
+		pkg := packages[i]
+		go func() {
+			ready.Done()
+			<-start
+			errs <- NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir, Incremental: true},
+				[]models.Package{pkg},
+			)
+		}()
+	}
+	ready.Wait()
+	close(start)
+	for range packages {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent reconciliation failed: %v", err)
+		}
+	}
+
+	incusManifest, err := os.ReadFile(filepath.Join(outputDir, "ext", "incus", "SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, osVersion := range []string{"_13_", "_14_"} {
+		if !strings.Contains(string(incusManifest), osVersion) {
+			t.Fatalf("incus manifest lost OS version %s:\n%s", osVersion, incusManifest)
+		}
+	}
+	index, err := os.ReadFile(filepath.Join(outputDir, "ext", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(index), "docker\nincus\npodman\n"; got != want {
+		t.Fatalf("concurrent reconciliation index = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "ext", "incus", "SHA256SUMS.gpg")); err != nil {
+		t.Fatalf("concurrent reconciliation did not retain signed manifest: %v", err)
+	}
+}
+
+func TestFailedSysextCommitPreservesExistingPath(t *testing.T) {
+	steps := []string{
+		"restore:read",
+		"stage:create",
+		"stage:copy-existing",
+		"stage:payload",
+		"stage:manifest",
+		"stage:signature",
+		"stage:transfer",
+		"stage:index",
+		"stage:validate",
+		"commit:atomic-switch",
+	}
+	metadataSigner := newTestSigner(t)
+	for _, failAt := range steps {
+		t.Run(failAt, func(t *testing.T) {
+			inputDir := t.TempDir()
+			outputDir := filepath.Join(t.TempDir(), "repository")
+			initialPath := filepath.Join(inputDir, "incus_7.3_13_x86-64.raw")
+			if err := os.WriteFile(initialPath, []byte("trixie"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			initial, err := ParsePackage(initialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir},
+				[]models.Package{*initial},
+			); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotTree(t, filepath.Join(outputDir, "ext"))
+
+			forkyPath := filepath.Join(inputDir, "incus_7.3_14_x86-64.raw")
+			if err := os.WriteFile(forkyPath, []byte("forky"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			forky, err := ParsePackage(forkyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			injected := errors.New("injected pre-switch failure")
+			gen := &Generator{
+				baseURL: "https://example.com/repo",
+				signer:  metadataSigner,
+				beforeStep: func(step string) error {
+					if step == failAt {
+						return injected
+					}
+					return nil
+				},
+			}
+			err = gen.Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir, Incremental: true},
+				[]models.Package{*forky},
+			)
+			if !errors.Is(err, injected) {
+				t.Fatalf("Generate() error = %v, want injected failure at %s", err, failAt)
+			}
+			assertTreeSnapshot(t, filepath.Join(outputDir, "ext"), before)
+
+			if err := NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir, Incremental: true},
+				[]models.Package{*forky},
+			); err != nil {
+				t.Fatalf("retry after %s did not converge: %v", failAt, err)
+			}
+			manifest, err := os.ReadFile(filepath.Join(outputDir, "ext", "incus", "SHA256SUMS"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(manifest), "_13_") || !strings.Contains(string(manifest), "_14_") {
+				t.Fatalf("retry after %s lost an OS version:\n%s", failAt, manifest)
+			}
+		})
+	}
+}
+
+func TestIncrementalReconciliationRejectsCorruptManifestWithoutMutation(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "repository")
+	extDir := filepath.Join(outputDir, "ext", "incus")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(extDir, "SHA256SUMS"),
+		[]byte("not-a-digest  incus_7.3_13_x86-64.raw\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "ext", "index"), []byte("incus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, filepath.Join(outputDir, "ext"))
+
+	inputPath := filepath.Join(t.TempDir(), "incus_7.3_14_x86-64.raw")
+	if err := os.WriteFile(inputPath, []byte("forky"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := ParsePackage(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputDir, Incremental: true},
+		[]models.Package{*pkg},
+	)
+	if err == nil || !strings.Contains(err.Error(), "invalid SHA-256") {
+		t.Fatalf("Generate() error = %v, want invalid SHA-256 rejection", err)
+	}
+	after := snapshotTree(t, filepath.Join(outputDir, "ext"))
+	if len(before) != len(after) {
+		t.Fatalf("corrupt restore changed path count: before=%d after=%d", len(before), len(after))
+	}
+	for path, digest := range before {
+		if after[path] != digest {
+			t.Fatalf("corrupt restore changed %s", path)
+		}
+	}
+}
+
+func TestIncrementalReconciliationRejectsInvalidSignedMetadata(t *testing.T) {
+	metadataSigner := newTestSigner(t)
+	for _, testCase := range []struct {
+		name   string
+		target string
+	}{
+		{name: "signature", target: "SHA256SUMS.gpg"},
+		{name: "transfer", target: "incus.transfer"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			inputDir := t.TempDir()
+			outputDir := filepath.Join(t.TempDir(), "repository")
+			initialPath := filepath.Join(inputDir, "incus_7.3_13_x86-64.raw")
+			if err := os.WriteFile(initialPath, []byte("trixie"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			initial, err := ParsePackage(initialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir},
+				[]models.Package{*initial},
+			); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(outputDir, "ext", "incus", testCase.target)
+			if err := os.WriteFile(target, []byte("corrupt"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotTree(t, filepath.Join(outputDir, "ext"))
+
+			forkyPath := filepath.Join(inputDir, "incus_7.3_14_x86-64.raw")
+			if err := os.WriteFile(forkyPath, []byte("forky"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			forky, err := ParsePackage(forkyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir, Incremental: true},
+				[]models.Package{*forky},
+			)
+			if err == nil {
+				t.Fatalf("Generate() accepted corrupt %s", testCase.target)
+			}
+			assertTreeSnapshot(t, filepath.Join(outputDir, "ext"), before)
+		})
+	}
+}
+
+func TestGenerateRejectsSignedExistingIdentityConflictsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name        string
+		filename    string
+		content     string
+		mutate      func(*models.Package)
+		wantMessage string
+	}{
+		{
+			name:        "same filename with different digest",
+			filename:    "incus_7.3_13_x86-64.raw",
+			content:     "changed trixie",
+			wantMessage: "conflicting sysext artifacts for identity",
+		},
+		{
+			name:        "alternate filename for same identity",
+			filename:    "incus_7.3_13_x86-64.raw.zst",
+			content:     "trixie",
+			wantMessage: "conflicting sysext artifacts for identity",
+		},
+		{
+			name:     "metadata OSVersion differs from filename",
+			filename: "incus_7.3_13_x86-64.raw",
+			content:  "trixie",
+			mutate: func(pkg *models.Package) {
+				pkg.Metadata["OSVersion"] = "14"
+			},
+			wantMessage: "does not match filename",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadataSigner := newTestSigner(t)
+			outputDir := filepath.Join(t.TempDir(), "repository")
+			initialPath := filepath.Join(t.TempDir(), "incus_7.3_13_x86-64.raw")
+			if err := os.WriteFile(initialPath, []byte("trixie"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			initial, err := ParsePackage(initialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir},
+				[]models.Package{*initial},
+			); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(
+				outputDir,
+				"ext",
+				"incus",
+				"SHA256SUMS.gpg",
+			)); err != nil {
+				t.Fatalf("initial signed manifest missing: %v", err)
+			}
+			before := snapshotTree(t, filepath.Join(outputDir, "ext"))
+
+			incomingPath := filepath.Join(t.TempDir(), testCase.filename)
+			if err := os.WriteFile(incomingPath, []byte(testCase.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			incoming, err := ParsePackage(incomingPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if testCase.mutate != nil {
+				testCase.mutate(incoming)
+			}
+
+			err = NewGenerator("https://example.com/repo", metadataSigner).Generate(
+				context.Background(),
+				&models.RepositoryConfig{
+					OutputDir:      outputDir,
+					Incremental:    true,
+					SkipDuplicates: true,
+				},
+				[]models.Package{*incoming},
+			)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantMessage) {
+				t.Fatalf("Generate() error = %v, want message %q", err, testCase.wantMessage)
+			}
+			assertTreeSnapshot(t, filepath.Join(outputDir, "ext"), before)
+		})
+	}
+}
+
+func snapshotTree(t *testing.T, root string) map[string][32]byte {
+	t.Helper()
+	snapshot := make(map[string][32]byte)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		snapshot[relative] = sha256.Sum256(content)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func assertTreeSnapshot(t *testing.T, root string, before map[string][32]byte) {
+	t.Helper()
+	after := snapshotTree(t, root)
+	if len(before) != len(after) {
+		t.Fatalf("failed commit changed path count: before=%d after=%d", len(before), len(after))
+	}
+	for path, digest := range before {
+		if after[path] != digest {
+			t.Fatalf("failed commit changed %s", path)
+		}
 	}
 }
 

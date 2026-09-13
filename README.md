@@ -22,6 +22,10 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 - **Automatic Package Detection**: Scans directories and auto-detects package types using magic bytes
 - **Metadata Generation**: Creates all necessary index and metadata files for each repository type
 - **Repository Signing**: Signs repositories with GPG (Debian/RPM/Pacman) or RSA (Alpine) keys
+- **Deterministic Debian Metadata**: Canonical package, field, architecture,
+  component, checksum, and gzip output with a controlled Release timestamp
+- **Safe Debian No-op**: Preserves valid existing Release signatures when the
+  canonical metadata is unchanged
 - **Unsigned Repository Support**:
   - Always generates InRelease files (required by Debian Trixie)
   - InRelease contains Release content without signature for unsigned repos
@@ -64,6 +68,132 @@ repogen generate --input-dir /path/to/packages --output-dir /path/to/repo
 repogen generate -v
 ```
 
+### Frostyard Production Validation
+
+R2-R3 add a separate, fail-closed validation path for Frostyard production
+Debian requests and prior state. It requires explicit non-moving suite
+identity, the fixed Frostyard Release identity, component `main`, the initial
+`all,amd64` architecture allowlist, non-overlapping input/output paths, and
+Debian-only package input.
+
+An initialize request must explicitly name `--operation initialize`. It
+succeeds only when `dists/<codename>` is absent:
+
+```bash
+repogen validate-production \
+  --input-dir ./debs \
+  --output-dir ./staging \
+  --codename trixie \
+  --suite trixie \
+  --components main \
+  --arch all,amd64 \
+  --operation initialize
+```
+
+A reconcile request must also supply the accepted public key and exact
+expected prior Release SHA-256:
+
+```bash
+repogen validate-production \
+  --input-dir ./debs \
+  --output-dir ./restored-repository \
+  --codename trixie \
+  --suite trixie \
+  --components main \
+  --arch all,amd64 \
+  --operation reconcile \
+  --trusted-public-key ./frostyard-public-key.asc \
+  --expected-prior-release-sha256 <64-lowercase-hex-characters>
+```
+
+Reconcile verifies both InRelease and Release.gpg against that key, requires
+the clear-signed payload to equal Release byte-for-byte, checks the expected
+Release digest and fixed production identity, verifies every MD5/SHA1/SHA256/
+SHA512 index entry, requires the exact all/amd64 index set, and strictly
+parses every plain and gzip index. Each prior SHA-256 by-hash object must
+exist and be byte-identical to its canonical index. Missing, partial,
+malformed, wrong-key, tampered, or mismatched prior state fails without
+changing prior bytes.
+
+This command only validates and restores metadata into memory. It never
+creates the output directory or writes, generates, signs, or publishes
+repository state. R4 provides a separate, provider-neutral shared-pool
+primitive that stream-hashes existing bytes and uses conditional create
+without overwrite.
+
+R5 adds a separate library transaction in
+`internal/generator/deb/production_transaction.go`. It requires a clean
+staging directory and a signer, emits `Acquire-By-Hash: yes` plus SHA-256
+by-hash copies, records compact request/result manifests, verifies exact prior
+object digests before reconcile, serializes by immutable codename, and limits
+writes to conditional `pool/main` objects and one `dists/<codename>` target.
+Every write is read back; indexes precede Release and Release.gpg, and
+InRelease is always last. The implementation has fake-store failure
+injection and real local `gpgv`/apt fixture coverage. It deliberately has no
+R2 credential or provider adapter, no production CLI, and no authority to run
+a canary. The legacy composite action rejects Debian rather than fall back to
+broad sync.
+
+R7 adds a Linux-only local production commit path. It stages a complete
+signed repository tree in the output directory's filesystem, preserving
+unrelated regular-file bytes, sizes, and complete file/directory modes plus
+verified shared-pool bytes, then switches the complete directory into place
+with one `renameat2` operation. Ownership, extended attributes, ACLs, and
+timestamps are not preserved. Directories created for regenerated suites and
+new pool paths receive a fixed `0755` mode independent of the process umask;
+newly installed generated files receive `0644`. Initialize uses no-replace and
+reconcile uses atomic exchange. Failures during package, index, Release,
+signing, copy, verification, or synchronization leave the prior output
+unchanged unless a concurrent external writer caused the detected drift. Each
+generation reads and hashes the complete prior tree, copies all retained
+content, and needs roughly 2x transient repository space. The switch is
+atomically visible and crash-durable: a synchronized sibling generation and
+recovery journal are persisted before the switch, the parent directory is
+synchronized afterward, and `RecoverLocalProductionRepository` completes or
+cleans an interrupted exact prior/candidate state without rolling back a
+visible generation.
+
+R8 also adds a retained local intake store and receipt reconciler under
+`internal/intake`. Authenticated producer identity is passed separately from
+the request. The store contract requires one provider-level atomic
+create-if-absent operation that never replaces existing bytes; read-then-write
+emulation is not valid. Immutable request objects are read back and re-hashed,
+receipts are monotonic per kind/target, attempts remain append-only, and result
+pointers are created only after public read-back. Current policy is checked
+immediately before a new writer attempt; an already completed result remains
+replayable only after its retained bytes and public state verify again.
+Scheduled and manual wake-ups call the same receipt enumeration; same-target
+work is ordered while different codenames may progress concurrently. The
+Debian recovery writer resumes only objects matching the exact prior or
+candidate generation and rejects permission failures, timeouts, missing prior
+objects, unknown target objects, checksum mismatches, and incomplete
+read-back. These are library and local-fixture primitives only: no HTTP
+endpoint, provider adapter, credential, workflow, deployment, or production
+permission is configured or implied.
+
+Release binaries now have one contract: the sole tag workflow runs pinned
+GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
+Each binary embeds the exact version and full commit shown by
+`repogen version --short`. Consumers must name an exact tag and commit;
+`scripts/install-release.sh --github-release` retrieves both files from the
+fixed GitHub release origin, verifies the selected SHA-256 entry, and checks
+embedded identity before installation. The checksum is unsigned and
+same-origin, so authenticity depends on GitHub and repository release controls;
+there is no independent release signature or attestation. No `latest` lookup
+is accepted. Darwin assets from the retired workflow are not produced.
+
+The R10 candidate also exercises signed Trixie and Forky publication through
+the production transaction, including real `gpgv` and apt verification,
+shared-pool reuse, exact suite identity, by-hash, and frozen-stable
+preservation. This is local fixture evidence only. It does not claim a merged
+provider adapter, live suite, or published Repogen release; those remain
+separate human-authorized and externally verified milestones described in
+[RELEASING.md](RELEASING.md).
+
+The existing `repogen generate` command remains generic and keeps its current
+defaults, supported formats, unsigned behavior, and legacy incremental
+fallback.
+
 ### Incremental Mode
 
 Incremental mode allows you to add new packages to an existing repository without regenerating everything from scratch. This is useful when:
@@ -78,7 +208,8 @@ Incremental mode allows you to add new packages to an existing repository withou
 2. Adds only new packages without removing existing ones
 3. Errors if a package with the same name+version already exists (use `--skip-duplicates` to skip instead)
 4. Regenerates metadata files with both existing and new packages
-5. Re-signs metadata if signing is enabled
+5. Re-signs changed metadata if signing is enabled; unchanged canonical
+   Debian metadata preserves cryptographically verified Release signatures
 
 **Basic Incremental Usage:**
 
@@ -874,57 +1005,31 @@ This ensures compatibility with both old (Bookworm) and new (Trixie) Debian rele
 
 ## GitHub Action
 
-Repogen provides a reusable GitHub Action for publishing packages to repositories hosted on Cloudflare R2 storage. This is ideal for CI/CD workflows that build `.deb` packages or systemd-sysext images.
+Repogen provides a legacy reusable GitHub Action for publishing non-Debian
+package formats to repositories hosted on Cloudflare R2 storage.
+
+> **Production status:** The current action is the generic legacy publisher.
+> It requires an exact Repogen tag and commit but still uses broad
+> synchronization for supported non-Debian formats. Debian is rejected
+> structurally; the action cannot initialize or reconcile Frostyard
+> Trixie/Forky. Provider wiring and the retained canary remain tracked in
+> [Plan 0001](docs/plans/0001-frostyard-production-publisher.md).
 
 ### Quick Start
 
 ```yaml
 - name: Publish to repository
-  uses: frostyard/repogen/.github/actions/publish-to-r2@main
+  uses: frostyard/repogen/.github/actions/publish-to-r2@<reviewed-action-commit>
   with:
     r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
     r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
     r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     r2-bucket: my-repo-bucket
     packages-dir: ./dist
-    package-type: deb
-```
-
-### Full Example: Publishing Debian Packages
-
-```yaml
-name: Build and Publish
-on:
-  push:
-    tags:
-      - "v*.*.*"
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build .deb package
-        run: |
-          # Your build steps here
-          dpkg-deb --build mypackage dist/mypackage_1.0.0_amd64.deb
-
-      - name: Publish to repository
-        uses: frostyard/repogen/.github/actions/publish-to-r2@main
-        with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: my-packages
-          packages-dir: ./dist
-          package-type: deb
-          codename: stable
-          origin: My Organization
-          label: My Packages
-          architectures: amd64,arm64
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+    package-type: sysext
+    base-url: https://extensions.example.com/repo
+    repogen-version: v1.2.3
+    repogen-commit: <40-character-release-commit>
 ```
 
 ### Full Example: Publishing Sysext Images
@@ -940,7 +1045,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@<reviewed-checkout-commit>
 
       - name: Build sysext image
         run: |
@@ -949,7 +1054,7 @@ jobs:
           # Output: dist/myext_1.0.0_13_x86-64.raw.zst
 
       - name: Publish to repository
-        uses: frostyard/repogen/.github/actions/publish-to-r2@main
+        uses: frostyard/repogen/.github/actions/publish-to-r2@<reviewed-action-commit>
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
           r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -959,6 +1064,8 @@ jobs:
           packages-dir: ./dist
           package-type: sysext
           base-url: https://extensions.example.com/repo
+          repogen-version: v1.2.3
+          repogen-commit: <40-character-release-commit>
 ```
 
 ### Action Inputs
@@ -970,7 +1077,7 @@ jobs:
 | `r2-secret-access-key` | Yes      | -           | Cloudflare R2 Secret Access Key                                                          |
 | `r2-bucket`            | Yes      | -           | Cloudflare R2 Bucket name                                                                |
 | `packages-dir`         | Yes      | -           | Directory containing packages to add                                                     |
-| `package-type`         | Yes      | -           | Package type: `deb`, `sysext`, `rpm`, `apk`, `pacman`, `homebrew`                        |
+| `package-type`         | Yes      | -           | Package type; `deb` is rejected by this legacy action                                    |
 | `base-url`             | No\*     | -           | Base URL for the repository (\*required for `sysext`)                                    |
 | `repo-prefix`          | No       | -           | Path prefix in R2 bucket                                                                 |
 | `gpg-private-key`      | No       | -           | GPG private key (base64 or ASCII armored)                                                |
@@ -987,7 +1094,8 @@ jobs:
 | `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                                                |
 | `distro-variant`       | No       | `fedora`    | Distribution for RPM repos                                                               |
 | `version`              | No       | -           | Release version for RPM repos                                                            |
-| `repogen-version`      | No       | `latest`    | Version of repogen to use                                                                |
+| `repogen-version`      | Yes      | -           | Exact v-prefixed Repogen release tag                                                     |
+| `repogen-commit`       | Yes      | -           | Exact 40-character commit embedded in the binary                                         |
 | `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
 | `purge-cache`          | No       | `false`     | Purge Cloudflare cache after upload                                                      |
 | `cloudflare-zone`      | No\*     | -           | Cloudflare Zone ID (\*required if `purge-cache` is `true`)                               |
@@ -1009,8 +1117,19 @@ jobs:
 The action uses incremental mode, which means:
 
 - Existing packages are preserved
-- Only metadata files are synced locally
-- Conflicts are detected if you try to add a package that already exists
+- Only metadata files are synced locally; a sysext metadata restore failure
+  aborts instead of being treated as an empty repository
+- Sysext identity includes OSVersion, so matching OS 13 and OS 14 artifacts
+  coexist
+- A same-identity sysext is skipped only when its SHA-256 is unchanged;
+  changed or unverifiable bytes fail
+
+The action is not a Debian publisher. Debian uses the separate protected
+writer. A sysext caller must serialize the full restore/generate/upload cycle
+across all extensions because `ext/index` is shared. The current R2 upload
+cannot atomically replace `SHA256SUMS` and `SHA256SUMS.gpg`; do not activate
+new production credentials until that provider-side commit boundary has been
+reviewed and approved.
 
 ### Setting Up R2 Credentials
 
@@ -1036,7 +1155,7 @@ If your R2 bucket is served through a Cloudflare domain, you can configure the a
 6. Enable cache purging in your workflow:
 
 ```yaml
-- uses: frostyard/repogen/.github/actions/publish-to-r2@main
+- uses: frostyard/repogen/.github/actions/publish-to-r2@<reviewed-action-commit>
   with:
     # ... other inputs ...
     purge-cache: "true"

@@ -1,9 +1,5 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: repogen
     main: ./cmd/repogen
@@ -15,22 +11,21 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -trimpath
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/frostyard/repogen/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/frostyard/repogen/internal/buildinfo.Commit={{ .FullCommit }}
 
 archives:
   - id: repogen
-    format: tar.gz
-    name_template: "repogen_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    files:
-      - README.md
-      - LICENSE
+    formats:
+      - binary
+    name_template: "repogen-{{ .Os }}-{{ .Arch }}"
 
 checksum:
-  name_template: "checksums.txt"
+  name_template: SHA256SUMS
   algorithm: sha256
 
 changelog:
@@ -50,17 +45,3 @@ release:
   draft: false
   prerelease: auto
   name_template: "{{ .Tag }}"
-  header: |
-    ## Simple Binary Releases
-
-    Download the appropriate binary for your system below.
-
-  footer: |
-    **Full Package Releases**: For Debian, RPM, Alpine, and Homebrew packages, see the main release artifacts.
-
-    **Installation**:
-    ```bash
-    # Download and install
-    tar -xzf repogen_{{ .Version }}_linux_amd64.tar.gz
-    sudo mv repogen /usr/local/bin/
-    ```

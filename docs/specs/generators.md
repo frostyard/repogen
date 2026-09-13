@@ -12,9 +12,216 @@ Each generator implements `generator.Generator` and produces a complete
 repository structure from a list of `models.Package` entries — the exact
 output layout, metadata file formats, and signing behavior per format.
 
+## Frostyard production Debian validation (`internal/cli/production.go`)
+
+`repogen validate-production` is an R2-R3 validation and strict-restore
+boundary, not a generator. It accepts no implicit target values and writes no
+output. A valid request must provide:
+
+- distinct, non-overlapping input and future output paths;
+- a lowercase immutable codename and an exactly matching suite (moving names
+  including `stable`, `testing`, and `unstable` are rejected);
+- exactly component `main`;
+- exactly the initial architecture set `all,amd64`; and
+- a tree containing at least one regular, non-symlink `.deb` and no other
+  recognized package format.
+
+Every Debian package is parsed strictly before success. Package names,
+versions, architectures, control-field names, and emitted single-line values
+are validated against the fixed production identity and for path/control
+character ambiguity. Invalid, corrupt, mixed-format, traversal, symlink, and
+identity-drift requests return a typed error without creating or modifying
+the output path.
+
+The preflight fixes `Origin: Repogen Repository` and
+`Label: Frostyard Repository` internally rather than accepting caller
+overrides. It then requires exactly one explicit operation:
+
+- `initialize` requires no trusted key or expected prior digest and succeeds
+  only when `dists/<codename>` is authoritatively absent; or
+- `reconcile` requires one trusted public key and a 64-character lowercase
+  expected prior Release SHA-256.
+
+Reconcile reads only regular, non-symlink metadata files. It requires Release,
+InRelease, and Release.gpg; verifies both signatures resolve to the same
+trusted fingerprint; requires InRelease's signed payload to equal Release
+byte-for-byte; enforces fixed Origin, Label, Suite, Codename, component,
+architectures, `Acquire-By-Hash: yes`, a valid Date, and no Valid-Until; and
+rejects unknown or repeated Release fields.
+
+Each MD5Sum, SHA1, SHA256, and SHA512 section must advertise exactly
+`main/binary-{all,amd64}/Packages{,.gz}`. Every size and digest is checked
+against the local bytes. The gzip stream must contain no trailing bytes and
+must expand exactly to its plain peer. Every package stanza must parse,
+contain all required identity/path/size/digest fields, match its architecture
+index, and use a safe `pool/main/` path. One successful architecture never
+masks another architecture's failure. Each canonical index's SHA-256
+by-hash object must also exist and be byte-identical, so the prior InRelease
+remains usable while reconcile updates canonical paths.
+
+Neither validation operation writes. The separate R4-R5 library boundary
+described below is not invoked by this command and has no provider
+credentials or external publication authority.
+
+The R6 deterministic generation behavior above is implemented in the generic
+generator but is not wired into this read-only production command. It confers
+no production publication or storage authority.
+
+### Shared immutable pool primitive (R4)
+
+`internal/generator/deb/pool.go` defines a provider-neutral `SharedPool` used
+by the R5 production transaction. Its input is one stable, seekable staged
+object plus a copied map of `pool/main/...` paths to size and lowercase
+SHA-256 values obtained from signature- and checksum-verified Packages
+indexes.
+
+- Candidate bytes are streamed and must match their declared size and
+  SHA-256 before the object store is called.
+- A path present in the verified map is reusable only when the candidate,
+  retained stanza, and stream-hashed remote bytes all agree.
+- A path absent from the map is sent through atomic conditional
+  create-if-absent. If creation loses a race, the winner is streamed and may
+  be reused only when its size and SHA-256 match.
+- Missing indexed bytes, short or failed reads, different bytes at the same
+  path, unsafe paths, and malformed digests fail closed.
+- Provider ETags are informational and are never treated as hashes. The
+  object-store interface has no overwrite operation.
+
+The fake-S3 tests cover indexed and unindexed reuse, opaque ETags, collisions,
+unreadable streams, conditional-create races, concurrent same-byte writers,
+and shared Trixie/Forky path safety.
+
+### Signed publication transaction (R5)
+
+`StageProductionTransaction` and `PublishProductionTransaction` compose
+strict restore authority and `SharedPool`. Staging rejects an existing
+directory, missing signing, unsafe package metadata, package digest drift,
+mutable suite names, and incomplete reconcile authority. It emits canonical
+all/amd64 indexes, deterministic gzip framing, SHA-256 by-hash copies,
+Release/InRelease/Release.gpg, and compact request/result manifests.
+
+Publishing first verifies the full expected-prior mutable object map under a
+codename lock, then writes only:
+
+1. conditionally created or verified `pool/main` objects;
+2. immutable by-hash indexes;
+3. canonical Packages indexes;
+4. Release and Release.gpg; and
+5. InRelease last.
+
+Every successful write is streamed back and checked for exact size and
+SHA-256. Reconcile uses compare-and-replace against each verified prior
+digest. The interface exposes neither broad sync nor deletion. It has no
+S3/R2 adapter, credentials, production CLI, or publication authority;
+fake-store failure injection and local GPG/APT fixtures demonstrate the
+transaction semantics without representing a production canary.
+
+### Atomic local production generation (R7)
+
+`GenerateLocalProductionRepository` composes production staging and local
+commit. `CommitLocalProductionTransaction` accepts an already staged
+transaction. Both remain library APIs with no production CLI or provider
+credentials.
+
+The local commit creates a complete sibling generation on the same
+filesystem as the output:
+
+1. verify every staged object and the exact reconcile prior;
+2. copy the existing repository while excluding the target codename, rejecting
+   symlinks and non-regular files;
+3. preserve unrelated suite regular-file bytes, sizes, and complete
+   file/directory modes; create regenerated suite directories and new pool
+   parents at a fixed `0755` independent of process umask; and accept an
+   existing pool object only when its size and SHA-256 match;
+4. install and re-hash every staged pool, index, by-hash, Release, InRelease,
+   and Release.gpg object;
+5. verify the prior tree did not change during staging and synchronize the
+   complete candidate; and
+6. make one Linux `renameat2` commit, using no-replace for an absent output or
+   exchange for an existing output.
+
+There is no remove-then-rename interval and no rollback-shaped second rename.
+Any error before the atomic switch removes only the private candidate and
+leaves the old tree unchanged unless a concurrent external writer caused the
+detected drift. Snapshots compare each regular file's SHA-256, size, and full
+mode and each directory's full mode, including special bits. They do not
+compare or preserve uid/gid ownership, extended attributes, ACLs, or
+timestamps. After a successful exchange, obsolete prior bytes are private
+cleanup. A cleanup failure is reported while the candidate remains visible
+and the retained journal allows a later recovery pass to finish cleanup.
+Tests inject failure before every observed initialize and reconcile staging,
+signing, copy, verification, synchronization, and commit step. Production
+staging rejects a nil signer; generic generation retains its existing
+unsigned `InRelease` behavior.
+
+R7 reads and hashes the complete prior repository and copies all retained
+content, including `pool/`. A generation therefore incurs O(repository size)
+read, write, hashing, and synchronization work and requires roughly 2x
+transient repository space.
+
+R8 persists an exclusive sibling recovery journal containing the output name,
+generation name, existence state, and exact prior/candidate tree digests
+before the atomic namespace switch. It synchronizes the output parent after
+both journal creation and `renameat2`. Recovery re-hashes both possible trees:
+it completes a pending switch only when the sibling is the exact candidate
+and the output is the exact prior, or cleans private prior bytes when the
+output is already the exact candidate. Unknown, corrupt, missing, symlinked,
+or third-state trees fail closed. Cleanup after the durable switch is private
+and cannot roll a visible candidate backward. Cleanup errors are returned,
+not discarded; an incomplete cleanup retains the recovery journal for a
+subsequent idempotent recovery pass. When the visible output still matches
+the journaled candidate digest, that pass removes the randomly named obsolete
+sibling without requiring its partially deleted contents to match the prior
+digest.
+
+### Durable Debian intake and recovery (R8)
+
+`internal/intake` defines retained, create-only records for provenance,
+artifacts, canonical requests, per-target receipts, attempts, result
+manifests, and result pointers. Its `CreateIfAbsent` boundary requires one
+atomic provider operation that reports whether this call installed the key
+and never replaces existing bytes. A provider adapter must use its native
+conditional-create primitive; read-then-write emulation is invalid. The local
+store implements this with an atomic hard link, synchronizes immutable files
+and newly created directories, performs read-after-write verification, lists
+receipts by prefix, and uses filesystem locks for process-safe target
+serialization. A submission key can replay identical request bytes but cannot
+name different bytes. Only that observed byte conflict is classified as a
+submission conflict; provider and read-back failures retain their state or
+integrity classification. The adapter-provided authenticated principal must
+match the request producer; policy digests are retained and a non-nil
+current-policy authorizer runs immediately before every new writer attempt.
+
+Scheduled and manual recovery use the same full receipt enumeration. Receipts
+for one Debian codename run in increasing sequence and stop on the first
+failure; different codenames run independently. Every referenced object is
+re-hashed on replay. Attempts are append-only, and neither workflow dispatch
+nor process success records completion. A content-addressed result manifest
+and its create-only request pointer are written only after the writer verifies
+the complete public object set. Once that pointer exists, replay revalidates
+the result bytes and complete public object set without requiring the producer
+to remain authorized; revocation still blocks every request that lacks a
+completed result.
+
+`ProductionRecoveryWriter` rebuilds the signed B5 transaction through a
+caller-supplied intake-only builder. `RecoverProductionTransaction` holds the
+codename lock and classifies every planned object before writing: exact
+candidate bytes are idempotent no-ops, exact prior mutable bytes may advance,
+and authoritatively absent immutable bytes may be created. Any permission or
+transport error, unknown initialize-prefix object, missing reconcile prior,
+checksum mismatch, incomplete body, or other third state stops before another
+write. Shared-pool objects retain conditional-create and full-byte read-back,
+and `InRelease` remains the final write.
+
+This package supplies no HTTP service, object-store adapter, workflow,
+credential, signer configuration, or production authorization. The local
+store and tests are explicitly fixtures/protected-local primitives; a real
+adapter must separately prove authentication and least-privilege enforcement.
+
 ## Debian/APT (`internal/generator/deb/`)
 
-**Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`
+**Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`,
+`production_transaction.go`, `local_generation.go`
 **Decisions**: [ADR-0001 (unsigned InRelease)](../adr/0001-unsigned-debian-repos-emit-inrelease.md),
 [ADR-0002 (shared pool layout)](../adr/0002-shared-debian-pool-layout.md),
 [ADR-0003 (single `main` component)](../adr/0003-single-main-component.md)
@@ -31,17 +238,38 @@ output layout, metadata file formats, and signing behavior per format.
     main/binary-{arch}/
       Packages                              # Package index (plaintext)
       Packages.gz                           # Gzip-compressed index
+      by-hash/SHA256/{digest}               # Production transaction only
 ```
 
 ### Key Behaviors
 
 - Packages are organized in `pool/main/{first-letter}/{name}/` directories.
-- `Packages` file is sorted alphabetically by package name.
+- `Packages` stanzas use a total package name, lexicographic version-string,
+  architecture, and filename order. Remaining package fields break
+  exact-identity ties, and arbitrary control fields are emitted in sorted
+  field-name order.
+- Generation validates all selected pool destinations before writing. Inputs
+  that resolve to one path are reusable only when their size and SHA-256
+  agree. Local source identities are derived from their bytes; unavailable
+  incremental objects use the retained metadata identity. Conflicting
+  contents fail without creating output.
+- `Packages.gz` uses a fixed gzip timestamp so identical Packages bytes
+  produce identical compressed bytes.
 - `Release` includes MD5, SHA1, SHA256, SHA512 checksums for all metadata files.
+- Release architectures, components, and checksum paths are sorted, and
+  `GenerateReleaseFileAt`/`NewGeneratorWithClock` accept one explicit
+  publication timestamp.
+- If canonical Release bytes match the prior generation when rendered with
+  its Date, both prior signatures must verify against the configured signer's
+  public key before Release, InRelease, and Release.gpg are preserved without
+  signing calls. Missing, malformed, wrong-key, or invalid signatures force a
+  newly timestamped signed generation.
 - Unsigned repos still create `InRelease` with Release content for modern
   apt compatibility (`[trusted=yes]`).
 - Cleartext signing (InRelease) shells out to `gpg` CLI because go-crypto's
   implementation doesn't produce apt-verifiable signatures.
+- The production transaction never emits unsigned metadata and switches the
+  visible generation only by writing the fully read-back InRelease last.
 
 ### Parser
 
@@ -52,7 +280,10 @@ parses Debian control format (key: value with continuation lines).
 ### Incremental Mode
 
 `ParseExistingMetadata()` reads `Packages` or `Packages.gz` files from
-existing `dists/` structure and reconstructs `Package` structs.
+existing `dists/` structure and reconstructs `Package` structs for the
+generic incremental command. Its legacy fallback behavior is not used by the
+production path; production reconcile uses the strict signed verifier
+described above.
 
 ---
 
@@ -239,7 +470,23 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   `%w` for OS version, `%a` for architecture).
 - Transfer `MatchPattern` lists compressed variants in preference order
   (zst > xz > gz > raw).
-- SHA256SUMS entries are deduplicated by filename.
+- Extension names and SHA256SUMS entries are sorted. Entries are deduplicated
+  by filename only when their digests agree; conflicting duplicate filenames
+  fail generation.
+- Sysext package identity is
+  `name:version:OSVersion:architecture`. OS 13 and OS 14 artifacts therefore
+  coexist even when every other field matches. `--skip-duplicates` skips only
+  an exact logical identity with the same SHA-256; changed or missing digest
+  evidence fails closed.
+- Generation takes a repository-wide sysext lock, re-reads current manifests
+  after acquiring it, stages the complete `ext/` tree, and atomically switches
+  the tree into place. Concurrent reconciles retain both batches and a failure
+  before the switch preserves the prior tree byte-for-byte. Linux
+  `renameat2`/`flock` are required for this local transaction.
+- Restored manifests, detached signatures, transfer files, and the exhaustive
+  index are verified before merge. Staged payloads available locally are
+  checked against their manifest digest, and every incoming payload must be
+  present. Missing or malformed current metadata is not empty initialization.
 - With `--gpg-key`, each manifest gets a detached binary `SHA256SUMS.gpg`
   signature and the generated transfer sets `Verify=true`; without a signer,
   the signature is omitted and the transfer sets `Verify=false`.
@@ -255,3 +502,11 @@ from the filename using `_` as delimiter (exactly 4 parts expected).
 package metadata from the filenames listed in each checksums file. Index
 generation also enumerates those manifests, so a partial publish preserves
 all previously published extension names in `ext/index`.
+
+The legacy `publish-to-r2` action remains a compatibility path for Snosi
+sysexts and other non-Debian formats. It rejects `package-type: deb` before
+credential setup and no longer converts a failed sysext metadata restore into
+empty initialization. Remote R2 still has no atomic multi-object rename:
+the caller must serialize the complete restore/generate/upload cycle, and
+production activation remains blocked until its dedicated storage boundary
+and failure-safe commit protocol are independently reviewed and configured.

@@ -26,18 +26,29 @@ Runs on PRs and pushes to main/master, two jobs:
 ### Release (`.github/workflows/release.yml`)
 
 Triggered by `v*.*.*` tags:
-1. Cross-compiles repogen for linux/darwin × amd64/arm64.
-2. Creates `.deb`, `.rpm`, `.apk`, and `.bottle.tar.gz` packages.
-3. Runs repogen itself to generate a repository from its own packages.
-4. Archives the repository as zip and tar.gz.
-5. Creates a GitHub release with all artifacts.
+1. Uses commit-pinned checkout, Go setup, and GoReleaser actions.
+2. Runs exact GoReleaser version `v2.18.1`.
+3. Builds raw linux amd64/arm64 binaries with the exact tag version and full
+   source commit embedded.
+4. Generates the authoritative `SHA256SUMS`.
+5. Creates the GitHub release with those assets.
 
-### GoReleaser (`.github/workflows/goreleaser.yml`)
+The former parallel hand-built workflow and its unrelated package/repository
+artifacts were removed. The sole GoReleaser contract publishes
+`repogen-linux-amd64`, `repogen-linux-arm64`, and `SHA256SUMS`.
+The Darwin amd64/arm64 assets from the retired workflow are intentionally not
+published. `SHA256SUMS` is unsigned and same-origin with the binaries, so its
+digest check does not provide independent authenticity; consumers trust
+GitHub's HTTPS release origin and repository release controls.
 
-Alternative release mechanism using GoReleaser (`.goreleaser.yml`):
-- Builds linux amd64/arm64 only (CGO_ENABLED=0).
-- Produces tar.gz archives with README and LICENSE.
-- Auto-generates changelog excluding docs/test/ci commits.
+R10 deliberately keeps three identities separate: the independently reviewed
+candidate, the exact human-merged tree, and the separately human-published
+release. The complete local and external evidence contract is
+[R10 release acceptance](../specs/r10-release-acceptance.md), and the
+step-by-step operator procedure is
+[`r10-release.prompt.md`](../../.github/prompts/r10-release.prompt.md).
+Neither a local snapshot nor a successful release workflow alone proves the
+published assets and embedded identities.
 
 ## GitHub Action: `publish-to-r2`
 
@@ -47,17 +58,30 @@ A reusable composite action that publishes packages to an existing repogen
 repository hosted on Cloudflare R2. Designed for CI/CD pipelines that
 build packages and want to add them to a repository incrementally.
 
+This section describes current behavior, not a hardened Frostyard production
+contract. The action still restores partial paths, uses generic incremental
+fallback behavior, and broadly synchronizes non-Debian output. It rejects
+Debian structurally rather than claiming that behavior can initialize or
+reconcile Frostyard Trixie/Forky. The separate provider-neutral production
+transaction and its migration sequence are documented in
+[Plan 0001](../plans/0001-frostyard-production-publisher.md).
+For sysext, a restore error is fatal and the calling workflow must serialize
+the complete cycle globally because `ext/index` is shared. The action does not
+make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
+
 ### How It Works
 
 1. **Validate inputs** — checks package type, required flags (base-url for
    sysext, repo-name for pacman), directory existence.
-2. **Install repogen** — downloads the specified version (or latest) from
-   GitHub releases.
+2. **Install repogen** — requires an exact tag and commit, uses a fixed GitHub
+   release origin, downloads the exact architecture asset plus unsigned
+   `SHA256SUMS`, verifies the selected digest, and verifies the embedded
+   version/commit before installation.
 3. **Configure AWS CLI** — sets up R2 endpoint credentials.
 4. **Sync existing metadata** — downloads only metadata files (not package
    binaries) from R2 for incremental mode. Sync strategy varies by format:
    - deb: `dists/` directory
-   - sysext: `ext/` excluding `.raw*` files
+   - sysext: `ext/` excluding `.raw*` files; any restore error aborts
    - rpm: `repodata/` directory
    - apk: everything except `.apk` files
    - pacman: everything except `.pkg.tar.*` and `.sig` files
@@ -81,7 +105,9 @@ build packages and want to add them to a repository incrementally.
 | `r2-secret-access-key` | R2 Secret Access Key |
 | `r2-bucket` | R2 Bucket name |
 | `packages-dir` | Directory containing packages |
-| `package-type` | One of: deb, sysext, rpm, apk, pacman, homebrew |
+| `package-type` | Listed format; `deb` is rejected by this legacy action |
+| `repogen-version` | Exact v-prefixed release tag |
+| `repogen-commit` | Exact 40-character embedded source commit |
 
 ### Notable Optional Inputs
 
@@ -92,7 +118,6 @@ build packages and want to add them to a repository incrementally.
 | `skip-duplicates` | `false` | Useful for nightly builds |
 | `html-index` | `true` | Generates browsable directory pages |
 | `purge-cache` | `false` | Requires `cloudflare-zone` and `cloudflare-api-token` |
-| `repogen-version` | `latest` | Pin to specific version for reproducibility |
 
 ### Outputs
 

@@ -80,9 +80,10 @@ func TestPackageIdentity(t *testing.T) {
 				Name:         "test-ext",
 				Version:      "4.0.0",
 				Architecture: "x86-64",
+				Metadata:     map[string]interface{}{"OSVersion": "13"},
 			},
 			pkgType:  scanner.TypeSysext,
-			expected: "test-ext:4.0.0:x86-64",
+			expected: "test-ext:4.0.0:13:x86-64",
 		},
 	}
 
@@ -93,6 +94,48 @@ func TestPackageIdentity(t *testing.T) {
 				t.Errorf("PackageIdentity() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSysextIdentityAndDigestConflictsAreOSVersionAware(t *testing.T) {
+	existing := []models.Package{{
+		Name:         "incus",
+		Version:      "1+7.3",
+		Architecture: "x86-64",
+		Filename:     "incus_1+7.3_13_x86-64.raw",
+		SHA256Sum:    "same",
+		Metadata:     map[string]interface{}{"OSVersion": "13"},
+	}}
+
+	sameBytes := models.Package{
+		Name:         "incus",
+		Version:      "1+7.3",
+		Architecture: "x86-64",
+		Filename:     "incus_1+7.3_13_x86-64.raw",
+		SHA256Sum:    "same",
+		Metadata:     map[string]interface{}{"OSVersion": "13"},
+	}
+	forky := sameBytes
+	forky.Metadata = map[string]interface{}{"OSVersion": "14"}
+	changedBytes := sameBytes
+	changedBytes.SHA256Sum = "different"
+	alternateCompression := sameBytes
+	alternateCompression.Filename = "incus_1+7.3_13_x86-64.raw.zst"
+
+	if conflicts := DetectConflicts(existing, []models.Package{forky}, scanner.TypeSysext); len(conflicts) != 0 {
+		t.Fatalf("different OSVersion is a distinct sysext identity: %+v", conflicts)
+	}
+	if conflicts := DetectConflicts(existing, []models.Package{sameBytes}, scanner.TypeSysext); len(conflicts) != 1 {
+		t.Fatalf("same OSVersion should be a duplicate, got %d conflicts", len(conflicts))
+	}
+	if conflicts := DetectDigestConflicts(existing, []models.Package{sameBytes}, scanner.TypeSysext); len(conflicts) != 0 {
+		t.Fatalf("same identity and digest should be idempotent: %+v", conflicts)
+	}
+	if conflicts := DetectDigestConflicts(existing, []models.Package{changedBytes}, scanner.TypeSysext); len(conflicts) != 1 {
+		t.Fatalf("same identity with changed bytes must conflict, got %d", len(conflicts))
+	}
+	if conflicts := DetectDigestConflicts(existing, []models.Package{alternateCompression}, scanner.TypeSysext); len(conflicts) != 1 {
+		t.Fatalf("same identity with alternate filename must conflict, got %d", len(conflicts))
 	}
 }
 

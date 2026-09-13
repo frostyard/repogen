@@ -1,10 +1,14 @@
 package deb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/frostyard/repogen/internal/generator"
 	"github.com/frostyard/repogen/internal/models"
@@ -17,18 +21,30 @@ import (
 // Generator implements the generator.Generator interface for Debian repositories
 type Generator struct {
 	signer signer.Signer
+	now    func() time.Time
 }
 
 // NewGenerator creates a new Debian generator
 func NewGenerator(s signer.Signer) generator.Generator {
+	return NewGeneratorWithClock(s, time.Now)
+}
+
+// NewGeneratorWithClock creates a Debian generator with a controlled
+// publication clock.
+func NewGeneratorWithClock(s signer.Signer, now func() time.Time) generator.Generator {
+	if now == nil {
+		now = time.Now
+	}
 	return &Generator{
 		signer: s,
+		now:    now,
 	}
 }
 
 // Generate creates a Debian repository structure
 func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfig, packages []models.Package) error {
 	logrus.Info("Generating Debian repository...")
+	publishedAt := g.now().UTC()
 
 	// Group packages by architecture
 	archPackages := make(map[string][]models.Package)
@@ -41,19 +57,93 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	}
 
 	// Generate repository for each architecture
-	for _, arch := range config.Arches {
+	arches := append([]string(nil), config.Arches...)
+	sort.Strings(arches)
+	selectedPackages := make([]models.Package, 0, len(packages))
+	for _, arch := range arches {
+		selectedPackages = append(selectedPackages, archPackages[arch]...)
+	}
+	if err := validatePoolDestinations(config.OutputDir, selectedPackages); err != nil {
+		return fmt.Errorf("failed to validate pool destinations: %w", err)
+	}
+	for _, arch := range arches {
 		if err := g.generateForArch(ctx, config, arch, archPackages[arch]); err != nil {
 			return fmt.Errorf("failed to generate for %s: %w", arch, err)
 		}
 	}
 
 	// Generate Release file at repository root
-	if err := g.generateRelease(config); err != nil {
+	if err := g.generateRelease(config, publishedAt); err != nil {
 		return fmt.Errorf("failed to generate Release: %w", err)
 	}
 
 	logrus.Info("Debian repository generated successfully")
 	return nil
+}
+
+type poolContentIdentity struct {
+	size   int64
+	sha256 string
+}
+
+func validatePoolDestinations(outputDir string, packages []models.Package) error {
+	seen := make(map[string]poolContentIdentity, len(packages))
+	for index := range packages {
+		pkg := &packages[index]
+		dstPath, err := poolDestination(outputDir, pkg)
+		if err != nil {
+			return err
+		}
+
+		srcPath, _, _, err := utils.ShouldCopyPackage(pkg, dstPath, outputDir)
+		if err != nil {
+			return fmt.Errorf("package copy check failed for %s: %w", pkg.Name, err)
+		}
+
+		identity := poolContentIdentity{size: pkg.Size, sha256: pkg.SHA256Sum}
+		if _, err := os.Stat(srcPath); err == nil {
+			checksums, err := utils.CalculateChecksums(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+			}
+			identity = poolContentIdentity{size: checksums.Size, sha256: checksums.SHA256}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot stat package source %s: %w", srcPath, err)
+		}
+
+		previous, duplicate := seen[dstPath]
+		if !duplicate {
+			seen[dstPath] = identity
+			continue
+		}
+		if identity.sha256 == "" || previous.sha256 == "" {
+			return fmt.Errorf("cannot verify duplicate pool destination %q without SHA256", dstPath)
+		}
+		if identity != previous {
+			return fmt.Errorf("conflicting package contents for pool destination %q", dstPath)
+		}
+	}
+	return nil
+}
+
+func poolDestination(outputDir string, pkg *models.Package) (string, error) {
+	if pkg.Name == "" {
+		return "", fmt.Errorf("package name cannot be empty")
+	}
+
+	firstLetter := string(pkg.Name[0])
+	if firstLetter < "a" || firstLetter > "z" {
+		firstLetter = "0"
+	}
+
+	return filepath.Join(
+		outputDir,
+		"pool",
+		"main",
+		firstLetter,
+		pkg.Name,
+		filepath.Base(pkg.Filename),
+	), nil
 }
 
 // generateForArch generates repository files for a specific architecture
@@ -76,22 +166,14 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 	for i := range packages {
 		pkg := &packages[i]
 
-		// Determine pool subdirectory (first letter of package name)
-		firstLetter := string(pkg.Name[0])
-		if firstLetter >= "a" && firstLetter <= "z" {
-			// Use first letter
-		} else {
-			firstLetter = "0" // Use "0" for packages starting with numbers/special chars
+		dstPath, err := poolDestination(config.OutputDir, pkg)
+		if err != nil {
+			return err
 		}
-
-		// Create package directory: pool/main/{letter}/{name}/
-		pkgDir := filepath.Join(poolDir, firstLetter, pkg.Name)
+		pkgDir := filepath.Dir(dstPath)
 		if err := utils.EnsureDir(pkgDir); err != nil {
 			return err
 		}
-
-		// Determine destination path
-		dstPath := filepath.Join(pkgDir, filepath.Base(pkg.Filename))
 
 		// Check if package needs to be copied
 		srcPath, finalDstPath, needsCopy, err := utils.ShouldCopyPackage(pkg, dstPath, config.OutputDir)
@@ -155,7 +237,7 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 }
 
 // generateRelease generates the Release, InRelease, and Release.gpg files
-func (g *Generator) generateRelease(config *models.RepositoryConfig) error {
+func (g *Generator) generateRelease(config *models.RepositoryConfig, publishedAt time.Time) error {
 	logrus.Info("Generating Release file...")
 
 	distsDir := filepath.Join(config.OutputDir, "dists", config.Codename)
@@ -183,12 +265,27 @@ func (g *Generator) generateRelease(config *models.RepositoryConfig) error {
 	}
 
 	// Generate Release file
-	releaseData, err := GenerateReleaseFile(config, fileInfos)
+	releasePath := filepath.Join(distsDir, "Release")
+	if existingRelease, err := os.ReadFile(releasePath); err == nil {
+		if previousTime, ok := releaseDate(existingRelease); ok {
+			unchangedRelease, err := GenerateReleaseFileAt(config, fileInfos, previousTime)
+			if err != nil {
+				return fmt.Errorf("failed to generate Release file: %w", err)
+			}
+			if bytes.Equal(existingRelease, unchangedRelease) && g.hasReusableSignatures(distsDir, unchangedRelease) {
+				logrus.Info("Debian metadata unchanged; preserving existing Release signatures")
+				return nil
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing Release: %w", err)
+	}
+
+	releaseData, err := GenerateReleaseFileAt(config, fileInfos, publishedAt)
 	if err != nil {
 		return fmt.Errorf("failed to generate Release file: %w", err)
 	}
 
-	releasePath := filepath.Join(distsDir, "Release")
 	if err := utils.WriteFile(releasePath, releaseData, 0644); err != nil {
 		return fmt.Errorf("failed to write Release: %w", err)
 	}
@@ -231,6 +328,52 @@ func (g *Generator) generateRelease(config *models.RepositoryConfig) error {
 	}
 
 	return nil
+}
+
+func releaseDate(release []byte) (time.Time, bool) {
+	const prefix = "Date: "
+	var value string
+	for _, line := range strings.Split(string(release), "\n") {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		if value != "" {
+			return time.Time{}, false
+		}
+		value = strings.TrimPrefix(line, prefix)
+	}
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC1123Z, value)
+	return parsed, err == nil
+}
+
+func (g *Generator) hasReusableSignatures(distsDir string, release []byte) bool {
+	inRelease, err := os.ReadFile(filepath.Join(distsDir, "InRelease"))
+	if err != nil {
+		return false
+	}
+	if g.signer == nil {
+		return bytes.Equal(inRelease, release)
+	}
+	if len(inRelease) == 0 {
+		return false
+	}
+	releaseGPG, err := os.ReadFile(filepath.Join(distsDir, "Release.gpg"))
+	if err != nil || len(releaseGPG) == 0 {
+		return false
+	}
+	publicKey, err := g.signer.GetPublicKey()
+	if err != nil {
+		return false
+	}
+	keyring, err := parseProductionKeyRing(publicKey)
+	if err != nil {
+		return false
+	}
+	_, err = verifyProductionReleaseSignatures(keyring, release, inRelease, releaseGPG)
+	return err == nil
 }
 
 // ValidatePackages checks if packages are valid Debian packages
