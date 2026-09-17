@@ -306,6 +306,130 @@ func TestLocalProductionReconcileCommitsOneCompleteGeneration(t *testing.T) {
 	assertNoGenerationScratch(t, filepath.Dir(outputDir))
 }
 
+func TestLocalProductionReconcilePreservesImmutableAndUnmodeledSuiteContent(t *testing.T) {
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "repository")
+	initial := stageProductionFixture(t, "initialize", nil)
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, initial); err != nil {
+		t.Fatalf("initial CommitLocalProductionTransaction() error = %v", err)
+	}
+	initialPackages, err := os.ReadFile(
+		filepath.Join(outputDir, "dists", "trixie", "main", "binary-amd64", "Packages"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	priorByHash := make(map[string]ProductionObjectDigest)
+	for _, object := range initial.objects {
+		if object.kind != productionByHashObject {
+			continue
+		}
+		observed, err := hashLocalRegularFile(
+			filepath.Join(outputDir, filepath.FromSlash(object.Path)),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		priorByHash[object.Path] = observed
+	}
+
+	retainedFiles := map[string]string{
+		"dists/trixie/index.html":                         "suite index\n",
+		"dists/trixie/main/binary-arm64/Packages":         "arm64 packages\n",
+		"dists/trixie/main/i18n/Translation-en":           "translation\n",
+		"dists/trixie/main/dep11/Components-amd64.yml.gz": "component metadata\n",
+	}
+	for relative, content := range retainedFiles {
+		destination := filepath.Join(outputDir, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, []byte(content), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(destination, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	request, closeSigner := productionFixtureRequest(t, "reconcile", priorStateFor(t, initial))
+	defer closeSigner()
+	request.ReleaseTime = request.ReleaseTime.Add(24 * time.Hour)
+	source := filepath.Join(
+		"..",
+		"..",
+		"..",
+		"test",
+		"fixtures",
+		"debs",
+		"repogen-utils_2.0.0_amd64.deb",
+	)
+	pkg, err := ParsePackage(source)
+	if err != nil {
+		t.Fatalf("ParsePackage() error = %v", err)
+	}
+	request.Packages = append(request.Packages, ProductionPackageInput{
+		Package:    *pkg,
+		SourcePath: source,
+	})
+	reconcile, err := StageProductionTransaction(filepath.Join(root, "reconcile-stage"), request)
+	if err != nil {
+		t.Fatalf("reconcile StageProductionTransaction() error = %v", err)
+	}
+	if err := CommitLocalProductionTransaction(context.Background(), outputDir, reconcile); err != nil {
+		t.Fatalf("reconcile CommitLocalProductionTransaction() error = %v", err)
+	}
+
+	currentByHash := make(map[string]struct{})
+	for _, object := range reconcile.objects {
+		if object.kind == productionByHashObject {
+			currentByHash[object.Path] = struct{}{}
+		}
+	}
+	supersededByHash := 0
+	for relative, want := range priorByHash {
+		if _, current := currentByHash[relative]; !current {
+			supersededByHash++
+		}
+		observed, err := hashLocalRegularFile(
+			filepath.Join(outputDir, filepath.FromSlash(relative)),
+		)
+		if err != nil {
+			t.Fatalf("read retained by-hash object %s: %v", relative, err)
+		}
+		if observed != want {
+			t.Fatalf("retained by-hash object %s changed: got %+v, want %+v", relative, observed, want)
+		}
+	}
+	if supersededByHash == 0 {
+		t.Fatal("changed package set did not supersede any prior by-hash objects")
+	}
+	for relative, want := range retainedFiles {
+		destination := filepath.Join(outputDir, filepath.FromSlash(relative))
+		got, err := os.ReadFile(destination)
+		if err != nil {
+			t.Fatalf("read retained suite file %s: %v", relative, err)
+		}
+		if string(got) != want {
+			t.Fatalf("retained suite file %s = %q, want %q", relative, got, want)
+		}
+		assertLocalMode(t, destination, 0o640)
+	}
+
+	reconciledPackages, err := os.ReadFile(
+		filepath.Join(outputDir, "dists", "trixie", "main", "binary-amd64", "Packages"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(reconciledPackages, initialPackages) {
+		t.Fatal("changed package set did not replace the canonical index")
+	}
+	assertCompleteLocalGeneration(t, outputDir, reconcile)
+	assertNoGenerationScratch(t, filepath.Dir(outputDir))
+}
+
 func TestLocalProductionRecoveryCompletesInterruptedSwitch(t *testing.T) {
 	for _, switched := range []bool{false, true} {
 		t.Run(fmt.Sprintf("switched-%t", switched), func(t *testing.T) {
@@ -476,7 +600,7 @@ func prepareLocalRecoveryFixture(
 		context.Background(),
 		outputDir,
 		generationDir,
-		filepath.Join("dists", reconcile.Codename),
+		localMutableReplacementPaths(reconcile),
 		nil,
 	)
 	if err != nil {

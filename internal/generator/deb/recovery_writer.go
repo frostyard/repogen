@@ -4,14 +4,30 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"regexp"
 
 	"github.com/frostyard/repogen/internal/intake"
 )
 
-// ProductionRecoveryBuilder reconstructs a clean, signed production
-// transaction exclusively from one verified durable intake request.
+var (
+	recoveryActionCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	recoveryVersionPattern      = regexp.MustCompile(`^[A-Za-z0-9._/:@-]{1,256}$`)
+)
+
+// ProductionRecoveryPlan binds a reconstructed transaction to the exact
+// action and Repogen executable attested by the request's provenance.
+type ProductionRecoveryPlan struct {
+	Transaction      *ProductionTransaction
+	ProvenanceDigest string
+	ActionCommit     string
+	RepogenVersion   string
+	RepogenSHA256    string
+}
+
+// ProductionRecoveryBuilder reconstructs a clean, signed production plan
+// exclusively from one verified durable intake request and its provenance.
 type ProductionRecoveryBuilder interface {
-	Build(ctx context.Context, receipt intake.Receipt, request intake.Request) (*ProductionTransaction, error)
+	Build(ctx context.Context, receipt intake.Receipt, request intake.Request) (*ProductionRecoveryPlan, error)
 }
 
 // ProductionRecoveryBuilderFunc adapts a function to ProductionRecoveryBuilder.
@@ -19,13 +35,13 @@ type ProductionRecoveryBuilderFunc func(
 	context.Context,
 	intake.Receipt,
 	intake.Request,
-) (*ProductionTransaction, error)
+) (*ProductionRecoveryPlan, error)
 
 func (f ProductionRecoveryBuilderFunc) Build(
 	ctx context.Context,
 	receipt intake.Receipt,
 	request intake.Request,
-) (*ProductionTransaction, error) {
+) (*ProductionRecoveryPlan, error) {
 	return f(ctx, receipt, request)
 }
 
@@ -44,19 +60,28 @@ func (w ProductionRecoveryWriter) Apply(
 	if w.Store == nil || w.Builder == nil {
 		return nil, fmt.Errorf("%w: publication store and transaction builder are required", ErrPublicationCandidate)
 	}
-	transaction, err := w.Builder.Build(ctx, receipt, request)
+	plan, err := w.Builder.Build(ctx, receipt, request)
 	if err != nil {
 		return nil, fmt.Errorf("%w: reconstruct durable transaction: %v", ErrPublicationCandidate, err)
 	}
-	if transaction == nil ||
+	if plan == nil || plan.Transaction == nil {
+		return nil, fmt.Errorf("%w: reconstructed durable plan is empty", ErrPublicationCandidate)
+	}
+	transaction := plan.Transaction
+	if !request.ProductionEligible ||
+		plan.ProvenanceDigest != request.ProvenanceDigest ||
+		!recoveryActionCommitPattern.MatchString(plan.ActionCommit) ||
+		!recoveryVersionPattern.MatchString(plan.RepogenVersion) ||
+		!sha256Pattern.MatchString(plan.RepogenSHA256) ||
 		transaction.Codename != request.Target ||
+		request.Codename != request.Target ||
 		transaction.Operation != request.Operation ||
 		request.Suite != request.Target ||
 		request.Component != "main" ||
 		!reflect.DeepEqual(request.Architectures, ProductionArchitectures()) ||
 		request.Origin != productionReleaseOrigin ||
 		request.Label != productionReleaseLabel ||
-		request.ValidUntilPolicy != "omitted" ||
+		request.ValidUntilPolicy != "omit" ||
 		(request.ExpectedPrior == nil && transaction.RequestManifest.ExpectedPriorReleaseSHA256 != "") ||
 		(request.ExpectedPrior != nil && transaction.RequestManifest.ExpectedPriorReleaseSHA256 != *request.ExpectedPrior) {
 		return nil, fmt.Errorf("%w: reconstructed transaction does not match durable request", ErrPublicationCandidate)
@@ -69,6 +94,9 @@ func (w ProductionRecoveryWriter) Apply(
 		SigningKeyFingerprint: published.SigningKeyFingerprint,
 		StateSHA256:           published.ReleaseSHA256,
 		CommitSHA256:          published.InReleaseSHA256,
+		ActionCommit:          plan.ActionCommit,
+		RepogenVersion:        plan.RepogenVersion,
+		RepogenSHA256:         plan.RepogenSHA256,
 		Objects:               make([]intake.Object, 0, len(published.Objects)),
 	}
 	for _, object := range published.Objects {

@@ -134,19 +134,20 @@ R7 adds `GenerateLocalProductionRepository` and
 `CommitLocalProductionTransaction` as production-only local primitives. A
 candidate is fully signed in its clean transaction staging directory. The
 commit path copies the prior repository into a sibling generation while
-excluding the replaced codename, verifies the expected prior state and
-immutable shared-pool collisions, installs and re-hashes every candidate
-object, synchronizes the complete tree, and performs one Linux `renameat2`
-no-replace or exchange operation. Internal fault injection runs before every
-staging, signing, copy, install, verification, synchronization, and commit
-step; every pre-commit failure leaves the prior output unchanged unless an
-external writer caused the detected drift. Unrelated regular-file content,
-size, and complete file/directory modes are copied unchanged. Regenerated
-suite directories and newly created pool parents receive fixed `0755` modes,
-independent of the process umask, while newly installed generated files
-receive `0644`. Ownership, extended attributes, ACLs, and timestamps are not
-preserved or compared. The generic generator still supports unsigned output
-and direct local writes.
+omitting only the exact mutable canonical indexes and signed Release paths
+that the transaction replaces. It preserves prior immutable by-hash objects
+and unmodeled suite files, verifies the expected prior state and immutable
+shared-pool collisions, installs and re-hashes every candidate object,
+synchronizes the complete tree, and performs one Linux `renameat2` no-replace
+or exchange operation. Internal fault injection runs before every staging,
+signing, copy, install, verification, synchronization, and commit step; every
+pre-commit failure leaves the prior output unchanged unless an external writer
+caused the detected drift. Retained regular-file content, size, and complete
+file/directory modes are copied unchanged. Newly created suite and pool
+directories receive fixed `0755` modes, independent of the process umask,
+while newly installed generated files receive `0644`. Ownership, extended
+attributes, ACLs, and timestamps are not preserved or compared. The generic
+generator still supports unsigned output and direct local writes.
 
 R8 makes the local switch crash-durable. Before `renameat2`, Repogen records
 the exact prior and candidate tree digests in an exclusive recovery journal
@@ -167,9 +168,15 @@ file store uses an atomic hard-link create-if-absent operation, file and
 directory synchronization, read-back, prefix enumeration, and process-safe
 target locks. Every provider adapter must supply an equivalent single atomic
 create-if-absent operation; a read followed by an unconditional write does
-not satisfy the interface. The recorder binds an adapter-provided
-authenticated principal to the request, verifies digest-addressed provenance
-and artifacts, and allocates monotonic per-target receipts. The reconciler
+not satisfy the interface. Request records implement the shared
+`org.frostyard.repogen.request.v1` schema and RFC 8785 canonical bytes used by
+producers; unknown fields, duplicate keys, unsafe or non-integer numbers, and
+noncanonical encodings fail closed. Exact action and Repogen executable
+attestations are derived from linked provenance by the recovery builder and
+recorded in the result rather than extending the request schema. The recorder
+binds an adapter-provided authenticated principal to the request, verifies
+digest-addressed provenance and artifacts, and allocates monotonic per-target
+receipts. The reconciler
 enumerates receipts rather than workflow history, processes one target in
 sequence, permits independent targets to run concurrently, rechecks current
 authorization before each new writer attempt, retains append-only attempts,

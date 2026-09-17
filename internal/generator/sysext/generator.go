@@ -69,12 +69,27 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	for _, pkg := range packages {
 		incomingFilenames[filepath.Base(pkg.Filename)] = struct{}{}
 	}
-	if config.Incremental {
+	if err := validateSysextDestinations(config.OutputDir, packages); err != nil {
+		return fmt.Errorf("failed to validate sysext destinations: %w", err)
+	}
+
+	currentExt := filepath.Join(config.OutputDir, "ext")
+	currentExists := false
+	if info, statErr := os.Stat(currentExt); statErr == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("existing sysext path is not a directory: %s", currentExt)
+		}
+		currentExists = true
 		if err := g.runBeforeStep("restore:read"); err != nil {
 			return err
 		}
+	} else if !os.IsNotExist(statErr) {
+		return fmt.Errorf("inspect existing sysext repository: %w", statErr)
 	}
-	packages, err = g.normalizeAndMergePackages(config, packages)
+
+	mergeConfig := *config
+	mergeConfig.Incremental = config.Incremental || currentExists
+	packages, err = g.normalizeAndMergePackages(&mergeConfig, packages)
 	if err != nil {
 		return err
 	}
@@ -93,27 +108,17 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		}
 	}()
 
-	currentExt := filepath.Join(config.OutputDir, "ext")
 	stageExt := filepath.Join(stageRoot, "ext")
-	currentExists := false
-	if info, statErr := os.Stat(currentExt); statErr == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("existing sysext path is not a directory: %s", currentExt)
+	if currentExists {
+		if err := g.runBeforeStep("stage:copy-existing"); err != nil {
+			return err
 		}
-		currentExists = true
-		if config.Incremental {
-			if err := g.runBeforeStep("stage:copy-existing"); err != nil {
-				return err
-			}
-			if err := copyDirectory(currentExt, stageExt); err != nil {
-				return fmt.Errorf("stage existing sysext repository: %w", err)
-			}
+		if err := copyDirectory(currentExt, stageExt); err != nil {
+			return fmt.Errorf("stage existing sysext repository: %w", err)
 		}
-	} else if !os.IsNotExist(statErr) {
-		return fmt.Errorf("inspect existing sysext repository: %w", statErr)
 	}
 
-	stageConfig := *config
+	stageConfig := mergeConfig
 	stageConfig.OutputDir = stageRoot
 	if err := g.generateStaged(ctx, &stageConfig, packages); err != nil {
 		return err
@@ -153,6 +158,9 @@ func (g *Generator) generateStaged(ctx context.Context, config *models.Repositor
 	for _, pkg := range packages {
 		extPackages[pkg.Name] = append(extPackages[pkg.Name], pkg)
 	}
+	if err := validateSysextDestinations(config.OutputDir, packages); err != nil {
+		return fmt.Errorf("failed to validate sysext destinations: %w", err)
+	}
 
 	// Generate repository for each extension
 	extNames := make([]string, 0, len(extPackages))
@@ -173,6 +181,43 @@ func (g *Generator) generateStaged(ctx context.Context, config *models.Repositor
 	}
 
 	logrus.Info("systemd-sysext repository generated successfully")
+	return nil
+}
+
+func validateSysextDestinations(outputDir string, packages []models.Package) error {
+	seen := make(map[string]string, len(packages))
+	for index := range packages {
+		pkg := &packages[index]
+		dstPath := filepath.Join(outputDir, "ext", pkg.Name, filepath.Base(pkg.Filename))
+
+		srcPath, _, _, err := utils.ShouldCopyPackage(pkg, dstPath, outputDir)
+		if err != nil {
+			return fmt.Errorf("package copy check failed for %s: %w", pkg.Name, err)
+		}
+
+		sha256sum := pkg.SHA256Sum
+		if _, err := os.Stat(srcPath); err == nil {
+			checksums, err := utils.CalculateChecksums(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+			}
+			sha256sum = checksums.SHA256
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot stat sysext source %s: %w", srcPath, err)
+		}
+
+		previous, duplicate := seen[dstPath]
+		if !duplicate {
+			seen[dstPath] = sha256sum
+			continue
+		}
+		if sha256sum == "" || previous == "" {
+			return fmt.Errorf("cannot verify duplicate sysext destination %q without SHA256", dstPath)
+		}
+		if sha256sum != previous {
+			return fmt.Errorf("conflicting package contents for sysext destination %q", dstPath)
+		}
+	}
 	return nil
 }
 

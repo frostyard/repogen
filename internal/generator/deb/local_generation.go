@@ -143,7 +143,7 @@ func commitLocalProductionTransaction(
 			ctx,
 			outputDir,
 			generationDir,
-			filepath.Join("dists", transaction.Codename),
+			localMutableReplacementPaths(transaction),
 			hooks,
 		)
 		if err != nil {
@@ -438,11 +438,21 @@ func validateLocalPrior(
 	return true, nil
 }
 
+func localMutableReplacementPaths(transaction *ProductionTransaction) map[string]struct{} {
+	paths := make(map[string]struct{})
+	for _, object := range transaction.objects {
+		if object.kind >= productionIndexObject {
+			paths[filepath.FromSlash(object.Path)] = struct{}{}
+		}
+	}
+	return paths
+}
+
 func snapshotAndCopyLocalTree(
 	ctx context.Context,
 	sourceRoot string,
 	destinationRoot string,
-	excludedRelative string,
+	excludedRelativePaths map[string]struct{},
 	hooks *productionLocalHooks,
 ) (map[string]localTreeEntry, error) {
 	snapshot := make(map[string]localTreeEntry)
@@ -465,8 +475,7 @@ func snapshotAndCopyLocalTree(
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("%w: prior output contains symlink %s", ErrLocalGeneration, relative)
 		}
-		excluded := relative == excludedRelative ||
-			strings.HasPrefix(relative, excludedRelative+string(filepath.Separator))
+		_, excluded := excludedRelativePaths[relative]
 		if entry.IsDir() {
 			snapshot[relative] = localTreeEntry{Mode: info.Mode(), IsDir: true}
 			if relative == "." {

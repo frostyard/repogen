@@ -234,7 +234,7 @@ func validatePoolObject(key string, digest PoolDigest) error {
 	if len(parts) != 3 ||
 		parts[0] == "" ||
 		parts[1] == "" ||
-		!strings.HasPrefix(parts[2], parts[1]+"_") ||
+		(parts[2] != parts[1]+".deb" && !strings.HasPrefix(parts[2], parts[1]+"_")) ||
 		!strings.HasSuffix(parts[2], ".deb") {
 		return fmt.Errorf("%w: unsafe shared-pool path %q", ErrPoolCandidate, key)
 	}

@@ -23,24 +23,26 @@ const (
 	maxRecordSize = 4 << 20
 )
 
+// RequestSchema is the shared T0 producer and writer request schema.
+const RequestSchema = "org.frostyard.repogen.request.v1"
+
 type Request struct {
-	SchemaVersion    int      `json:"schema_version"`
-	Kind             string   `json:"kind"`
-	Operation        string   `json:"operation"`
-	Target           string   `json:"target"`
-	Suite            string   `json:"suite"`
-	Component        string   `json:"component"`
-	Architectures    []string `json:"architectures"`
-	Origin           string   `json:"origin"`
-	Label            string   `json:"label"`
-	ValidUntilPolicy string   `json:"valid_until_policy"`
-	Producer         string   `json:"producer"`
-	ProvenanceSHA256 string   `json:"provenance_sha256"`
-	ArtifactSHA256s  []string `json:"artifact_sha256s"`
-	ExpectedPrior    *string  `json:"expected_prior"`
-	ActionCommit     string   `json:"action_commit"`
-	RepogenVersion   string   `json:"repogen_version"`
-	RepogenSHA256    string   `json:"repogen_sha256"`
+	Schema             string   `json:"schema"`
+	Kind               string   `json:"kind"`
+	Operation          string   `json:"operation"`
+	Target             string   `json:"target"`
+	Producer           string   `json:"producer"`
+	ProvenanceDigest   string   `json:"provenance_digest"`
+	ArtifactDigests    []string `json:"artifact_digests"`
+	ExpectedPrior      *string  `json:"expected_prior"`
+	Codename           string   `json:"codename"`
+	Suite              string   `json:"suite"`
+	Origin             string   `json:"origin"`
+	Label              string   `json:"label"`
+	Component          string   `json:"component"`
+	Architectures      []string `json:"architectures"`
+	ValidUntilPolicy   string   `json:"valid_until_policy"`
+	ProductionEligible bool     `json:"production_eligible"`
 }
 
 type Receipt struct {
@@ -477,13 +479,10 @@ func (r Reconciler) apply(
 	}
 	result.SchemaVersion = schemaVersion
 	result.RequestSHA256 = receipt.RequestSHA256
-	result.ProvenanceSHA256 = request.ProvenanceSHA256
+	result.ProvenanceSHA256 = request.ProvenanceDigest
 	result.Target = receipt.Target
 	result.ExpectedPrior = request.ExpectedPrior
 	result.AttemptID = attemptID
-	result.ActionCommit = request.ActionCommit
-	result.RepogenVersion = request.RepogenVersion
-	result.RepogenSHA256 = request.RepogenSHA256
 	if err := validateResult(receipt, request, *result); err != nil {
 		return nil, err
 	}
@@ -541,9 +540,10 @@ func (r Reconciler) newAttemptID() (string, error) {
 }
 
 func validateRequest(request Request) error {
-	if request.SchemaVersion != schemaVersion ||
+	if request.Schema != RequestSchema ||
 		request.Kind != "debian" ||
 		!safeSegment(request.Target) ||
+		request.Codename != request.Target ||
 		request.Suite != request.Target ||
 		request.Component == "" ||
 		len(request.Architectures) == 0 ||
@@ -551,11 +551,8 @@ func validateRequest(request Request) error {
 		request.Label == "" ||
 		request.ValidUntilPolicy == "" ||
 		!safeIdentity(request.Producer) ||
-		!validDigest(request.ProvenanceSHA256) ||
-		!validCommit(request.ActionCommit) ||
-		!safeIdentity(request.RepogenVersion) ||
-		!validDigest(request.RepogenSHA256) ||
-		len(request.ArtifactSHA256s) == 0 {
+		!validDigest(request.ProvenanceDigest) ||
+		len(request.ArtifactDigests) == 0 {
 		return fmt.Errorf("%w: invalid durable request", ErrIntegrity)
 	}
 
@@ -571,8 +568,8 @@ func validateRequest(request Request) error {
 	default:
 		return fmt.Errorf("%w: invalid durable request operation", ErrIntegrity)
 	}
-	seen := make(map[string]struct{}, len(request.ArtifactSHA256s))
-	for _, digest := range request.ArtifactSHA256s {
+	seen := make(map[string]struct{}, len(request.ArtifactDigests))
+	for _, digest := range request.ArtifactDigests {
 		if !validDigest(digest) {
 			return fmt.Errorf("%w: invalid artifact digest", ErrIntegrity)
 		}
@@ -614,13 +611,13 @@ func safeIdentity(value string) bool {
 func validateResult(receipt Receipt, request Request, result Result) error {
 	if result.SchemaVersion != schemaVersion ||
 		result.RequestSHA256 != receipt.RequestSHA256 ||
-		result.ProvenanceSHA256 != request.ProvenanceSHA256 ||
+		result.ProvenanceSHA256 != request.ProvenanceDigest ||
 		result.Target != receipt.Target ||
 		!sameOptionalDigest(result.ExpectedPrior, request.ExpectedPrior) ||
 		!safeSegment(result.AttemptID) ||
-		result.ActionCommit != request.ActionCommit ||
-		result.RepogenVersion != request.RepogenVersion ||
-		result.RepogenSHA256 != request.RepogenSHA256 ||
+		!validCommit(result.ActionCommit) ||
+		!safeIdentity(result.RepogenVersion) ||
+		!validDigest(result.RepogenSHA256) ||
 		!validFingerprint(result.SigningKeyFingerprint) ||
 		!validDigest(result.StateSHA256) ||
 		!validDigest(result.CommitSHA256) ||
@@ -668,12 +665,12 @@ func verifyRequestObjects(ctx context.Context, store Store, request Request) err
 	if err := verifyDigestObject(
 		ctx,
 		store,
-		path.Join("manifests/provenance/v1/sha256", request.ProvenanceSHA256+".json"),
-		request.ProvenanceSHA256,
+		path.Join("manifests/provenance/v1/sha256", request.ProvenanceDigest+".json"),
+		request.ProvenanceDigest,
 	); err != nil {
 		return fmt.Errorf("%w: verify provenance: %v", ErrIntegrity, err)
 	}
-	for _, digest := range request.ArtifactSHA256s {
+	for _, digest := range request.ArtifactDigests {
 		if err := verifyDigestObject(
 			ctx,
 			store,
@@ -754,7 +751,7 @@ func nextReceiptSequence(
 			maximum = receipt.Sequence
 		}
 	}
-	if maximum == ^uint64(0) {
+	if maximum >= maxSafeJSONInteger {
 		return 0, fmt.Errorf("%w: receipt sequence exhausted", ErrState)
 	}
 	return maximum + 1, nil
@@ -772,7 +769,8 @@ func parseReceiptKey(key string) (Receipt, error) {
 		return Receipt{}, fmt.Errorf("%w: malformed receipt key %q", ErrIntegrity, key)
 	}
 	sequence, err := strconv.ParseUint(name[:separator], 10, 64)
-	if err != nil || sequence == 0 || !validDigest(name[separator+1:]) {
+	if err != nil || sequence == 0 || sequence > maxSafeJSONInteger ||
+		!validDigest(name[separator+1:]) {
 		return Receipt{}, fmt.Errorf("%w: malformed receipt key %q", ErrIntegrity, key)
 	}
 	return Receipt{
@@ -911,15 +909,10 @@ func readRecord(ctx context.Context, store Store, key string) ([]byte, error) {
 	return data, nil
 }
 
-func canonicalJSON(value any) ([]byte, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("%w: encode canonical record: %v", ErrIntegrity, err)
-	}
-	return append(data, '\n'), nil
-}
-
 func decodeCanonical(data []byte, destination any) error {
+	if _, err := canonicalizeJSON(data); err != nil {
+		return fmt.Errorf("%w: decode canonical record: %v", ErrIntegrity, err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

@@ -16,6 +16,92 @@ import (
 	"time"
 )
 
+func TestRequestCanonicalizationMatchesReviewedC0ProducerBytes(t *testing.T) {
+	data := []byte(`{"architectures":["all","amd64"],"artifact_digests":["02e4470e9075308ba33d0ec861059a4b0846af0cdf5209eb9069fd2d3aa2c78b"],"codename":"trixie","component":"main","expected_prior":null,"kind":"debian","label":"Frostyard Repository","operation":"initialize","origin":"Repogen Repository","producer":"frostyard/gchlog","production_eligible":false,"provenance_digest":"a507aa01036ef6daac8a6c83e25be831c14101205f15002dee64c230e2801604","schema":"org.frostyard.repogen.request.v1","suite":"trixie","target":"trixie","valid_until_policy":"omit"}`)
+
+	var request Request
+	if err := decodeCanonical(data, &request); err != nil {
+		t.Fatalf("decodeCanonical() rejected reviewed C0 request: %v", err)
+	}
+	if err := validateRequest(request); err != nil {
+		t.Fatalf("validateRequest() rejected reviewed C0 request: %v", err)
+	}
+	encoded, err := canonicalJSON(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, data) {
+		t.Fatalf("canonical request bytes differ:\n got: %s\nwant: %s", encoded, data)
+	}
+	if got, want := digestBytes(data), "e4d7b27c7b37c8ce3a2a5cc020af3255a067b484602899790b822499078c89ab"; got != want {
+		t.Fatalf("C0 request digest = %s, want %s", got, want)
+	}
+	store := newFixtureFileStore(t)
+	if err := CreateImmutable(
+		context.Background(),
+		store,
+		requestKey(digestBytes(data)),
+		data,
+	); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadRequest(context.Background(), store, digestBytes(data))
+	if err != nil {
+		t.Fatalf("loadRequest() rejected reviewed C0 request: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, request) {
+		t.Fatalf("loaded request = %+v, want %+v", loaded, request)
+	}
+	if request.ProductionEligible {
+		t.Fatal("reviewed C0 staging fixture became production eligible")
+	}
+}
+
+func TestCanonicalJSONUsesRFC8785EncodingAndRejectsInvalidRecords(t *testing.T) {
+	input := map[string]any{
+		"\uFFFD":     2,
+		"\U0001F600": 1,
+		"text":       "<>&\u2028",
+		"nested":     map[string]any{"z": 0, "a": 0},
+	}
+	got, err := canonicalJSON(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("{\"nested\":{\"a\":0,\"z\":0},\"text\":\"<>&\u2028\",\"\U0001F600\":1,\"\uFFFD\":2}")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("canonicalJSON() = %q, want %q", got, want)
+	}
+
+	for name, data := range map[string][]byte{
+		"duplicate key":       []byte(`{"a":1,"a":2}`),
+		"fractional number":   []byte(`{"n":1.5}`),
+		"exponential number":  []byte(`{"n":1e2}`),
+		"unsafe integer":      []byte(`{"n":9007199254740992}`),
+		"unsorted keys":       []byte(`{"b":1,"a":2}`),
+		"trailing whitespace": []byte("{\"a\":1}\n"),
+		"trailing value":      []byte(`{"a":1}{"b":2}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var destination map[string]any
+			if err := decodeCanonical(data, &destination); !errors.Is(err, ErrIntegrity) {
+				t.Fatalf("decodeCanonical() error = %v, want ErrIntegrity", err)
+			}
+		})
+	}
+
+	unknown := bytes.Replace(
+		[]byte(`{"architectures":["all","amd64"],"artifact_digests":["02e4470e9075308ba33d0ec861059a4b0846af0cdf5209eb9069fd2d3aa2c78b"],"codename":"trixie","component":"main","expected_prior":null,"kind":"debian","label":"Frostyard Repository","operation":"initialize","origin":"Repogen Repository","producer":"frostyard/gchlog","production_eligible":false,"provenance_digest":"a507aa01036ef6daac8a6c83e25be831c14101205f15002dee64c230e2801604","schema":"org.frostyard.repogen.request.v1","suite":"trixie","target":"trixie","valid_until_policy":"omit"}`),
+		[]byte(`"target":"trixie"`),
+		[]byte(`"surprise":true,"target":"trixie"`),
+		1,
+	)
+	var request Request
+	if err := decodeCanonical(unknown, &request); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("unknown request field error = %v, want ErrIntegrity", err)
+	}
+}
+
 func TestRecorderRetainsIdempotentSequencedReceipts(t *testing.T) {
 	store := newFixtureFileStore(t)
 	recorder := Recorder{Store: store}
@@ -328,7 +414,7 @@ func TestReconcilerFailsClosedOnStoreAndReadBackErrors(t *testing.T) {
 			}
 			store := &faultStore{Store: base}
 			writer := &fixtureWriter{}
-			testCase.configure(store, writer, request.ArtifactSHA256s[0])
+			testCase.configure(store, writer, request.ArtifactDigests[0])
 			reconciler := fixtureReconciler(store, writer)
 			if err := reconciler.ReconcileAll(context.Background()); err == nil {
 				t.Fatal("ReconcileAll() unexpectedly succeeded")
@@ -359,7 +445,7 @@ func TestReconcilerRejectsArtifactChecksumMismatch(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	artifact := request.ArtifactSHA256s[0]
+	artifact := request.ArtifactDigests[0]
 	if err := os.WriteFile(
 		path.Join(root, "blobs/sha256", artifact[:2], artifact),
 		[]byte("corrupt fixture"),
@@ -512,23 +598,22 @@ func fixtureRequest(
 		t.Fatal(err)
 	}
 	return Request{
-		SchemaVersion:    schemaVersion,
-		Kind:             "debian",
-		Operation:        operation,
-		Target:           target,
-		Suite:            target,
-		Component:        "main",
-		Architectures:    []string{"all", "amd64"},
-		Origin:           "Repogen Repository",
-		Label:            "Frostyard Repository",
-		ValidUntilPolicy: "omitted",
-		Producer:         "frostyard/fixture",
-		ProvenanceSHA256: provenanceDigest,
-		ArtifactSHA256s:  []string{artifactDigest},
-		ExpectedPrior:    expectedPrior,
-		ActionCommit:     "0123456789abcdef0123456789abcdef01234567",
-		RepogenVersion:   "v1.2.3",
-		RepogenSHA256:    fixtureDigest("repogen binary"),
+		Schema:             RequestSchema,
+		Kind:               "debian",
+		Operation:          operation,
+		Target:             target,
+		Producer:           "frostyard/fixture",
+		ProvenanceDigest:   provenanceDigest,
+		ArtifactDigests:    []string{artifactDigest},
+		ExpectedPrior:      expectedPrior,
+		Codename:           target,
+		Suite:              target,
+		Origin:             "Repogen Repository",
+		Label:              "Frostyard Repository",
+		Component:          "main",
+		Architectures:      []string{"all", "amd64"},
+		ValidUntilPolicy:   "omit",
+		ProductionEligible: true,
 	}
 }
 
@@ -608,6 +693,9 @@ func (w *fixtureWriter) Apply(
 		SigningKeyFingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
 		StateSHA256:           state,
 		CommitSHA256:          fixtureDigest("commit-" + state),
+		ActionCommit:          "0123456789abcdef0123456789abcdef01234567",
+		RepogenVersion:        "v1.2.3",
+		RepogenSHA256:         fixtureDigest("repogen binary"),
 		Objects: []Object{{
 			Key:    path.Join("dists", receipt.Target, "InRelease"),
 			SHA256: fixtureDigest("object-" + state),
