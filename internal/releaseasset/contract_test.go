@@ -45,6 +45,16 @@ func TestReleaseAssetMappingIsExactAndRejectsMutableVersions(t *testing.T) {
 	if output, err := command.CombinedOutput(); err == nil {
 		t.Fatalf("mutable version unexpectedly accepted: %s", output)
 	}
+	for _, args := range [][]string{
+		{"--asset-name", "1.2.3", "amd64"},
+		{"--asset-name", "v1.2", "amd64"},
+		{"--asset-name", fixtureTag, "riscv64"},
+	} {
+		command := exec.Command("bash", append([]string{script}, args...)...)
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Fatalf("invalid asset request %q unexpectedly succeeded: %s", args, output)
+		}
+	}
 }
 
 func TestDigestVerifiedReleaseInstallationAndEmbeddedIdentity(t *testing.T) {
@@ -71,6 +81,10 @@ func TestDigestVerifiedReleaseInstallationAndEmbeddedIdentity(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fixture build failed: %v\n%s", err, output)
 	}
+	assetData, err := os.ReadFile(asset)
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeChecksums(t, tagRoot, asset)
 
 	destination := filepath.Join(t.TempDir(), "repogen")
@@ -87,6 +101,51 @@ func TestDigestVerifiedReleaseInstallationAndEmbeddedIdentity(t *testing.T) {
 		t.Fatalf("installed identity = %q, want %q", got, want)
 	}
 
+	t.Run("duplicate checksum entries", func(t *testing.T) {
+		line := checksumLine(t, asset)
+		if err := os.WriteFile(
+			filepath.Join(tagRoot, "SHA256SUMS"),
+			[]byte(line+line),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		assertReleaseInstallFails(t, script, releaseRoot, fixtureTag, fixtureCommit)
+	})
+
+	t.Run("uppercase checksum", func(t *testing.T) {
+		line := strings.ToUpper(checksumLine(t, asset))
+		if err := os.WriteFile(
+			filepath.Join(tagRoot, "SHA256SUMS"),
+			[]byte(line),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		assertReleaseInstallFails(t, script, releaseRoot, fixtureTag, fixtureCommit)
+	})
+
+	t.Run("missing checksum", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tagRoot, "SHA256SUMS"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		assertReleaseInstallFails(t, script, releaseRoot, fixtureTag, fixtureCommit)
+	})
+
+	t.Run("tampered asset", func(t *testing.T) {
+		if err := os.WriteFile(asset, assetData, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeChecksums(t, tagRoot, asset)
+		if err := os.WriteFile(asset, append(assetData, '\n'), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertReleaseInstallFails(t, script, releaseRoot, fixtureTag, fixtureCommit)
+	})
+
+	if err := os.WriteFile(asset, assetData, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Run("digest mismatch", func(t *testing.T) {
 		if err := os.WriteFile(
 			filepath.Join(tagRoot, "SHA256SUMS"),
@@ -106,6 +165,17 @@ func TestDigestVerifiedReleaseInstallationAndEmbeddedIdentity(t *testing.T) {
 	})
 
 	writeChecksums(t, tagRoot, asset)
+	t.Run("commit must be full lowercase SHA", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "repogen")
+		command := releaseInstallCommand(script, releaseRoot, fixtureTag, fixtureCommit[:12], destination)
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Fatalf("short commit unexpectedly installed binary: %s", output)
+		}
+		if _, err := os.Stat(destination); !os.IsNotExist(err) {
+			t.Fatalf("short commit left destination: %v", err)
+		}
+	})
+
 	t.Run("embedded commit mismatch", func(t *testing.T) {
 		destination := filepath.Join(t.TempDir(), "repogen")
 		command := releaseInstallCommand(script, releaseRoot, fixtureTag, strings.Repeat("a", 40), destination)
@@ -226,14 +296,31 @@ func releaseInstallCommand(script, releaseRoot, tag, commit, destination string)
 
 func writeChecksums(t *testing.T, directory, asset string) {
 	t.Helper()
+	line := checksumLine(t, asset)
+	if err := os.WriteFile(filepath.Join(directory, "SHA256SUMS"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func checksumLine(t *testing.T, asset string) string {
+	t.Helper()
 	data, err := os.ReadFile(asset)
 	if err != nil {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(data)
-	line := fmt.Sprintf("%s  %s\n", hex.EncodeToString(digest[:]), filepath.Base(asset))
-	if err := os.WriteFile(filepath.Join(directory, "SHA256SUMS"), []byte(line), 0o644); err != nil {
-		t.Fatal(err)
+	return fmt.Sprintf("%s  %s\n", hex.EncodeToString(digest[:]), filepath.Base(asset))
+}
+
+func assertReleaseInstallFails(t *testing.T, script, releaseRoot, tag, commit string) {
+	t.Helper()
+	destination := filepath.Join(t.TempDir(), "repogen")
+	command := releaseInstallCommand(script, releaseRoot, tag, commit, destination)
+	if output, err := command.CombinedOutput(); err == nil {
+		t.Fatalf("invalid release unexpectedly installed binary: %s", output)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("failed install left destination: %v", err)
 	}
 }
 

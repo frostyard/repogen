@@ -12,7 +12,12 @@ import (
 	"testing"
 )
 
-const fixturePoolPath = "pool/main/r/repogen-test/repogen-test_1.0.0_amd64.deb"
+const (
+	fixturePoolPath  = "pool/main/r/repogen-test/repogen-test_1.0.0_amd64.deb"
+	legacyPoolPath   = "pool/main/s/snow-first-setup/snow-first-setup.deb"
+	legacyPoolSHA256 = "a694776ae9b698f8558f48f71f9836e1df669acf92dbfe2d6e160a8e85e012a0"
+	legacyPoolSize   = int64(1440128)
+)
 
 func TestSharedPoolFakeS3IndexedReuseStreamsBytesAndIgnoresOpaqueETag(t *testing.T) {
 	t.Parallel()
@@ -284,6 +289,192 @@ func TestSharedPoolFakeS3CrossSuitePathRequiresIdenticalBytes(t *testing.T) {
 	}
 	if got := store.objectBytes(fixturePoolPath); !bytes.Equal(got, trixieBytes) {
 		t.Fatalf("cross-suite collision overwrote shared bytes: %q", got)
+	}
+}
+
+func TestSharedPoolAcceptsSignedLegacySnowAuthority(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeS3Pool()
+	if _, err := NewSharedPool(store, map[string]PoolDigest{
+		legacyPoolPath: {SHA256: legacyPoolSHA256, Size: legacyPoolSize},
+	}); err != nil {
+		t.Fatalf("NewSharedPool() rejected signed stable authority: %v", err)
+	}
+	if store.createCount() != 0 || store.openCount() != 0 {
+		t.Fatalf("authority construction accessed fake S3: creates=%d opens=%d", store.createCount(), store.openCount())
+	}
+}
+
+func TestSharedPoolLegacySnowPathReusesOrFailsWithoutOverwrite(t *testing.T) {
+	t.Parallel()
+
+	retained := []byte("retained legacy package bytes")
+	retainedDigest := digestFor(retained)
+
+	tests := []struct {
+		name             string
+		prepare          func(*fakeS3Pool)
+		verified         map[string]PoolDigest
+		candidate        PoolCandidate
+		wantDisposition  PoolDisposition
+		wantError        error
+		wantCreateCount  int
+		wantOpenCount    int
+		wantRetainedBody []byte
+	}{
+		{
+			name: "exact bytes reuse despite opaque ETag",
+			prepare: func(store *fakeS3Pool) {
+				store.objects[legacyPoolPath] = fakeS3Object{
+					body: retained,
+					etag: `"opaque-multipart-etag-7"`,
+				}
+			},
+			verified: map[string]PoolDigest{
+				legacyPoolPath: retainedDigest,
+			},
+			candidate:        candidateFor(legacyPoolPath, retained),
+			wantDisposition:  PoolReused,
+			wantOpenCount:    1,
+			wantRetainedBody: retained,
+		},
+		{
+			name: "changed content fails closed",
+			prepare: func(store *fakeS3Pool) {
+				store.objects[legacyPoolPath] = fakeS3Object{body: retained}
+			},
+			verified: map[string]PoolDigest{
+				legacyPoolPath: retainedDigest,
+			},
+			candidate:        candidateFor(legacyPoolPath, []byte("different legacy package bytes")),
+			wantError:        ErrPoolCollision,
+			wantRetainedBody: retained,
+		},
+		{
+			name: "changed size fails before remote access",
+			prepare: func(store *fakeS3Pool) {
+				store.objects[legacyPoolPath] = fakeS3Object{body: retained}
+			},
+			verified: map[string]PoolDigest{
+				legacyPoolPath: retainedDigest,
+			},
+			candidate: func() PoolCandidate {
+				candidate := candidateFor(legacyPoolPath, retained)
+				candidate.Size++
+				return candidate
+			}(),
+			wantError:        ErrPoolCandidate,
+			wantRetainedBody: retained,
+		},
+		{
+			name: "unreadable retained object fails closed",
+			prepare: func(store *fakeS3Pool) {
+				store.objects[legacyPoolPath] = fakeS3Object{body: retained}
+				store.readErrors[legacyPoolPath] = errors.New("fixture stream failed")
+			},
+			verified: map[string]PoolDigest{
+				legacyPoolPath: retainedDigest,
+			},
+			candidate:        candidateFor(legacyPoolPath, retained),
+			wantError:        ErrPoolUnreadable,
+			wantOpenCount:    1,
+			wantRetainedBody: retained,
+		},
+		{
+			name: "conditional create race cannot overwrite winner",
+			prepare: func(store *fakeS3Pool) {
+				store.raceObjects[legacyPoolPath] = fakeS3Object{body: retained}
+			},
+			candidate:        candidateFor(legacyPoolPath, []byte("different legacy package bytes")),
+			wantError:        ErrPoolCollision,
+			wantCreateCount:  1,
+			wantOpenCount:    1,
+			wantRetainedBody: retained,
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newFakeS3Pool()
+			testCase.prepare(store)
+			pool := mustSharedPool(t, store, testCase.verified)
+
+			disposition, err := pool.Ensure(context.Background(), testCase.candidate)
+			if !errors.Is(err, testCase.wantError) {
+				t.Fatalf("Ensure() error = %v, want errors.Is(%v)", err, testCase.wantError)
+			}
+			if disposition != testCase.wantDisposition {
+				t.Fatalf("Ensure() disposition = %q, want %q", disposition, testCase.wantDisposition)
+			}
+			if got := store.createCount(); got != testCase.wantCreateCount {
+				t.Fatalf("conditional creates = %d, want %d", got, testCase.wantCreateCount)
+			}
+			if got := store.openCount(); got != testCase.wantOpenCount {
+				t.Fatalf("streamed opens = %d, want %d", got, testCase.wantOpenCount)
+			}
+			if got := store.objectBytes(legacyPoolPath); !bytes.Equal(got, testCase.wantRetainedBody) {
+				t.Fatalf("retained bytes changed: got %q, want %q", got, testCase.wantRetainedBody)
+			}
+		})
+	}
+}
+
+func TestSharedPoolRejectsConfusingLegacyFilenamesAndWrongShard(t *testing.T) {
+	t.Parallel()
+
+	content := []byte("candidate bytes")
+	tests := []string{
+		"pool/main/s/snow-first-setup/evil.deb",
+		"pool/main/s/snow-first-setup/incus_7.3_amd64.deb",
+		"pool/main/x/snow-first-setup/snow-first-setup.deb",
+	}
+	for _, poolPath := range tests {
+		poolPath := poolPath
+		t.Run(poolPath, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeS3Pool()
+			pool := mustSharedPool(t, store, nil)
+			if _, err := pool.Ensure(context.Background(), candidateFor(poolPath, content)); !errors.Is(err, ErrPoolCandidate) {
+				t.Fatalf("Ensure() error = %v, want ErrPoolCandidate", err)
+			}
+			if store.createCount() != 0 || store.openCount() != 0 {
+				t.Fatalf("invalid path accessed fake S3: creates=%d opens=%d", store.createCount(), store.openCount())
+			}
+		})
+	}
+}
+
+func TestSharedPoolSuiteDistinctRevisionsAndIdenticalReuse(t *testing.T) {
+	t.Parallel()
+
+	trixiePath := "pool/main/s/snow-first-setup/snow-first-setup_1.0+fy13u1_all.deb"
+	forkyPath := "pool/main/s/snow-first-setup/snow-first-setup_1.0+fy14u1_all.deb"
+	trixieBytes := []byte("trixie package bytes")
+	forkyBytes := []byte("forky package bytes")
+	store := newFakeS3Pool()
+	pool := mustSharedPool(t, store, nil)
+
+	if disposition, err := pool.Ensure(context.Background(), candidateFor(trixiePath, trixieBytes)); err != nil || disposition != PoolCreated {
+		t.Fatalf("Trixie Ensure() = %q, %v; want created, nil", disposition, err)
+	}
+	if disposition, err := pool.Ensure(context.Background(), candidateFor(forkyPath, forkyBytes)); err != nil || disposition != PoolCreated {
+		t.Fatalf("Forky Ensure() = %q, %v; want created, nil", disposition, err)
+	}
+	if _, err := pool.Ensure(context.Background(), candidateFor(trixiePath, forkyBytes)); !errors.Is(err, ErrPoolCollision) {
+		t.Fatalf("same-path different-byte Ensure() error = %v, want ErrPoolCollision", err)
+	}
+	if disposition, err := pool.Ensure(context.Background(), candidateFor(forkyPath, forkyBytes)); err != nil || disposition != PoolReused {
+		t.Fatalf("byte-identical Forky Ensure() = %q, %v; want reused, nil", disposition, err)
+	}
+	if got := store.objectBytes(trixiePath); !bytes.Equal(got, trixieBytes) {
+		t.Fatalf("Trixie bytes changed: %q", got)
+	}
+	if got := store.objectBytes(forkyPath); !bytes.Equal(got, forkyBytes) {
+		t.Fatalf("Forky bytes changed: %q", got)
 	}
 }
 

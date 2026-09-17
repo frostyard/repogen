@@ -42,46 +42,53 @@ func TestProductionRecoveryWriterPublishesFromRetainedReceiptAndReplays(t *testi
 		t.Fatal(err)
 	}
 	request := intake.Request{
-		SchemaVersion:    1,
-		Kind:             "debian",
-		Operation:        "initialize",
-		Target:           "trixie",
-		Suite:            "trixie",
-		Component:        "main",
-		Architectures:    []string{"all", "amd64"},
-		Origin:           "Repogen Repository",
-		Label:            "Frostyard Repository",
-		ValidUntilPolicy: "omitted",
-		Producer:         "frostyard/fixture",
-		ProvenanceSHA256: provenanceSHA256,
-		ArtifactSHA256s:  []string{artifactSHA256},
-		ActionCommit:     "0123456789abcdef0123456789abcdef01234567",
-		RepogenVersion:   "v1.2.3",
-		RepogenSHA256:    sha256Hex([]byte("repogen binary")),
+		Schema:             intake.RequestSchema,
+		Kind:               "debian",
+		Operation:          "initialize",
+		Target:             "trixie",
+		Producer:           "frostyard/fixture",
+		ProvenanceDigest:   provenanceSHA256,
+		ArtifactDigests:    []string{artifactSHA256},
+		Codename:           "trixie",
+		Suite:              "trixie",
+		Origin:             "Repogen Repository",
+		Label:              "Frostyard Repository",
+		Component:          "main",
+		Architectures:      []string{"all", "amd64"},
+		ValidUntilPolicy:   "omit",
+		ProductionEligible: true,
 	}
-	if _, err := (intake.Recorder{Store: intakeStore}).Accept(
+	receipt, err := (intake.Recorder{Store: intakeStore}).Accept(
 		context.Background(),
 		request.Producer,
 		"fixture-run",
 		sha256Hex([]byte("fixture policy")),
 		request,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	transaction := stageProductionFixture(t, "initialize", nil)
 	publicStore := newProductionFixtureStore()
+	recoveryPlan := &ProductionRecoveryPlan{
+		Transaction:      transaction,
+		ProvenanceDigest: request.ProvenanceDigest,
+		ActionCommit:     "0123456789abcdef0123456789abcdef01234567",
+		RepogenVersion:   "v1.2.3",
+		RepogenSHA256:    sha256Hex([]byte("repogen binary")),
+	}
 	writer := ProductionRecoveryWriter{
 		Store: publicStore,
 		Builder: ProductionRecoveryBuilderFunc(func(
 			_ context.Context,
 			_ intake.Receipt,
 			got intake.Request,
-		) (*ProductionTransaction, error) {
+		) (*ProductionRecoveryPlan, error) {
 			if got.Target != request.Target {
 				t.Fatalf("builder target = %q, want %q", got.Target, request.Target)
 			}
-			return transaction, nil
+			return recoveryPlan, nil
 		}),
 	}
 	var attemptMu sync.Mutex
@@ -128,5 +135,22 @@ func TestProductionRecoveryWriterPublishesFromRetainedReceiptAndReplays(t *testi
 	}
 	if got := len(publicStore.writePaths()); got != writes {
 		t.Fatalf("replay performed %d additional writes", got-writes)
+	}
+
+	request.ProductionEligible = false
+	if _, err := writer.Apply(context.Background(), *receipt, request); err == nil {
+		t.Fatal("Apply() accepted a non-production request")
+	}
+	if got := len(publicStore.writePaths()); got != writes {
+		t.Fatalf("ineligible request performed %d writes", got-writes)
+	}
+
+	request.ProductionEligible = true
+	recoveryPlan.ActionCommit = "not-a-commit"
+	if _, err := writer.Apply(context.Background(), *receipt, request); err == nil {
+		t.Fatal("Apply() accepted invalid provenance-derived writer pins")
+	}
+	if got := len(publicStore.writePaths()); got != writes {
+		t.Fatalf("invalid writer pins performed %d writes", got-writes)
 	}
 }

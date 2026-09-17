@@ -282,10 +282,18 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 					}
 				}
 
-				// Combine existing + new packages
-				finalPackages = append(existingPackages, newPackages...)
-				logrus.Infof("Combining %d existing + %d new = %d total %s packages",
-					len(existingPackages), len(newPackages), len(finalPackages), pkgType)
+				if pkgType == scanner.TypeSysext {
+					// The sysext generator verifies and merges retained signed metadata
+					// itself so it can distinguish retained entries from incoming files.
+					finalPackages = newPackages
+					logrus.Infof("Reconciling %d existing + %d new %s packages",
+						len(existingPackages), len(newPackages), pkgType)
+				} else {
+					// Combine existing + new packages
+					finalPackages = append(existingPackages, newPackages...)
+					logrus.Infof("Combining %d existing + %d new = %d total %s packages",
+						len(existingPackages), len(newPackages), len(finalPackages), pkgType)
+				}
 			}
 		} else {
 			// Normal mode: only new packages

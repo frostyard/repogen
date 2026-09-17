@@ -107,6 +107,80 @@ func TestProductionArchitecturesReturnsIndependentCopy(t *testing.T) {
 	}
 }
 
+func TestValidateProductionWritePlanRequiresExactlyOneInRelease(t *testing.T) {
+	transaction := stageProductionFixture(t, "initialize", nil)
+	transaction.objects[len(transaction.objects)-1].kind = productionReleaseObject
+
+	err := validateProductionWritePlan(transaction, "")
+	if !errors.Is(err, ErrPublicationCandidate) ||
+		!strings.Contains(err.Error(), "0 InRelease objects") {
+		t.Fatalf("validateProductionWritePlan() error = %v, want zero-InRelease rejection", err)
+	}
+}
+
+func TestValidateProductionWritePlanRequiresCompleteExpectedPrior(t *testing.T) {
+	initial := stageProductionFixture(t, "initialize", nil)
+	prior := priorStateFor(t, initial)
+
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(map[string]ProductionObjectDigest)
+	}{
+		{
+			name: "missing object",
+			mutate: func(expected map[string]ProductionObjectDigest) {
+				delete(expected, "dists/trixie/main/binary-amd64/Packages")
+			},
+		},
+		{
+			name: "superfluous object",
+			want: "want exactly",
+			mutate: func(expected map[string]ProductionObjectDigest) {
+				expected["dists/trixie/unexpected"] =
+					expected["dists/trixie/main/binary-amd64/Packages"]
+			},
+		},
+		{
+			name: "unexpected object replaces required object",
+			mutate: func(expected map[string]ProductionObjectDigest) {
+				key := "dists/trixie/main/binary-amd64/Packages"
+				digest := expected[key]
+				delete(expected, key)
+				expected["dists/trixie/unexpected"] = digest
+			},
+		},
+		{
+			name: "invalid object digest",
+			mutate: func(expected map[string]ProductionObjectDigest) {
+				key := "dists/trixie/main/binary-amd64/Packages"
+				digest := expected[key]
+				digest.SHA256 = "not-a-sha256"
+				expected[key] = digest
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			transaction := stageProductionFixture(t, "reconcile", prior)
+			testCase.mutate(transaction.ExpectedPrior)
+
+			err := validateProductionWritePlan(
+				transaction,
+				transaction.RequestManifest.ExpectedPriorReleaseSHA256,
+			)
+			if !errors.Is(err, ErrPublicationCandidate) {
+				t.Fatalf("validateProductionWritePlan() error = %v, want ErrPublicationCandidate", err)
+			}
+			if testCase.want != "" && !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("validateProductionWritePlan() error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
 func TestProductionTransactionFailureInjectionNeverExposesIncompleteGeneration(t *testing.T) {
 	transaction := stageProductionFixture(t, "initialize", nil)
 	stable := []byte("stable must not drift")

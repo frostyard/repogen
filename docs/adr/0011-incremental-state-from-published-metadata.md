@@ -80,3 +80,5 @@ touching them.
   [internal/utils/package_identity.go](../../internal/utils/package_identity.go)
 - Builds on: [core ADR-0010 — publish via repogen action (never-delete)](https://github.com/frostyard/core/blob/main/docs/adr/0010-publish-packages-via-repogen-to-r2.md),
   [ADR-0007 — checksums from copied bytes](0007-recompute-checksums-from-copied-bytes.md)
+- Current sysext successor:
+  [core ADR-0050 — serialize OS-version-aware sysext publication](https://github.com/frostyard/core/blob/main/docs/adr/0050-serialize-os-version-aware-sysext-publication.md)

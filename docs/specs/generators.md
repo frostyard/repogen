@@ -84,12 +84,19 @@ indexes.
   be reused only when its size and SHA-256 match.
 - Missing indexed bytes, short or failed reads, different bytes at the same
   path, unsafe paths, and malformed digests fail closed.
+- Pool paths must use `pool/main/{shard}/{package-directory}/{file}.deb`
+  with a shard matching the package directory. The filename must equal
+  `{package-directory}.deb` for the retained legacy form or begin
+  `{package-directory}_` for versioned forms. Signed retained indexes remain
+  the digest and size authority, but cannot authorize a filename belonging to
+  another package directory.
 - Provider ETags are informational and are never treated as hashes. The
   object-store interface has no overwrite operation.
 
 The fake-S3 tests cover indexed and unindexed reuse, opaque ETags, collisions,
 unreadable streams, conditional-create races, concurrent same-byte writers,
-and shared Trixie/Forky path safety.
+the signed stable Snow legacy path, suite-distinct `fy13`/`fy14` paths, and
+shared Trixie/Forky path safety.
 
 ### Signed publication transaction (R5)
 
@@ -127,12 +134,14 @@ The local commit creates a complete sibling generation on the same
 filesystem as the output:
 
 1. verify every staged object and the exact reconcile prior;
-2. copy the existing repository while excluding the target codename, rejecting
-   symlinks and non-regular files;
-3. preserve unrelated suite regular-file bytes, sizes, and complete
-   file/directory modes; create regenerated suite directories and new pool
-   parents at a fixed `0755` independent of process umask; and accept an
-   existing pool object only when its size and SHA-256 match;
+2. copy the existing repository while omitting only the exact mutable
+   canonical index and signed Release paths replaced by the transaction,
+   rejecting symlinks and non-regular files;
+3. preserve prior immutable by-hash objects, unmodeled suite files, and all
+   other retained regular-file bytes, sizes, and complete file/directory
+   modes; create new suite and pool parents at a fixed `0755` independent of
+   process umask; and accept an existing immutable pool or by-hash object only
+   when its size and SHA-256 match;
 4. install and re-hash every staged pool, index, by-hash, Release, InRelease,
    and Release.gpg object;
 5. verify the prior tree did not change during staging and synchronize the
@@ -191,6 +200,12 @@ submission conflict; provider and read-back failures retain their state or
 integrity classification. The adapter-provided authenticated principal must
 match the request producer; policy digests are retained and a non-nil
 current-policy authorizer runs immediately before every new writer attempt.
+Requests use the exact `org.frostyard.repogen.request.v1` field set from the
+T0 producer contract and RFC 8785 canonical JSON without trailing whitespace.
+Strict decoding rejects unknown or duplicate fields and noncanonical bytes.
+The request links provenance and artifact digests; action commit, Repogen
+version, and binary digest are derived from that provenance by the recovery
+builder and written into the verified result.
 
 Scheduled and manual recovery use the same full receipt enumeration. Receipts
 for one Debian codename run in increasing sequence and stop on the first
@@ -203,8 +218,10 @@ the result bytes and complete public object set without requiring the producer
 to remain authorized; revocation still blocks every request that lacks a
 completed result.
 
-`ProductionRecoveryWriter` rebuilds the signed B5 transaction through a
-caller-supplied intake-only builder. `RecoverProductionTransaction` holds the
+`ProductionRecoveryWriter` rebuilds the signed B5 transaction and its
+provenance-bound writer pins through a caller-supplied intake-only builder.
+It rejects requests that are not marked production-eligible.
+`RecoverProductionTransaction` holds the
 codename lock and classifies every planned object before writing: exact
 candidate bytes are idempotent no-ops, exact prior mutable bytes may advance,
 and authoritatively absent immutable bytes may be created. Any permission or
@@ -472,7 +489,7 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   (zst > xz > gz > raw).
 - Extension names and SHA256SUMS entries are sorted. Entries are deduplicated
   by filename only when their digests agree; conflicting duplicate filenames
-  fail generation.
+  are validated against source bytes and fail before output mutation.
 - Sysext package identity is
   `name:version:OSVersion:architecture`. OS 13 and OS 14 artifacts therefore
   coexist even when every other field matches. `--skip-duplicates` skips only
@@ -480,7 +497,10 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   evidence fails closed.
 - Generation takes a repository-wide sysext lock, re-reads current manifests
   after acquiring it, stages the complete `ext/` tree, and atomically switches
-  the tree into place. Concurrent reconciles retain both batches and a failure
+  the tree into place. Once `ext/` exists, this retained-state merge applies
+  even when `--incremental` is absent: the flag may control generic CLI
+  conflict handling, but it cannot authorize deletion of manifest-backed
+  sysext content. Concurrent reconciles retain both batches and a failure
   before the switch preserves the prior tree byte-for-byte. Linux
   `renameat2`/`flock` are required for this local transaction.
 - Restored manifests, detached signatures, transfer files, and the exhaustive

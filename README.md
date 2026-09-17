@@ -139,14 +139,17 @@ signed repository tree in the output directory's filesystem, preserving
 unrelated regular-file bytes, sizes, and complete file/directory modes plus
 verified shared-pool bytes, then switches the complete directory into place
 with one `renameat2` operation. Ownership, extended attributes, ACLs, and
-timestamps are not preserved. Directories created for regenerated suites and
-new pool paths receive a fixed `0755` mode independent of the process umask;
-newly installed generated files receive `0644`. Initialize uses no-replace and
-reconcile uses atomic exchange. Failures during package, index, Release,
-signing, copy, verification, or synchronization leave the prior output
-unchanged unless a concurrent external writer caused the detected drift. Each
-generation reads and hashes the complete prior tree, copies all retained
-content, and needs roughly 2x transient repository space. The switch is
+timestamps are not preserved. Reconcile replaces only the transaction's
+canonical indexes and signed Release files; it retains prior immutable
+by-hash objects and unmodeled suite content without treating either as broad
+sync or deletion authority. New suite and pool directories receive a fixed
+`0755` mode independent of the process umask; newly installed generated files
+receive `0644`. Initialize uses no-replace and reconcile uses atomic exchange.
+Failures during package, index, Release, signing, copy, verification, or
+synchronization leave the prior output unchanged unless a concurrent external
+writer caused the detected drift. Each generation reads and hashes the
+complete prior tree, copies all retained content, and needs roughly 2x
+transient repository space. The switch is
 atomically visible and crash-durable: a synchronized sibling generation and
 recovery journal are persisted before the switch, the parent directory is
 synchronized afterward, and `RecoverLocalProductionRepository` completes or
@@ -155,11 +158,16 @@ visible generation.
 
 R8 also adds a retained local intake store and receipt reconciler under
 `internal/intake`. Authenticated producer identity is passed separately from
-the request. The store contract requires one provider-level atomic
-create-if-absent operation that never replaces existing bytes; read-then-write
-emulation is not valid. Immutable request objects are read back and re-hashed,
-receipts are monotonic per kind/target, attempts remain append-only, and result
-pointers are created only after public read-back. Current policy is checked
+the request. Request bytes use the shared `org.frostyard.repogen.request.v1`
+schema and strict RFC 8785 canonical JSON, so producer-generated request
+digests and writer receipt keys agree byte-for-byte. Writer/action/binary
+attestations come from the linked provenance and are recorded in the result,
+not added to the shared request schema. The store contract requires one
+provider-level atomic create-if-absent operation that never replaces existing
+bytes; read-then-write emulation is not valid. Immutable request objects are
+read back and re-hashed, receipts are monotonic per kind/target, attempts
+remain append-only, and result pointers are created only after public
+read-back. Current policy is checked
 immediately before a new writer attempt; an already completed result remains
 replayable only after its retained bytes and public state verify again.
 Scheduled and manual wake-ups call the same receipt enumeration; same-target
@@ -318,6 +326,9 @@ aws s3 sync ./repo s3://my-bucket/repo
 - If metadata files don't exist, it falls back to normal mode automatically
 - Package files from existing metadata don't need to be present locally
 - You can use incremental mode with or without signing
+- For systemd-sysext repositories, an existing `ext/` tree is always verified,
+  merged, and retained even without `--incremental`; omitting the flag never
+  authorizes deletion of manifest-backed extensions
 
 ### With Signing
 

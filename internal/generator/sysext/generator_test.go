@@ -13,6 +13,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/frostyard/repogen/internal/models"
+	"github.com/frostyard/repogen/internal/utils"
 )
 
 type testSigner struct {
@@ -477,6 +478,160 @@ func TestGeneratorCanonicalChecksumOrder(t *testing.T) {
 	}
 }
 
+func TestGenerateRejectsConflictingDestinationBeforeWriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	firstInputDir := filepath.Join(tmpDir, "input-one")
+	secondInputDir := filepath.Join(tmpDir, "input-two")
+	for _, dir := range []string{firstInputDir, secondInputDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	filename := "same_1.0_13_x86-64.raw"
+	firstPath := filepath.Join(firstInputDir, filename)
+	secondPath := filepath.Join(secondInputDir, filename)
+	if err := os.WriteFile(firstPath, []byte("first sysext bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte("second sysext bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ParsePackage(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ParsePackage(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, packages := range map[string][]models.Package{
+		"forward": {*first, *second},
+		"reverse": {*second, *first},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outputDir := filepath.Join(tmpDir, name)
+			extDir := filepath.Join(outputDir, "ext", "same")
+			if err := os.MkdirAll(extDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			published := []byte("published sysext bytes")
+			publishedPath := filepath.Join(extDir, filename)
+			if err := os.WriteFile(publishedPath, published, 0644); err != nil {
+				t.Fatal(err)
+			}
+			checksums, err := utils.CalculateChecksums(publishedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest := []byte(checksums.SHA256 + "  " + filename + "\n")
+			manifestPath := filepath.Join(extDir, "SHA256SUMS")
+			if err := os.WriteFile(manifestPath, manifest, 0644); err != nil {
+				t.Fatal(err)
+			}
+			signature := []byte("published signature")
+			signaturePath := manifestPath + ".gpg"
+			if err := os.WriteFile(signaturePath, signature, 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			err = NewGenerator("https://example.com/repo", nil).Generate(
+				context.Background(),
+				&models.RepositoryConfig{OutputDir: outputDir},
+				packages,
+			)
+			if err == nil {
+				t.Fatal("Generate() accepted conflicting sysext bytes for one destination")
+			}
+			if !strings.Contains(err.Error(), "conflicting package contents for sysext destination") &&
+				!strings.Contains(err.Error(), "conflicting sysext artifacts for identity") {
+				t.Errorf("Generate() returned unexpected error: %v", err)
+			}
+			for path, want := range map[string][]byte{
+				publishedPath: published,
+				manifestPath:  manifest,
+				signaturePath: signature,
+			} {
+				got, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Fatalf("reading preserved output %s: %v", path, readErr)
+				}
+				if string(got) != string(want) {
+					t.Fatalf("Generate() changed %s before rejecting collision: got %q, want %q", path, got, want)
+				}
+			}
+			if _, statErr := os.Stat(filepath.Join(outputDir, "ext", "index")); !os.IsNotExist(statErr) {
+				t.Fatalf("Generate() wrote index before rejecting collision: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestGenerateAllowsIdenticalDuplicateDestination(t *testing.T) {
+	tmpDir := t.TempDir()
+	var packages []models.Package
+	filename := "same_1.0_13_x86-64.raw"
+	for _, inputName := range []string{"input-one", "input-two"} {
+		inputDir := filepath.Join(tmpDir, inputName)
+		if err := os.MkdirAll(inputDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(inputDir, filename)
+		if err := os.WriteFile(path, []byte("identical sysext bytes"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		pkg, err := ParsePackage(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packages = append(packages, *pkg)
+	}
+
+	outputDir := filepath.Join(tmpDir, "output")
+	if err := NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputDir},
+		packages,
+	); err != nil {
+		t.Fatalf("Generate() rejected identical duplicate sysext bytes: %v", err)
+	}
+
+	manifest, err := os.ReadFile(filepath.Join(outputDir, "ext", "same", "SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Split(strings.TrimSpace(string(manifest)), "\n"); len(lines) != 1 {
+		t.Fatalf("SHA256SUMS has %d entries for an identical duplicate, want 1:\n%s", len(lines), manifest)
+	}
+}
+
+func TestGenerateRejectsUnverifiableDuplicateDestination(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "output")
+	filename := "same_1.0_13_x86-64.raw"
+	packages := []models.Package{
+		{Name: "same", Version: "1.0", Architecture: "x86-64", Filename: filename},
+		{Name: "same", Version: "1.0", Architecture: "x86-64", Filename: filename},
+	}
+
+	err := NewGenerator("https://example.com/repo", nil).Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputDir},
+		packages,
+	)
+	if err == nil {
+		t.Fatal("Generate() accepted an unverifiable duplicate sysext destination")
+	}
+	if !strings.Contains(err.Error(), "cannot verify duplicate sysext destination") &&
+		!strings.Contains(err.Error(), "conflicting sysext artifacts for identity") {
+		t.Fatalf("Generate() returned unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("Generate() mutated output before rejecting unverifiable duplicate: %v", statErr)
+	}
+}
+
 func TestIncrementalMode(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "repogen-test-sysext-incr-")
 	if err != nil {
@@ -683,6 +838,75 @@ func TestIncrementalIndexIncludesExtensionsFromExistingManifests(t *testing.T) {
 	}
 	if got, want := string(index), "alpha\nbeta\n"; got != want {
 		t.Errorf("index = %q, want %q", got, want)
+	}
+}
+
+func TestNonIncrementalGenerationRetainsExistingSignedExtensions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "repository")
+	metadataSigner := newTestSigner(t)
+	gen := NewGenerator("https://example.com/repo", metadataSigner)
+
+	incusPath := filepath.Join(inputDir, "incus_7.3_13_x86-64.raw")
+	if err := os.WriteFile(incusPath, []byte("incus"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	incus, err := ParsePackage(incusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gen.Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputDir},
+		[]models.Package{*incus},
+	); err != nil {
+		t.Fatal(err)
+	}
+	incusManifestPath := filepath.Join(outputDir, "ext", "incus", "SHA256SUMS")
+	incusManifest, err := os.ReadFile(incusManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dockerPath := filepath.Join(inputDir, "docker_27.0_14_x86-64.raw")
+	if err := os.WriteFile(dockerPath, []byte("docker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	docker, err := ParsePackage(dockerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gen.Generate(
+		context.Background(),
+		&models.RepositoryConfig{OutputDir: outputDir},
+		[]models.Package{*docker},
+	); err != nil {
+		t.Fatalf("non-incremental Generate() failed: %v", err)
+	}
+
+	retainedManifest, err := os.ReadFile(incusManifestPath)
+	if err != nil {
+		t.Fatalf("non-incremental generation removed the retained manifest: %v", err)
+	}
+	if !bytes.Equal(retainedManifest, incusManifest) {
+		t.Fatalf("non-incremental generation changed the retained manifest:\n%s", retainedManifest)
+	}
+	for _, relative := range []string{
+		filepath.Join("incus", "SHA256SUMS.gpg"),
+		filepath.Join("incus", "incus.transfer"),
+		filepath.Join("incus", filepath.Base(incusPath)),
+		filepath.Join("docker", "SHA256SUMS"),
+	} {
+		if _, err := os.Stat(filepath.Join(outputDir, "ext", relative)); err != nil {
+			t.Fatalf("expected retained or generated path %s: %v", relative, err)
+		}
+	}
+	index, err := os.ReadFile(filepath.Join(outputDir, "ext", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(index), "docker\nincus\n"; got != want {
+		t.Fatalf("non-incremental index = %q, want %q", got, want)
 	}
 }
 
@@ -926,11 +1150,12 @@ func TestIncrementalReconciliationRejectsCorruptManifestWithoutMutation(t *testi
 func TestIncrementalReconciliationRejectsInvalidSignedMetadata(t *testing.T) {
 	metadataSigner := newTestSigner(t)
 	for _, testCase := range []struct {
-		name   string
-		target string
+		name           string
+		relativeTarget string
 	}{
-		{name: "signature", target: "SHA256SUMS.gpg"},
-		{name: "transfer", target: "incus.transfer"},
+		{name: "signature", relativeTarget: filepath.Join("incus", "SHA256SUMS.gpg")},
+		{name: "transfer", relativeTarget: filepath.Join("incus", "incus.transfer")},
+		{name: "index", relativeTarget: "index"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			inputDir := t.TempDir()
@@ -950,7 +1175,7 @@ func TestIncrementalReconciliationRejectsInvalidSignedMetadata(t *testing.T) {
 			); err != nil {
 				t.Fatal(err)
 			}
-			target := filepath.Join(outputDir, "ext", "incus", testCase.target)
+			target := filepath.Join(outputDir, "ext", testCase.relativeTarget)
 			if err := os.WriteFile(target, []byte("corrupt"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -970,7 +1195,7 @@ func TestIncrementalReconciliationRejectsInvalidSignedMetadata(t *testing.T) {
 				[]models.Package{*forky},
 			)
 			if err == nil {
-				t.Fatalf("Generate() accepted corrupt %s", testCase.target)
+				t.Fatalf("Generate() accepted corrupt %s", testCase.relativeTarget)
 			}
 			assertTreeSnapshot(t, filepath.Join(outputDir, "ext"), before)
 		})
