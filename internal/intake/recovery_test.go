@@ -560,6 +560,122 @@ func TestReconcilerVerifiesCompletedResultAfterPolicyRevocation(t *testing.T) {
 	}
 }
 
+func TestReconcileRequestProcessesOnlyTheExactSelectedReceipt(t *testing.T) {
+	store := newFixtureFileStore(t)
+	request := fixtureRequest(t, store, "trixie", "initialize", nil)
+	receipt, err := (Recorder{Store: store}).Accept(
+		context.Background(),
+		request.Producer,
+		"selected",
+		fixtureDigest("policy"),
+		request,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := &fixtureWriter{}
+	reconciler := fixtureReconciler(store, writer)
+	if err := reconciler.ReconcileRequest(
+		context.Background(),
+		"trixie",
+		receipt.RequestSHA256,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := writer.appliedSequences(); fmt.Sprint(got) != "[1]" {
+		t.Fatalf("selected applied sequences = %v, want [1]", got)
+	}
+	if err := reconciler.ReconcileRequest(
+		context.Background(),
+		"trixie",
+		receipt.RequestSHA256,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := writer.appliedSequences(); fmt.Sprint(got) != "[1]" {
+		t.Fatalf("replay applied sequences = %v, want [1]", got)
+	}
+}
+
+func TestReconcileRequestRejectsUnexpectedOrUnresolvedReceiptsBeforeWrite(t *testing.T) {
+	t.Run("later receipt", func(t *testing.T) {
+		store := newFixtureFileStore(t)
+		first := fixtureRequest(t, store, "trixie", "initialize", nil)
+		firstReceipt, err := (Recorder{Store: store}).Accept(
+			context.Background(),
+			first.Producer,
+			"first",
+			fixtureDigest("policy"),
+			first,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prior := fixtureState(*firstReceipt)
+		second := fixtureRequest(t, store, "trixie", "reconcile", &prior)
+		if _, err := (Recorder{Store: store}).Accept(
+			context.Background(),
+			second.Producer,
+			"second",
+			fixtureDigest("policy"),
+			second,
+		); err != nil {
+			t.Fatal(err)
+		}
+		writer := &fixtureWriter{}
+		err = fixtureReconciler(store, writer).ReconcileRequest(
+			context.Background(),
+			"trixie",
+			firstReceipt.RequestSHA256,
+		)
+		if !errors.Is(err, ErrState) {
+			t.Fatalf("unexpected receipt error = %v, want ErrState", err)
+		}
+		if got := writer.appliedSequences(); len(got) != 0 {
+			t.Fatalf("unexpected receipt applied sequences %v", got)
+		}
+	})
+
+	t.Run("unresolved predecessor", func(t *testing.T) {
+		store := newFixtureFileStore(t)
+		first := fixtureRequest(t, store, "trixie", "initialize", nil)
+		firstReceipt, err := (Recorder{Store: store}).Accept(
+			context.Background(),
+			first.Producer,
+			"first",
+			fixtureDigest("policy"),
+			first,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prior := fixtureState(*firstReceipt)
+		second := fixtureRequest(t, store, "trixie", "reconcile", &prior)
+		secondReceipt, err := (Recorder{Store: store}).Accept(
+			context.Background(),
+			second.Producer,
+			"second",
+			fixtureDigest("policy"),
+			second,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writer := &fixtureWriter{}
+		err = fixtureReconciler(store, writer).ReconcileRequest(
+			context.Background(),
+			"trixie",
+			secondReceipt.RequestSHA256,
+		)
+		if !errors.Is(err, ErrState) {
+			t.Fatalf("unresolved predecessor error = %v, want ErrState", err)
+		}
+		if got := writer.appliedSequences(); len(got) != 0 {
+			t.Fatalf("unresolved predecessor applied sequences %v", got)
+		}
+	})
+}
+
 func newFixtureFileStore(t *testing.T) *FileStore {
 	t.Helper()
 	store, err := OpenFileStore(t.TempDir())

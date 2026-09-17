@@ -129,9 +129,23 @@ object digests before reconcile, serializes by immutable codename, and limits
 writes to conditional `pool/main` objects and one `dists/<codename>` target.
 Every write is read back; indexes precede Release and Release.gpg, and
 InRelease is always last. The implementation has fake-store failure
-injection and real local `gpgv`/apt fixture coverage. It deliberately has no
-R2 credential or provider adapter, no production CLI, and no authority to run
-a canary. The legacy composite action rejects Debian rather than fall back to
+injection and real local `gpgv`/apt fixture coverage.
+
+`reconcile-production` adds a separately gated R2/S3 origin adapter around
+that transaction and the durable intake reconciler. It accepts only canonical
+digest-pinned nonsecret configuration and authorization policy files, explicit
+mode-`0600` credential/signing inputs, one exact receipt, one exact `trixie`
+target, and policy-listed pool objects. Conditional creates use
+`If-None-Match`; replacements bind a full-body SHA-256 and the same GET's ETag
+to `If-Match`. The adapter exposes no delete, copy, multipart, broad sync,
+cache, stable, other-codename, root-public-key, or sysext operation.
+
+This code does not authorize a canary or prove provider-side path permissions,
+credential policy, signer custody, authoritative target absence, or operator
+identity. Its non-stealing R2 lock is a liveness aid, not fencing or a
+technical safety boundary. See
+[the exact production contract](docs/specs/production-r2-reconciliation.md).
+The legacy composite action still rejects Debian rather than fall back to
 broad sync.
 
 R7 adds a Linux-only local production commit path. It stages a complete

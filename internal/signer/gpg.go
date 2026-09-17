@@ -16,8 +16,9 @@ import (
 
 // GPGSigner implements Signer interface using GPG
 type GPGSigner struct {
-	entity  *openpgp.Entity
-	keyPath string // Path to the private key file for GPG command-line operations
+	entity     *openpgp.Entity
+	keyPath    string // Path to the private key file for GPG command-line operations
+	passphrase []byte
 
 	// Cached GPG home directory for CLI operations.
 	// Created lazily on first use, cleaned up by Close().
@@ -77,8 +78,9 @@ func NewGPGSigner(keyPath, passphrase string) (*GPGSigner, error) {
 	}
 
 	return &GPGSigner{
-		entity:  entity,
-		keyPath: keyPath,
+		entity:     entity,
+		keyPath:    keyPath,
+		passphrase: append([]byte(nil), passphrase...),
 	}, nil
 }
 
@@ -115,6 +117,10 @@ func (s *GPGSigner) ensureGPGHome() (string, error) {
 // Close removes the cached GPG home directory. It is safe to call multiple
 // times or on a signer that never performed CLI signing.
 func (s *GPGSigner) Close() error {
+	for index := range s.passphrase {
+		s.passphrase[index] = 0
+	}
+	s.passphrase = nil
 	if s.gpgHome != "" {
 		return os.RemoveAll(s.gpgHome)
 	}
@@ -138,7 +144,7 @@ func (s *GPGSigner) SignCleartext(data []byte) ([]byte, error) {
 	}
 
 	// Sign with GPG
-	cmd := exec.Command("gpg", "--homedir", gpgHome, "--clearsign", "--armor",
+	cmd := s.signingCommand("--homedir", gpgHome, "--clearsign", "--armor",
 		"--digest-algo", "SHA512", "--batch", "--yes", inputFile)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -187,7 +193,7 @@ func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
 	// Sign with GPG - use --detach-sign for binary signature
 	// --no-armor ensures binary output (old packet format compatible with Pacman)
 	outputFile := filepath.Join(gpgHome, "output.sig")
-	cmd := exec.Command("gpg", "--homedir", gpgHome, "--detach-sign",
+	cmd := s.signingCommand("--homedir", gpgHome, "--detach-sign",
 		"--digest-algo", "SHA512", "--batch", "--yes",
 		"--output", outputFile, inputFile)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -220,7 +226,7 @@ func (s *GPGSigner) SignDetachedBinaryFromFile(filePath string) ([]byte, error) 
 	// Sign with GPG - use --detach-sign for binary signature
 	// --no-armor ensures binary output (old packet format compatible with Pacman)
 	outputFile := filepath.Join(gpgHome, "output.sig")
-	cmd := exec.Command("gpg", "--homedir", gpgHome, "--detach-sign",
+	cmd := s.signingCommand("--homedir", gpgHome, "--detach-sign",
 		"--digest-algo", "SHA512", "--batch", "--yes",
 		"--output", outputFile, inputFile)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -256,4 +262,17 @@ func (s *GPGSigner) GetPublicKey() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func (s *GPGSigner) signingCommand(arguments ...string) *exec.Cmd {
+	if len(s.passphrase) == 0 {
+		return exec.Command("gpg", arguments...)
+	}
+	arguments = append(
+		[]string{"--pinentry-mode", "loopback", "--passphrase-fd", "0"},
+		arguments...,
+	)
+	command := exec.Command("gpg", arguments...)
+	command.Stdin = bytes.NewReader(append(append([]byte(nil), s.passphrase...), '\n'))
+	return command
 }
