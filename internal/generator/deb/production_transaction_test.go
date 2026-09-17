@@ -124,12 +124,21 @@ func TestValidateProductionWritePlanRequiresCompleteExpectedPrior(t *testing.T) 
 
 	tests := []struct {
 		name   string
+		want   string
 		mutate func(map[string]ProductionObjectDigest)
 	}{
 		{
 			name: "missing object",
 			mutate: func(expected map[string]ProductionObjectDigest) {
 				delete(expected, "dists/trixie/main/binary-amd64/Packages")
+			},
+		},
+		{
+			name: "superfluous object",
+			want: "want exactly",
+			mutate: func(expected map[string]ProductionObjectDigest) {
+				expected["dists/trixie/unexpected"] =
+					expected["dists/trixie/main/binary-amd64/Packages"]
 			},
 		},
 		{
@@ -164,6 +173,9 @@ func TestValidateProductionWritePlanRequiresCompleteExpectedPrior(t *testing.T) 
 			)
 			if !errors.Is(err, ErrPublicationCandidate) {
 				t.Fatalf("validateProductionWritePlan() error = %v, want ErrPublicationCandidate", err)
+			}
+			if testCase.want != "" && !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("validateProductionWritePlan() error = %v, want %q", err, testCase.want)
 			}
 		})
 	}
