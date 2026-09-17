@@ -412,8 +412,10 @@ merge and separately human-published, digest-verified release under
   expected-prior checks, target-scoped ordered writes, and remote read-back.
 - [x] Resolve the authoritative Repogen release artifact contract in the
   local candidate; external issue closure and release remain separate.
-- [ ] Merge/configure a real provider adapter and execute the separately
-  authorized retained `gchlog` canary.
+- [x] Implement a local target-scoped R2 adapter and one-request recovery CLI
+  with exact config/policy/signer/executable binding and adversarial tests.
+- [ ] Independently review, merge/release, configure, and separately authorize
+  the exact adapter before executing the retained `gchlog` canary.
 - **Done when:** failure injection exposes no incomplete generation and the
   separately authorized `gchlog` canary passes real `gpgv` and apt install
   while `stable` remains byte-identical.

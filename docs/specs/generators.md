@@ -118,10 +118,12 @@ codename lock, then writes only:
 
 Every successful write is streamed back and checked for exact size and
 SHA-256. Reconcile uses compare-and-replace against each verified prior
-digest. The interface exposes neither broad sync nor deletion. It has no
-S3/R2 adapter, credentials, production CLI, or publication authority;
-fake-store failure injection and local GPG/APT fixtures demonstrate the
-transaction semantics without representing a production canary.
+digest. The interface exposes neither broad sync nor deletion. The separate
+[`reconcile-production` contract](production-r2-reconciliation.md) supplies a
+target-scoped R2/S3 adapter and exact one-receipt CLI around this interface.
+That implementation is not publication authority: fake-store failure
+injection, local GPG/APT fixtures, and code allowlists do not represent a
+production canary or provider-enforced path permissions.
 
 ### Atomic local production generation (R7)
 

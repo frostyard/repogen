@@ -83,6 +83,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   review applies; `docs/review-rubric.md` is its conformance alias
 - [R10 release acceptance](specs/r10-release-acceptance.md) — exact local,
   merge, and published-release evidence for the hardened Repogen artifact
+- [Exact R2 production reconciliation](specs/production-r2-reconciliation.md)
+  — one-request CLI, canonical configuration/policy, conditional S3 writes,
+  target scoping, signer/executable binding, and honest lock limitations
 
 ### Plans
 

@@ -18,6 +18,17 @@ const maxSafeJSONInteger = 9007199254740991
 type canonicalObject map[string]any
 type canonicalArray []any
 
+// CanonicalJSON returns the RFC 8785 subset used by retained intake records.
+func CanonicalJSON(value any) ([]byte, error) {
+	return canonicalJSON(value)
+}
+
+// DecodeCanonical verifies canonical bytes and rejects unknown fields before
+// decoding the retained value.
+func DecodeCanonical(data []byte, destination any) error {
+	return decodeCanonical(data, destination)
+}
+
 func canonicalJSON(value any) ([]byte, error) {
 	data, err := json.Marshal(value)
 	if err != nil {

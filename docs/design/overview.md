@@ -24,6 +24,9 @@ internal/
     root.go                   Cobra root command ("repogen")
     generate.go               "generate" subcommand — orchestrates the full pipeline
     production.go             R2 production Debian preflight — validation only, no writes
+    reconcile_production.go   exact one-receipt R2 production entry point
+  objectstore/r2/             scoped S3 adapter and non-stealing liveness lock
+  production/                 canonical config/policy, provenance builder, execution binding
   models/
     package.go                Package struct — universal package metadata model
     repository.go             RepositoryConfig struct — all CLI flags/config
@@ -110,9 +113,7 @@ secret-free manifests. Publication holds a target lock, verifies complete
 expected-prior state before writes, conditionally creates shared/immutable
 objects, compare-and-replaces only the enumerated suite metadata, reads every
 object back, and writes InRelease last. The provider-neutral interface has
-failure-injected fake-store and real local `gpgv`/apt fixture coverage; there
-is intentionally no R2 adapter, production CLI, credential path, or claim
-that repository permissions enforce the interface.
+failure-injected fake-store and real local `gpgv`/apt fixture coverage.
 
 R6 makes the existing Debian metadata generator deterministic. Package
 stanzas use a total name/lexicographic-version-string/architecture/filename
@@ -187,11 +188,32 @@ uses the scoped production transaction and can resume a partial publication
 only when each observed object is exact prior bytes, exact candidate bytes,
 or authoritatively absent where allowed.
 
-These primitives do not connect `validate-production` to a network endpoint,
-provide an R2 adapter or credential path, configure a schedule, or authorize a
-production operation. Capability separation still depends on a future
-provider adapter and credential configuration and is not technically enforced
-by these library interfaces. Atomic local replacement requires Linux
+The separate `reconcile-production` command composes one exact durable receipt
+through `intake.Reconciler`, `ProductionRecoveryWriter`, and
+`RecoverProductionTransaction`. Canonical nonsecret configuration and policy
+bytes bind the R2 account/endpoint/buckets/prefixes, target, request,
+provenance, operator record, producer lineage, executable, signer, release
+time, and exact pool objects. Credentials and signing material come only from
+explicit regular mode-`0600` files; the AWS client is built directly from
+static credentials and does not load ambient discovery.
+
+The R2 adapter exposes only GetObject, PutObject, and ListObjectsV2. Creates
+use `If-None-Match: *`; replacements hash a complete GET and bind its ETag to
+`If-Match`; list pagination rejects duplicate keys, repeated/missing tokens,
+and out-of-prefix results. Code rejects stable, other-codename, ext, root
+public-key, and unapproved pool writes before provider I/O. Read-back uses the
+S3 origin endpoint. The CAS lock never steals a held record and can remain
+stuck after a crash; it is a liveness aid rather than fencing. Object
+preconditions and full read-back remain the safety boundary.
+
+This implementation does not configure a schedule or authorize a production
+operation. R2 tokens are bucket-scoped, so the code allowlist and advisory
+policy are not provider-enforced path permissions. Effective provider
+permissions, authoritative target absence, credential and signer custody,
+operator identity, exact operation approval, and post-visibility validation
+remain external gates. See
+[the exact production contract](../specs/production-r2-reconciliation.md).
+Atomic local replacement requires Linux
 `renameat2`; unsupported platforms fail rather than use a two-rename fallback.
 Each local generation still costs O(repository size) I/O and hashing and
 requires roughly twice the repository's disk space while the sibling exists.

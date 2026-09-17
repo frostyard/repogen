@@ -310,6 +310,28 @@ func (r Reconciler) ReconcileAll(ctx context.Context) error {
 }
 
 func (r Reconciler) ReconcileTarget(ctx context.Context, target string) (retErr error) {
+	return r.reconcileTarget(ctx, target, "")
+}
+
+// ReconcileRequest verifies completed predecessors and processes exactly one
+// selected request. It never drains a later receipt under the selected
+// request's authorization.
+func (r Reconciler) ReconcileRequest(
+	ctx context.Context,
+	target string,
+	requestSHA256 string,
+) error {
+	if !validDigest(requestSHA256) {
+		return fmt.Errorf("%w: exact request digest is required", ErrState)
+	}
+	return r.reconcileTarget(ctx, target, requestSHA256)
+}
+
+func (r Reconciler) reconcileTarget(
+	ctx context.Context,
+	target string,
+	selectedRequestSHA256 string,
+) (retErr error) {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -329,42 +351,32 @@ func (r Reconciler) ReconcileTarget(ctx context.Context, target string) (retErr 
 		}
 	}()
 
-	keys, err := r.Store.List(ctx, receiptPrefix(r.Kind, target))
+	receipts, err := r.loadReceipts(ctx, target)
 	if err != nil {
-		return fmt.Errorf("%w: enumerate target receipts: %v", ErrState, err)
+		return err
 	}
-	receipts := make([]Receipt, 0, len(keys))
-	for _, key := range keys {
-		keyReceipt, err := parseReceiptKey(key)
-		if err != nil {
-			return err
+
+	selectedIndex := -1
+	if selectedRequestSHA256 != "" {
+		for index, receipt := range receipts {
+			if receipt.RequestSHA256 == selectedRequestSHA256 {
+				selectedIndex = index
+				break
+			}
 		}
-		data, err := readRecord(ctx, r.Store, key)
-		if err != nil {
-			return fmt.Errorf("%w: read receipt: %v", ErrState, err)
+		if selectedIndex < 0 {
+			return fmt.Errorf("%w: selected request has no retained receipt", ErrNotFound)
 		}
-		var receipt Receipt
-		if err := decodeCanonical(data, &receipt); err != nil {
-			return err
-		}
-		if !receiptMatchesKey(receipt, keyReceipt) ||
-			receipt.SchemaVersion != schemaVersion ||
-			!validDigest(receipt.PolicySHA256) {
-			return fmt.Errorf("%w: receipt does not match its immutable key", ErrIntegrity)
-		}
-		receipts = append(receipts, receipt)
-	}
-	sort.Slice(receipts, func(i, j int) bool {
-		return receipts[i].Sequence < receipts[j].Sequence
-	})
-	for index := 1; index < len(receipts); index++ {
-		if receipts[index-1].Sequence == receipts[index].Sequence {
-			return fmt.Errorf("%w: duplicate receipt sequence %d", ErrIntegrity, receipts[index].Sequence)
+		if selectedIndex != len(receipts)-1 {
+			return fmt.Errorf(
+				"%w: target contains an unexpected receipt after selected request",
+				ErrState,
+			)
 		}
 	}
 
 	var previousState string
-	for _, receipt := range receipts {
+	for index, receipt := range receipts {
 		request, err := loadRequest(ctx, r.Store, receipt.RequestSHA256)
 		if err != nil {
 			return err
@@ -381,6 +393,12 @@ func (r Reconciler) ReconcileTarget(ctx context.Context, target string) (retErr 
 		}
 		result, err := r.loadResult(ctx, receipt, request)
 		if errors.Is(err, ErrNotFound) {
+			if selectedRequestSHA256 != "" && index != selectedIndex {
+				return fmt.Errorf(
+					"%w: selected request has an unresolved predecessor",
+					ErrState,
+				)
+			}
 			if err := r.Authorizer.Authorize(ctx, receipt, request); err != nil {
 				return fmt.Errorf("%w: current policy denied request: %v", ErrState, err)
 			}
@@ -392,6 +410,47 @@ func (r Reconciler) ReconcileTarget(ctx context.Context, target string) (retErr 
 		previousState = result.StateSHA256
 	}
 	return nil
+}
+
+func (r Reconciler) loadReceipts(ctx context.Context, target string) ([]Receipt, error) {
+	keys, err := r.Store.List(ctx, receiptPrefix(r.Kind, target))
+	if err != nil {
+		return nil, fmt.Errorf("%w: enumerate target receipts: %v", ErrState, err)
+	}
+	receipts := make([]Receipt, 0, len(keys))
+	for _, key := range keys {
+		keyReceipt, err := parseReceiptKey(key)
+		if err != nil {
+			return nil, err
+		}
+		data, err := readRecord(ctx, r.Store, key)
+		if err != nil {
+			return nil, fmt.Errorf("%w: read receipt: %v", ErrState, err)
+		}
+		var receipt Receipt
+		if err := decodeCanonical(data, &receipt); err != nil {
+			return nil, err
+		}
+		if !receiptMatchesKey(receipt, keyReceipt) ||
+			receipt.SchemaVersion != schemaVersion ||
+			!validDigest(receipt.PolicySHA256) {
+			return nil, fmt.Errorf("%w: receipt does not match its immutable key", ErrIntegrity)
+		}
+		receipts = append(receipts, receipt)
+	}
+	sort.Slice(receipts, func(i, j int) bool {
+		return receipts[i].Sequence < receipts[j].Sequence
+	})
+	for index := 1; index < len(receipts); index++ {
+		if receipts[index-1].Sequence == receipts[index].Sequence {
+			return nil, fmt.Errorf(
+				"%w: duplicate receipt sequence %d",
+				ErrIntegrity,
+				receipts[index].Sequence,
+			)
+		}
+	}
+	return receipts, nil
 }
 
 func (r Reconciler) validate() error {
