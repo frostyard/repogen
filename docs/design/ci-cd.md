@@ -50,6 +50,25 @@ step-by-step operator procedure is
 Neither a local snapshot nor a successful release workflow alone proves the
 published assets and embedded identities.
 
+## GitHub Action: `reconcile-production`
+
+**Location**: `.github/actions/reconcile-production/action.yml`
+
+A composite action, separate from the legacy publisher, that installs an
+exact repogen release (tag plus full commit) and runs
+`repogen reconcile-production` for one retained trixie request. It shares no
+steps or inputs with `publish-to-r2` and has no codename, suite or target
+input. `scripts/validate-reconcile-inputs.sh` refuses bad pins, symlinked or
+mismatched config/policy files, any target but `trixie`, and request,
+account, version or commit mismatches before anything is installed. Secrets
+are written only to private mode-`0600` files and removed with `if: always()`.
+No workflow in this repository calls it. Running it still needs a release
+that contains it, the intake and coordination buckets, an intake-submit path,
+and a concrete authorized policy. See the
+[CI surface](../specs/production-r2-reconciliation.md#ci-surface) of the
+production contract and the
+[templates](../../production/templates/README.md).
+
 ## GitHub Action: `publish-to-r2`
 
 **Location**: `.github/actions/publish-to-r2/action.yml`

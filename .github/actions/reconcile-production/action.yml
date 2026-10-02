@@ -1,0 +1,147 @@
+name: 'Reconcile production (trixie)'
+description: >-
+  Install an exact repogen release and run `repogen reconcile-production` for
+  one retained trixie request, using digest-pinned config and authorization
+  policy files and secrets written only to private mode-0600 files. The target
+  is fixed to trixie by the pinned config; the frozen stable suite is refused.
+author: 'Frostyard'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  repogen-version:
+    description: 'Exact repogen release tag (vMAJOR.MINOR.PATCH)'
+    required: true
+  repogen-commit:
+    description: 'Full 40-hex commit the repogen release tag must resolve to'
+    required: true
+  config:
+    description: 'Path to the canonical production config (regular file)'
+    required: true
+  config-sha256:
+    description: 'Lowercase SHA-256 of the exact config bytes'
+    required: true
+  policy:
+    description: 'Path to the canonical authorization policy (regular file)'
+    required: true
+  policy-sha256:
+    description: 'Lowercase SHA-256 of the exact policy bytes'
+    required: true
+  request-sha256:
+    description: 'Lowercase SHA-256 of the retained request'
+    required: true
+  provenance-sha256:
+    description: 'Lowercase SHA-256 of the retained provenance'
+    required: true
+  r2-account-id:
+    description: 'R2 account id; must equal the config account_id'
+    required: true
+  r2-access-key-id:
+    description: 'R2 access key id'
+    required: true
+  r2-secret-access-key:
+    description: 'R2 secret access key'
+    required: true
+  gpg-private-key:
+    description: 'Repository signing key, ASCII-armored or base64-encoded'
+    required: true
+  gpg-passphrase:
+    description: 'Signing key passphrase, if the key has one'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config }}
+        CONFIG_SHA256: ${{ inputs.config-sha256 }}
+        POLICY_FILE: ${{ inputs.policy }}
+        POLICY_SHA256: ${{ inputs.policy-sha256 }}
+        REQUEST_SHA256: ${{ inputs.request-sha256 }}
+        PROVENANCE_SHA256: ${{ inputs.provenance-sha256 }}
+        R2_ACCOUNT_ID: ${{ inputs.r2-account-id }}
+        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+        SIGNING_KEY: ${{ inputs.gpg-private-key }}
+        REPOGEN_VERSION: ${{ inputs.repogen-version }}
+        REPOGEN_COMMIT: ${{ inputs.repogen-commit }}
+      run: |
+        sh "$GITHUB_ACTION_PATH/../../../scripts/validate-reconcile-inputs.sh"
+
+    - name: Install repogen
+      shell: bash
+      env:
+        REPOGEN_VERSION: ${{ inputs.repogen-version }}
+        REPOGEN_COMMIT: ${{ inputs.repogen-commit }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/repogen-bin"
+        "$GITHUB_ACTION_PATH/../../../scripts/install-release.sh" \
+          --github-release \
+          "$REPOGEN_VERSION" \
+          "$REPOGEN_COMMIT" \
+          "$(uname -m)" \
+          "$RUNNER_TEMP/repogen-bin/repogen"
+
+    - name: Reconcile
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config }}
+        CONFIG_SHA256: ${{ inputs.config-sha256 }}
+        POLICY_FILE: ${{ inputs.policy }}
+        POLICY_SHA256: ${{ inputs.policy-sha256 }}
+        REQUEST_SHA256: ${{ inputs.request-sha256 }}
+        PROVENANCE_SHA256: ${{ inputs.provenance-sha256 }}
+        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
+      run: |
+        set -euo pipefail
+        umask 077
+        secrets="$RUNNER_TEMP/repogen-reconcile-secrets"
+        rm -rf "$secrets"
+        mkdir -m 700 "$secrets"
+
+        # Credentials are read from the environment inside jq, never from argv.
+        jq -n '{access_key_id: env.R2_ACCESS_KEY_ID, secret_access_key: env.R2_SECRET_ACCESS_KEY}' \
+          > "$secrets/r2-credentials.json"
+
+        if printf '%s\n' "$GPG_PRIVATE_KEY" | head -n 1 | grep -q 'BEGIN PGP'; then
+          printf '%s\n' "$GPG_PRIVATE_KEY" > "$secrets/signing-key.asc"
+        else
+          printf '%s' "$GPG_PRIVATE_KEY" | base64 -d > "$secrets/signing-key.asc"
+        fi
+        if ! head -n 1 "$secrets/signing-key.asc" | grep -q 'BEGIN PGP'; then
+          echo "::error::gpg-private-key is neither an ASCII-armored nor a base64-encoded PGP key"
+          exit 1
+        fi
+
+        passphrase_args=()
+        if [ -n "$GPG_PASSPHRASE" ]; then
+          printf '%s' "$GPG_PASSPHRASE" > "$secrets/signing-passphrase"
+          passphrase_args=(--signing-passphrase-file "$secrets/signing-passphrase")
+        fi
+        chmod 600 "$secrets"/*
+
+        "$RUNNER_TEMP/repogen-bin/repogen" reconcile-production \
+          --config "$CONFIG_FILE" \
+          --config-sha256 "$CONFIG_SHA256" \
+          --policy "$POLICY_FILE" \
+          --policy-sha256 "$POLICY_SHA256" \
+          --request-sha256 "$REQUEST_SHA256" \
+          --provenance-sha256 "$PROVENANCE_SHA256" \
+          --credentials-file "$secrets/r2-credentials.json" \
+          --signing-key "$secrets/signing-key.asc" \
+          "${passphrase_args[@]}"
+
+    - name: Remove secrets
+      if: always()
+      shell: bash
+      run: |
+        rm -rf "$RUNNER_TEMP/repogen-reconcile-secrets"
