@@ -20,6 +20,7 @@ func TestGeneratePackagesFileMultilineDescription(t *testing.T) {
 		Version:      "1:7.2-debian13-202607011055",
 		Architecture: "amd64",
 		Filename:     "pool/main/i/incus-base/incus-base.deb",
+		SHA256Sum:    "0000000000000000000000000000000000000000000000000000000000000000",
 		Description: strings.Join([]string{
 			"Incus - Container and virtualization daemon (container-only)",
 			"Incus provides the ability to run containers and virtual machines.",

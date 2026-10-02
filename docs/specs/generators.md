@@ -300,9 +300,18 @@ parses Debian control format (key: value with continuation lines).
 
 `ParseExistingMetadata()` reads `Packages` or `Packages.gz` files from
 existing `dists/` structure and reconstructs `Package` structs for the
-generic incremental command. Its legacy fallback behavior is not used by the
-production path; production reconcile uses the strict signed verifier
-described above.
+generic incremental command ([ADR-0014](../adr/0014-debian-incremental-restore-fails-closed.md)).
+It returns an error wrapping `generator.ErrNoExistingMetadata` only when
+`dists/<codename>` is absent, and only then does `generate` initialize a
+fresh suite. Otherwise, for each selected architecture and component it reads
+every existing `Packages` and `Packages.gz`; when both exist their decoded
+bytes must be identical (a dangling symlink counts as existing and fails). It fails on any of
+these: an existing index outside the selected architectures/components, an
+existing suite with no selected index, an unreadable index, a malformed field
+line or invalid `Size`, or a stanza missing `Package`, `Version`, `Architecture`, `Filename` or
+`SHA256`. `generate` stops before any format writes. Other package types keep
+their existing fallback. The production path does not use this parser;
+production reconcile uses the strict signed verifier described above.
 
 ---
 

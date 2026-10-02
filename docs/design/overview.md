@@ -266,11 +266,14 @@ map[string]interface{}` for format-specific data (e.g., RPM's `Release`,
 
 ### Incremental Mode
 
-*Decision: [ADR-0011 — incremental state from published metadata](../adr/0011-incremental-state-from-published-metadata.md).*
+*Decision: [ADR-0011 — incremental state from published metadata](../adr/0011-incremental-state-from-published-metadata.md); Debian restore: [ADR-0014](../adr/0014-debian-incremental-restore-fails-closed.md).*
 
 `--incremental` merges new packages into an existing repository without
 removing old ones. The workflow:
-1. Parse existing metadata (`ParseExistingMetadata`)
+1. Parse existing metadata (`ParseExistingMetadata`) for every format before
+   any format writes. For Debian, only `generator.ErrNoExistingMetadata`
+   (`dists/<codename>` absent) falls back to a fresh suite; an unreadable,
+   malformed or unselected existing index stops the run before writing
 2. Detect conflicts using `PackageIdentity()` (format-aware: e.g., RPM
    includes Release field, Homebrew uses name+version only)
 3. Either error on conflicts or skip them (`--skip-duplicates`)
@@ -311,7 +314,7 @@ All configuration is passed via CLI flags to `models.RepositoryConfig`:
 | `--origin` | `Repogen Repository` | Repository origin name |
 | `--label` | (same as origin) | Repository label |
 | `--repo-name` | | Repository name (required for Pacman, optional for RPM .repo naming) |
-| `--codename` | `stable` | Debian codename |
+| `--codename` | none | Debian codename; required when Debian packages are present (`--suite` must equal it) |
 | `--suite` | (same as codename) | Debian suite |
 | `--components` | `main` | Debian components |
 | `--arch` | `amd64` | Architectures to support |

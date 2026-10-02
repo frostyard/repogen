@@ -897,6 +897,7 @@ func verifyDebianChecksums(t *testing.T, projectRoot, testDir string) {
 	cmd := exec.Command(repoGenBin, "generate",
 		"--input-dir", fixturesDir,
 		"--output-dir", repoDir,
+		"--codename", "testing",
 		"--origin", "testing",
 		"--arch", "amd64",
 	)
@@ -905,7 +906,7 @@ func verifyDebianChecksums(t *testing.T, projectRoot, testDir string) {
 	}
 
 	// Parse Packages file
-	packagesPath := filepath.Join(repoDir, "dists", "stable", "main", "binary-amd64", "Packages")
+	packagesPath := filepath.Join(repoDir, "dists", "testing", "main", "binary-amd64", "Packages")
 	checksums, err := extractDebianChecksums(packagesPath)
 	if err != nil {
 		t.Fatalf("Failed to extract checksums from Packages file: %v", err)
