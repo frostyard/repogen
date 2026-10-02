@@ -65,6 +65,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   — Debian incremental initializes only when the suite is absent; every
   existing `Packages`/`Packages.gz` must parse, agree, and be selected, and no
   format writes until all are restored and validated
+- [ADR-0015 — Producers submit to the durable intake from CI with a submit-only command](adr/0015-ci-run-submit-only-intake.md)
+  — `submit-intake` is the T0 equivalent until R8; create-if-absent on five
+  intake prefixes, code-enforced with the existing unscoped R2 credentials
 
 ### Design
 
@@ -90,6 +93,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 - [Exact R2 production reconciliation](specs/production-r2-reconciliation.md)
   — one-request CLI, canonical configuration/policy, conditional S3 writes,
   target scoping, signer/executable binding, and honest lock limitations
+- [Durable intake submit](specs/intake-submit.md) — `repogen submit-intake`
+  flags, submit config schema, the `submit-intake` Action, write order,
+  scope and idempotency rules
 
 ### Plans
 

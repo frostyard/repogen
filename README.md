@@ -192,6 +192,11 @@ it. Canonical config and policy templates live in
 nothing, and the concrete files belong to the producer's reviewed canary
 change.
 
+Producers place requests in the durable intake with `repogen submit-intake`
+and the `.github/actions/submit-intake` Action: create-if-absent writes under
+the intake producer prefixes only, `trixie` only, from an exact release. See
+[the intake submit contract](docs/specs/intake-submit.md).
+
 The legacy composite action still rejects Debian rather than fall back to
 broad sync.
 

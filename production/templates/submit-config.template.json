@@ -1,0 +1,1 @@
+{"account_id":"REPLACE-account_id","coordination_bucket":"REPLACE-coordination_bucket","coordination_prefix":"","endpoint":"REPLACE-endpoint","intake_bucket":"REPLACE-intake_bucket","intake_prefix":"","kind":"debian","producer":"REPLACE-producer","publication_bucket":"frostyardrepo","region":"auto","schema":"org.frostyard.repogen.intake-submit-config.v1","target":"trixie"}

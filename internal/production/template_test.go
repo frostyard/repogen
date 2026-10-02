@@ -166,3 +166,33 @@ func TestTemplateFilledPolicyMatchesExecutableIdentity(t *testing.T) {
 		t.Fatal("v-prefixed repogen_version unexpectedly matched")
 	}
 }
+
+func TestSubmitConfigTemplateIsCanonicalAndUnfilledFailsValidation(t *testing.T) {
+	data := readTemplate(t, "submit-config.template.json")
+	var config SubmitConfig
+	if err := intake.DecodeCanonical(data, &config); err != nil {
+		t.Fatalf("submit config template is not canonical: %v", err)
+	}
+	encoded, err := intake.CanonicalJSON(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != string(data) {
+		t.Fatalf("submit config template is not byte-canonical:\n got %s\nwant %s", data, encoded)
+	}
+	if config.Schema != SubmitConfigSchema || config.Target != "trixie" ||
+		config.Kind != "debian" || config.PublicationBucket != "frostyardrepo" {
+		t.Fatalf("template fixed values wrong: %+v", config)
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("unfilled submit config template validated")
+	}
+	config.AccountID = "0123456789abcdef"
+	config.Endpoint = "https://0123456789abcdef.r2.cloudflarestorage.com"
+	config.IntakeBucket = "frostyard-intake"
+	config.CoordinationBucket = "frostyard-coordination"
+	config.Producer = "frostyard/gchlog"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("filled submit config template rejected: %v", err)
+	}
+}
