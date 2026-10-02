@@ -74,6 +74,67 @@ credential discovery is loaded. The signing passphrase, when needed, is read
 from a separate regular mode-`0600` file and passed to `gpg` through standard
 input with loopback pinentry, never a process argument or environment value.
 
+### CI surface
+
+The composite Action
+[`.github/actions/reconcile-production`](../../.github/actions/reconcile-production/action.yml)
+is the only CI entry point. No workflow in this repository calls it; a
+producer wires it in its own reviewed change, pinned to a repogen release that
+contains it.
+
+| Input | Required | Constraints |
+| --- | --- | --- |
+| `repogen-version` | yes | Exact `vMAJOR.MINOR.PATCH` tag; no `latest` or branch |
+| `repogen-commit` | yes | Full lowercase 40-hex commit the tag must resolve to |
+| `config`, `policy` | yes | Regular non-symlink files |
+| `config-sha256`, `policy-sha256` | yes | Lowercase SHA-256 of the exact bytes; not trimmed or normalised |
+| `request-sha256`, `provenance-sha256` | yes | Lowercase SHA-256 |
+| `r2-account-id` | yes | Equals config `account_id`; endpoint must be its R2 endpoint |
+| `r2-access-key-id`, `r2-secret-access-key` | yes | Existing R2 credentials |
+| `gpg-private-key` | yes | Existing signing key, ASCII-armored or base64 |
+| `gpg-passphrase` | no | Written to a passphrase file only when nonempty |
+
+There is no codename, suite or target input: the target comes only from the
+pinned config and must be exactly `trixie`.
+
+Steps, in order:
+
+1. **Validate inputs** runs `scripts/validate-reconcile-inputs.sh` before
+   anything is installed. It refuses a missing input, a malformed pin, a
+   config or policy that is a symlink or does not match its pin, a config or
+   policy target of `stable` (any case or padding) or anything but `trixie`,
+   a config or policy `request_sha256` other than `request-sha256`, and a
+   config account or endpoint that does not match `r2-account-id`, and a
+   policy `repogen_version` or `action_commit` other than the tag without its
+   `v` and the exact commit the binary embeds. It never
+   prints secret values.
+2. **Install repogen** runs `scripts/install-release.sh --github-release`
+   with the exact tag and commit.
+3. **Reconcile** writes the credential JSON, the decoded signing key and the
+   optional passphrase under `umask 077` into
+   `$RUNNER_TEMP/repogen-reconcile-secrets` (directory `0700`, files `0600`),
+   then runs `reconcile-production` with every flag explicit. Secrets reach
+   the step only through `env:`; jq reads the credentials with `env.`, so none is a process argument, written to
+   `$GITHUB_ENV`, or echoed.
+4. **Remove secrets** deletes that directory with `if: always()`.
+
+Canonical templates for the config and policy live in
+[`production/templates/`](../../production/templates/README.md). Their
+placeholders are deliberately invalid, so an unfilled template fails
+`Validate()`; they authorize nothing. The concrete files are written and
+digest-pinned in the producer's reviewed canary change.
+
+Prerequisites outside this repository's code before any run:
+
+- a repogen release that contains this Action and the CLI;
+- the intake and coordination buckets named in the config;
+- a submit path that places the producer's request, provenance and receipt in
+  the durable intake store (see
+  [plan 0001](../plans/0001-frostyard-production-publisher.md) T0). Until it
+  exists, `reconcile-production` has no receipt to process;
+- the person's authorization of the exact policy and the first production
+  write.
+
 ## Rules
 
 - Configuration, policy, request, and provenance digests MUST all match their

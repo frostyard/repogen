@@ -181,6 +181,17 @@ credential policy, signer custody, authoritative target absence, or operator
 identity. Its non-stealing R2 lock is a liveness aid, not fencing or a
 technical safety boundary. See
 [the exact production contract](docs/specs/production-r2-reconciliation.md).
+
+The composite Action `.github/actions/reconcile-production` runs that command
+in CI from an exact repogen release tag and commit. It validates every input
+before installing (pins, regular files, `trixie` only, `stable` refused,
+request and account binding), writes credentials and the signing key only to
+private mode-`0600` files, and removes them afterwards. No workflow here calls
+it. Canonical config and policy templates live in
+[`production/templates/`](production/templates/README.md); they authorize
+nothing, and the concrete files belong to the producer's reviewed canary
+change.
+
 The legacy composite action still rejects Debian rather than fall back to
 broad sync.
 
