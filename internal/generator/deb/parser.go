@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/frostyard/repogen/internal/generator"
 	"github.com/frostyard/repogen/internal/models"
 	"github.com/frostyard/repogen/internal/utils"
 	"github.com/klauspost/compress/zstd"
@@ -231,11 +232,48 @@ func setValue(pkg *models.Package, key, value string) {
 	}
 }
 
-// ParseExistingMetadata reads Packages files and returns existing packages
+// ParseExistingMetadata reads Packages files and returns existing packages.
+//
+// For each architecture and component it reads every existing Packages and
+// Packages.gz, which must agree. An index that exists but cannot be read or parsed, an
+// existing index outside the selected architectures/components, or an
+// existing suite with no selected index is an error: incremental generation
+// must never drop packages it failed to read. Only when dists/<codename> is
+// absent does it return an error wrapping generator.ErrNoExistingMetadata.
 func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error) {
-	var allPackages []models.Package
+	suiteDir := filepath.Join(config.OutputDir, "dists", config.Codename)
+	if _, err := os.Lstat(suiteDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no Debian suite %s: %w", suiteDir, generator.ErrNoExistingMetadata)
+		}
+		return nil, fmt.Errorf("stat %s: %w", suiteDir, err)
+	}
 
-	// Iterate through all architectures and components
+	// Every existing index must be among the selected arch/component set:
+	// otherwise regenerating Release would silently drop its packages.
+	selected := make(map[string]bool)
+	for _, arch := range config.Arches {
+		for _, comp := range config.Components {
+			selected[filepath.Join(comp, "binary-"+arch)] = true
+		}
+	}
+	existing, err := filepath.Glob(filepath.Join(suiteDir, "*", "binary-*", "Packages*"))
+	if err != nil {
+		return nil, fmt.Errorf("list indexes in %s: %w", suiteDir, err)
+	}
+	for _, path := range existing {
+		rel, err := filepath.Rel(suiteDir, filepath.Dir(path))
+		if err != nil {
+			return nil, err
+		}
+		if !selected[rel] {
+			return nil, fmt.Errorf("existing index %s is outside the selected architectures/components; include it to keep its packages", path)
+		}
+	}
+
+	var allPackages []models.Package
+	found := false
+
 	for _, arch := range config.Arches {
 		for _, comp := range config.Components {
 			packagesPath := filepath.Join(
@@ -247,66 +285,128 @@ func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]mo
 				"Packages",
 			)
 
-			// Try Packages first, fall back to Packages.gz
-			packages, err := parsePackagesFile(packagesPath)
+			packages, present, err := readIndexRepresentations(packagesPath)
 			if err != nil {
-				packagesGzPath := packagesPath + ".gz"
-				packages, err = parsePackagesGzFile(packagesGzPath)
-				if err != nil {
-					// No existing metadata for this arch/comp, skip
-					continue
-				}
+				return nil, err
 			}
-
+			if !present {
+				continue
+			}
+			found = true
 			allPackages = append(allPackages, packages...)
 		}
 	}
 
-	if len(allPackages) == 0 {
-		return nil, fmt.Errorf("no existing Debian metadata found in %s", config.OutputDir)
+	if !found {
+		return nil, fmt.Errorf("existing Debian suite %s has no Packages index for the selected architectures", suiteDir)
 	}
 
 	return allPackages, nil
 }
 
-func parsePackagesFile(path string) ([]models.Package, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+// readIndexRepresentations reads every existing representation of one index
+// (Packages and Packages.gz). Each must be readable and parse, and when both
+// exist their decoded bytes must be identical, so a corrupt or stale copy is
+// never overwritten unnoticed. present is false when neither exists.
+func readIndexRepresentations(packagesPath string) (packages []models.Package, present bool, err error) {
+	candidates := []struct {
+		path string
+		read func(string) ([]byte, error)
+	}{
+		{packagesPath, os.ReadFile},
+		{packagesPath + ".gz", readGzipFile},
 	}
-	defer func() { _ = f.Close() }()
-	return parsePackagesReader(f)
+	var firstPath string
+	var firstContent []byte
+	for _, c := range candidates {
+		// Lstat so that a dangling symlink counts as an existing, unreadable
+		// representation rather than an absent one.
+		if _, statErr := os.Lstat(c.path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return nil, false, fmt.Errorf("stat %s: %w", c.path, statErr)
+		}
+		content, readErr := c.read(c.path)
+		if readErr != nil {
+			return nil, false, fmt.Errorf("read %s: %w", c.path, readErr)
+		}
+		if !present {
+			parsed, parseErr := parsePackagesReader(bytes.NewReader(content))
+			if parseErr != nil {
+				return nil, false, fmt.Errorf("parse %s: %w", c.path, parseErr)
+			}
+			packages, present, firstPath, firstContent = parsed, true, c.path, content
+			continue
+		}
+		if !bytes.Equal(firstContent, content) {
+			return nil, false, fmt.Errorf("%s and %s differ", firstPath, c.path)
+		}
+	}
+	return packages, present, nil
 }
 
-func parsePackagesGzFile(path string) ([]models.Package, error) {
+func readGzipFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = gz.Close() }()
-
-	return parsePackagesReader(gz)
+	return io.ReadAll(gz)
 }
 
 func parsePackagesReader(r io.Reader) ([]models.Package, error) {
 	var packages []models.Package
 	var currentPkg *models.Package
+	lineNo := 0
+
+	finish := func() error {
+		if currentPkg == nil {
+			return nil
+		}
+		missing := []string{}
+		for _, f := range []struct{ name, value string }{
+			{"Package", currentPkg.Name},
+			{"Version", currentPkg.Version},
+			{"Architecture", currentPkg.Architecture},
+			{"Filename", currentPkg.Filename},
+			{"SHA256", currentPkg.SHA256Sum},
+		} {
+			if f.value == "" {
+				missing = append(missing, f.name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("stanza ending at line %d is missing %s", lineNo, strings.Join(missing, ", "))
+		}
+		packages = append(packages, *currentPkg)
+		currentPkg = nil
+		return nil
+	}
 
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
+		lineNo++
 		line := scanner.Text()
 
 		// Empty line = end of package entry
 		if line == "" {
-			if currentPkg != nil {
-				packages = append(packages, *currentPkg)
-				currentPkg = nil
+			if err := finish(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		// Continuation lines (multi-line fields such as Description) belong
+		// to the previous field.
+		if line[0] == ' ' || line[0] == '\t' {
+			if currentPkg == nil {
+				return nil, fmt.Errorf("line %d: continuation line outside a stanza", lineNo)
 			}
 			continue
 		}
@@ -314,7 +414,7 @@ func parsePackagesReader(r io.Reader) ([]models.Package, error) {
 		// Parse field: value
 		parts := strings.SplitN(line, ": ", 2)
 		if len(parts) != 2 {
-			continue
+			return nil, fmt.Errorf("line %d: malformed field %q", lineNo, line)
 		}
 
 		field := parts[0]
@@ -337,7 +437,10 @@ func parsePackagesReader(r io.Reader) ([]models.Package, error) {
 		case "Filename":
 			currentPkg.Filename = value
 		case "Size":
-			size, _ := strconv.ParseInt(value, 10, 64)
+			size, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || size < 0 {
+				return nil, fmt.Errorf("line %d: invalid Size %q", lineNo, value)
+			}
 			currentPkg.Size = size
 		case "MD5sum":
 			currentPkg.MD5Sum = value
@@ -359,11 +462,14 @@ func parsePackagesReader(r io.Reader) ([]models.Package, error) {
 			currentPkg.Metadata[field] = value
 		}
 	}
-
-	// Don't forget last package
-	if currentPkg != nil {
-		packages = append(packages, *currentPkg)
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
-	return packages, scanner.Err()
+	// Don't forget last package
+	if err := finish(); err != nil {
+		return nil, err
+	}
+
+	return packages, nil
 }

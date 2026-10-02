@@ -1,6 +1,6 @@
 # 0011 — Incremental mode reconstructs state from published metadata
 
-- **Status:** Accepted
+- **Status:** Accepted; Debian parse-failure fallback superseded by [0014](0014-debian-incremental-restore-fails-closed.md)
 - **Date:** 2026-08-12
 
 ## Context

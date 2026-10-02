@@ -61,6 +61,10 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 - [ADR-0013 — Separate generic generation from production publishing](adr/0013-separate-generic-generation-from-production-publishing.md)
   — proposed structural boundary that preserves generic callers while making
   Frostyard production publication explicit and fail closed
+- [ADR-0014 — Debian incremental restore fails closed](adr/0014-debian-incremental-restore-fails-closed.md)
+  — Debian incremental initializes only when the suite is absent; every
+  existing `Packages`/`Packages.gz` must parse, agree, and be selected, and no
+  format writes until all are restored and validated
 
 ### Design
 

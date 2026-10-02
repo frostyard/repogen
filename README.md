@@ -64,11 +64,47 @@ repogen generate
 # Scan specific directory
 repogen generate --input-dir /path/to/packages --output-dir /path/to/repo
 
+# Debian packages need an explicit codename (there is no default)
+repogen generate --input-dir ./debs --output-dir ./repo --codename trixie
+
 # Enable verbose logging
 repogen generate -v
 ```
 
 ### Frostyard Production Validation
+
+#### Plan 0007 canary subset (R1–R5)
+
+Core ADR-0048 and Plan 0007 govern Frostyard Debian publication. Items R1–R5
+alone gate the single `trixie` canary; R6–R10 gate expansion beyond it. The
+constraints are: one codename per transaction; component `main` only; one
+shared immutable `pool/main`; fixed Origin and Label; no `Valid-Until`
+(asserted in `production_restore.go` and the transaction tests); strict
+reconcile of signed prior state versus an explicit initialize; and a Debian
+publisher separate from the sysext path and the legacy composite action. The
+canary is not yet published and needs separate authorization.
+
+| Item | Code | Tests |
+|------|------|-------|
+| R1 suite model | this README, [ADR-0013](docs/adr/0013-separate-generic-generation-from-production-publishing.md), [docs/org-adrs.md](docs/org-adrs.md) | — |
+| R2 explicit target | `internal/cli/production.go`, `internal/production/config.go`; generic `generate` requires `--codename` for Debian input | `TestValidateProductionCommandRejectsInputBeforeOutputMutation`, `TestValidateProductionDebianPackage`, `TestGenerateDebianRequiresExplicitCodename`, `TestGenerateDebianRejectsSuiteDifferentFromCodename` |
+| R3 strict restore / initialize | `internal/generator/deb/production_restore.go`; `internal/generator/deb/parser.go` (generic incremental, ADR-0014) | `TestRestoreProductionStateFailsClosedWithoutChangingPriorBytes`, `TestVerifyProductionInitializationRequiresAuthoritativeAbsence`, `TestValidateProductionInitializeRequiresAbsentTarget`, `TestParseExistingMetadata*`, `TestGenerateIncrementalDebianFailsOnCorruptArchWithoutMutation`, `TestGenerateIncrementalDebianCorruptionStopsMixedRunBeforeAnyWrite`, `TestGenerateIncrementalDebianInitializesEmptyOutput` |
+| R4 shared pool | `internal/generator/deb/pool.go`, `internal/utils/package_identity.go` | `TestSharedPoolFakeS3*` (opaque ETag ignored, conditional create, collision fails closed) |
+| R5 transaction | `internal/generator/deb/production_transaction.go`, `internal/objectstore/r2`, `internal/cli/reconcile_production.go` | `TestProductionTransactionPublishesScopedObjectsWithInReleaseLast`, `TestProductionTransactionFailureInjectionNeverExposesIncompleteGeneration`, `TestProductionTransactionPreservesStableTreeByteForByte`, `TestProductionTransactionRealGPGVAndAPTFixture`, `TestPublicationStoreRejectsEveryOutOfScopePathBeforeIO` |
+
+Scope of the "no `stable` writes" guarantee: it covers Frostyard production
+publication to R2, not local output. Generic `repogen generate` stays a
+general-purpose tool ([ADR-0013](docs/adr/0013-separate-generic-generation-from-production-publishing.md))
+and writes `dists/stable` locally when `--codename stable` is passed
+explicitly. No Frostyard path can carry that output to R2:
+`validate-production` rejects `stable`
+(`TestValidateProductionCommandRejectsInputBeforeOutputMutation`),
+`reconcile-production` accepts only the `trixie` target, and the publish-to-r2
+action refuses the `stable` suite and any Debian input
+(`scripts/validate-publish-target.sh`, `TestPublishTargetRefusesStable`,
+`TestPublishTargetRefusesDebianPackagesForAnyType`).
+
+#### Production commands
 
 R2-R3 add a separate, fail-closed validation path for Frostyard production
 Debian requests and prior state. It requires explicit non-moving suite
@@ -212,9 +248,12 @@ provider adapter, live suite, or published Repogen release; those remain
 separate human-authorized and externally verified milestones described in
 [RELEASING.md](RELEASING.md).
 
-The existing `repogen generate` command remains generic and keeps its current
-defaults, supported formats, unsigned behavior, and legacy incremental
-fallback.
+The existing `repogen generate` command remains generic and keeps its
+supported formats and unsigned behavior. It has no implicit Debian codename:
+Debian input requires `--codename`, and a `--suite` must equal it. Its Debian
+incremental mode initializes only when `dists/<codename>` is absent; an
+unreadable, malformed or unselected existing index stops the run before any
+format writes ([ADR-0014](docs/adr/0014-debian-incremental-restore-fails-closed.md)).
 
 ### Incremental Mode
 
@@ -237,6 +276,7 @@ Incremental mode allows you to add new packages to an existing repository withou
 
 ```bash
 # Add new packages to existing repository
+# (Debian input also needs --codename)
 repogen generate \
   --input-dir ./new-packages \
   --output-dir ./repo \
@@ -261,7 +301,7 @@ The incremental mode is particularly powerful when combined with S3. You can syn
 aws s3 sync s3://my-bucket/repo/dists ./repo/dists --delete
 
 # Add new packages with repogen
-repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
+repogen generate --input-dir ./new-packages --output-dir ./repo --codename trixie --incremental
 
 # Sync everything back to S3 (without --delete to preserve existing packages)
 aws s3 sync ./repo s3://my-bucket/repo
@@ -337,7 +377,9 @@ aws s3 sync ./repo s3://my-bucket/repo
 
 - Incremental mode will error if a package with the same name+version already exists (conflict detection)
 - Use `--skip-duplicates` to silently skip packages that already exist instead of failing (useful for nightly builds)
-- If metadata files don't exist, it falls back to normal mode automatically
+- If metadata files don't exist, it falls back to normal mode automatically.
+  For Debian, existing but unreadable, malformed or unselected metadata is an
+  error, never a silent fallback (ADR-0014)
 - Package files from existing metadata don't need to be present locally
 - You can use incremental mode with or without signing
 - For systemd-sysext repositories, an existing `ext/` tree is always verified,
@@ -349,10 +391,11 @@ aws s3 sync ./repo s3://my-bucket/repo
 #### Debian/RPM/Pacman (GPG Signing)
 
 ```bash
-# Generate signed Debian/RPM repositories
+# Generate signed Debian/RPM repositories (--codename is required for Debian)
 repogen generate \
   --input-dir ./packages \
   --output-dir ./repo \
+  --codename trixie \
   --gpg-key /path/to/private.key \
   --gpg-passphrase "your-passphrase"
 
@@ -404,7 +447,7 @@ Flags:
       --origin string           Repository origin name
       --label string            Repository label
       --repo-name string        Repository name (required for Pacman)
-      --codename string         Codename for Debian repos (default "stable")
+      --codename string         Codename for Debian repos (required when Debian packages are present)
       --suite string            Suite for Debian repos (defaults to codename)
       --components strings      Components for Debian repos (default [main])
       --arch strings            Architectures to support (default [amd64])

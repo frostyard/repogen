@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -63,7 +64,7 @@ structures with appropriate metadata files and signatures.`,
 	cmd.Flags().StringVar(&config.Origin, "origin", "", "Repository origin name")
 	cmd.Flags().StringVar(&config.Label, "label", "", "Repository label")
 	cmd.Flags().StringVar(&config.RepoName, "repo-name", "", "Repository name for Pacman database files and optional RPM .repo file naming")
-	cmd.Flags().StringVar(&config.Codename, "codename", "stable", "Codename for Debian repos")
+	cmd.Flags().StringVar(&config.Codename, "codename", "", "Codename for Debian repos (required when Debian packages are present)")
 	cmd.Flags().StringVar(&config.Suite, "suite", "", "Suite for Debian repos (defaults to codename)")
 	cmd.Flags().StringSliceVar(&config.Components, "components", []string{"main"}, "Components for Debian repos")
 	cmd.Flags().StringSliceVar(&config.Arches, "arch", []string{"amd64"}, "Architectures to support")
@@ -96,6 +97,32 @@ func validateConfig(config *models.RepositoryConfig) error {
 		return &models.RepoGenError{
 			Type: models.ErrInvalidConfig,
 			Err:  fmt.Errorf("output-dir is required"),
+		}
+	}
+
+	// Debian output has no implicit codename: a missing --codename must not
+	// silently default to a distribution such as "stable".
+	hasDeb, err := hasDebianPackages(config.InputDir)
+	if err != nil {
+		return &models.RepoGenError{
+			Type: models.ErrFileOp,
+			Err:  fmt.Errorf("failed to scan input directory: %w", err),
+		}
+	}
+	if hasDeb {
+		config.Codename = strings.TrimSpace(config.Codename)
+		config.Suite = strings.TrimSpace(config.Suite)
+		if config.Codename == "" {
+			return &models.RepoGenError{
+				Type: models.ErrInvalidConfig,
+				Err:  fmt.Errorf("--codename is required for Debian repositories"),
+			}
+		}
+		if config.Suite != "" && config.Suite != config.Codename {
+			return &models.RepoGenError{
+				Type: models.ErrInvalidConfig,
+				Err:  fmt.Errorf("--suite must equal --codename for Debian repositories (got suite %q, codename %q)", config.Suite, config.Codename),
+			}
 		}
 	}
 
@@ -224,6 +251,10 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
 	generators[scanner.TypeSysext] = sysext.NewGenerator(config.BaseURL, gpgSigner)
 
+	// Phase 1: restore incremental state, detect conflicts and validate for
+	// every format before any format writes output, so a failure in one format
+	// cannot leave another format's output half-updated.
+	plannedPackages := make(map[scanner.PackageType][]models.Package)
 	for pkgType, newPackages := range packagesByType {
 		gen, ok := generators[pkgType]
 		if !ok {
@@ -238,6 +269,14 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 
 			// Parse existing packages from metadata
 			existingPackages, err := gen.ParseExistingMetadata(config)
+			if err != nil && pkgType == scanner.TypeDeb && !errors.Is(err, generator.ErrNoExistingMetadata) {
+				// An index that exists but cannot be read must stop the run:
+				// regenerating from new packages alone would drop published ones.
+				return &models.RepoGenError{
+					Type: models.ErrPackageParse,
+					Err:  fmt.Errorf("incremental deb restore: %w", err),
+				}
+			}
 			if err != nil {
 				logrus.Warnf("Could not parse existing metadata for %s: %v. Falling back to normal mode.", pkgType, err)
 				finalPackages = newPackages
@@ -305,14 +344,19 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 			continue
 		}
 
-		logrus.Infof("Generating %s repository with %d packages...", pkgType, len(finalPackages))
-
 		if err := gen.ValidatePackages(finalPackages); err != nil {
 			return &models.RepoGenError{
 				Type: models.ErrInvalidConfig,
 				Err:  fmt.Errorf("package validation failed for %s: %w", pkgType, err),
 			}
 		}
+		plannedPackages[pkgType] = finalPackages
+	}
+
+	// Phase 2: write each format's output.
+	for pkgType, finalPackages := range plannedPackages {
+		gen := generators[pkgType]
+		logrus.Infof("Generating %s repository with %d packages...", pkgType, len(finalPackages))
 
 		if err := gen.Generate(ctx, config, finalPackages); err != nil {
 			return &models.RepoGenError{
@@ -342,4 +386,18 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 func hasPacmanPackages(inputDir string) bool {
 	matches, _ := filepath.Glob(filepath.Join(inputDir, "*.pkg.tar.*"))
 	return len(matches) > 0
+}
+
+// hasDebianPackages reports whether the scanner finds any Debian package in inputDir.
+func hasDebianPackages(inputDir string) (bool, error) {
+	scanned, err := scanner.NewFileSystemScanner().Scan(context.Background(), inputDir)
+	if err != nil {
+		return false, err
+	}
+	for _, pkg := range scanned {
+		if pkg.Type == scanner.TypeDeb {
+			return true, nil
+		}
+	}
+	return false, nil
 }

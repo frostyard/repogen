@@ -404,7 +404,7 @@ func TestGenericGenerateCommandRemainsSeparate(t *testing.T) {
 
 	cmd := NewGenerateCmd()
 	for flag, want := range map[string]string{
-		"codename":   "stable",
+		"codename":   "",
 		"components": "[main]",
 		"arch":       "[amd64]",
 	} {
