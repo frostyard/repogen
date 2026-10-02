@@ -71,7 +71,13 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 
 ### How It Works
 
-1. **Validate inputs** — checks package type, required flags (base-url for
+1. **Validate inputs** — runs `scripts/validate-publish-target.sh` first,
+   which refuses a `codename` or `suite` of `stable` (any case, whitespace
+   trimmed) for every package type because the signed stable suite is frozen
+   (core ADR-0048, ADR-0054), refuses target names that are not plain names
+   (such as `stable/`), refuses any Debian package found in `packages-dir`
+   whatever the declared type (repogen generates every detected type), and
+   requires `codename` for `deb` (there is no default). It then checks package type, required flags (base-url for
    sysext, repo-name for pacman), directory existence.
 2. **Install repogen** — requires an exact tag and commit, uses a fixed GitHub
    release origin, downloads the exact architecture asset plus unsigned
@@ -114,6 +120,8 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 | Input | Default | Notes |
 |-------|---------|-------|
 | `base-url` | | Required for sysext; used for cache purge hostname |
+| `codename` | | No default; required for `deb`; `stable` refused |
+| `suite` | | Defaults to codename; `stable` refused |
 | `repo-prefix` | | Path prefix in R2 bucket |
 | `skip-duplicates` | `false` | Useful for nightly builds |
 | `html-index` | `true` | Generates browsable directory pages |
