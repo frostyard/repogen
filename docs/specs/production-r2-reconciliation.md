@@ -128,10 +128,10 @@ Prerequisites outside this repository's code before any run:
 
 - a repogen release that contains this Action and the CLI;
 - the intake and coordination buckets named in the config;
-- a submit path that places the producer's request, provenance and receipt in
-  the durable intake store (see
-  [plan 0001](../plans/0001-frostyard-production-publisher.md) T0). Until it
-  exists, `reconcile-production` has no receipt to process;
+- a producer submission that places the request, provenance and receipt in
+  the durable intake store, through
+  [`repogen submit-intake`](intake-submit.md) (plan 0001 T0 equivalent,
+  [ADR-0015](../adr/0015-ci-run-submit-only-intake.md));
 - the person's authorization of the exact policy and the first production
   write.
 

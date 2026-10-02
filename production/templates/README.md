@@ -1,7 +1,7 @@
 # Production reconcile templates
 
 These files are the starting point for the exact, digest-pinned inputs of
-`repogen reconcile-production` and the
+`repogen reconcile-production`, `repogen submit-intake`, and the
 [`reconcile-production` Action](../../.github/actions/reconcile-production/action.yml).
 They are **templates and authorize nothing**: every `REPLACE-<field>` value,
 `authoritative_target_absent: false` and the empty `allowed_pool_objects`
@@ -17,6 +17,7 @@ release exist.
 | File | Schema |
 | --- | --- |
 | `trixie-config.template.json` | `org.frostyard.repogen.production-config.v1` |
+| `submit-config.template.json` | `org.frostyard.repogen.intake-submit-config.v1` |
 | `authorization-policy.template.json` | `org.frostyard.repogen.authorization-policy.v1` |
 
 ## Fixed values
@@ -44,6 +45,15 @@ release exist.
 | `allowed_pool_objects` | Every `pool/main/...` object with SHA-256 and size | Producer build |
 | `authoritative_target_absent` | `true` only after confirming the target is absent | Authorizing operator |
 | `provider_permission_evidence` | Reference to provider-side permission evidence | Repository administrator |
+
+`submit-config.template.json` configures
+[`repogen submit-intake`](../../docs/specs/intake-submit.md). It fixes `kind`
+`debian`, `target` `trixie` and `publication_bucket` `frostyardrepo` (the
+command requires exactly this value and refuses intake or coordination buckets
+equal to it; the intake and coordination buckets must also differ).
+Fill `account_id`, `endpoint`, `intake_bucket` and `coordination_bucket` as
+above, and `producer` with the submitting repository (`owner/name`, equal to
+`GITHUB_REPOSITORY`).
 
 ## Filling and pinning
 

@@ -1,0 +1,127 @@
+name: 'Submit to the durable intake (trixie)'
+description: >-
+  Install an exact repogen release and run `repogen submit-intake` to record
+  one trixie request, its provenance and its artifacts in the durable R2
+  intake. Every write is create-if-absent under the intake producer prefixes;
+  nothing is replaced, deleted or published. The target is fixed to trixie by
+  the pinned config; the frozen stable suite is refused. R2 credentials are
+  written only to a private mode-0600 file.
+author: 'Frostyard'
+
+branding:
+  icon: 'upload'
+  color: 'blue'
+
+inputs:
+  repogen-version:
+    description: 'Exact repogen release tag (vMAJOR.MINOR.PATCH)'
+    required: true
+  repogen-commit:
+    description: 'Full 40-hex commit the repogen release tag must resolve to'
+    required: true
+  config:
+    description: 'Path to the canonical intake-submit config (regular file)'
+    required: true
+  config-sha256:
+    description: 'Lowercase SHA-256 of the exact config bytes'
+    required: true
+  policy-sha256:
+    description: 'Lowercase SHA-256 of the authorization policy the receipt binds'
+    required: true
+  request:
+    description: 'Path to the canonical request JSON'
+    required: true
+  provenance:
+    description: 'Path to the canonical provenance JSON'
+    required: true
+  artifacts-dir:
+    description: 'Directory holding exactly the request artifacts'
+    required: true
+  submission-key:
+    description: 'Idempotency key for this submission'
+    required: true
+  r2-account-id:
+    description: 'R2 account id; must equal the config account_id'
+    required: true
+  r2-access-key-id:
+    description: 'R2 access key id'
+    required: true
+  r2-secret-access-key:
+    description: 'R2 secret access key'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config }}
+        CONFIG_SHA256: ${{ inputs.config-sha256 }}
+        POLICY_SHA256: ${{ inputs.policy-sha256 }}
+        REQUEST_FILE: ${{ inputs.request }}
+        PROVENANCE_FILE: ${{ inputs.provenance }}
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        SUBMISSION_KEY: ${{ inputs.submission-key }}
+        R2_ACCOUNT_ID: ${{ inputs.r2-account-id }}
+        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+        REPOGEN_VERSION: ${{ inputs.repogen-version }}
+        REPOGEN_COMMIT: ${{ inputs.repogen-commit }}
+      run: |
+        sh "$GITHUB_ACTION_PATH/../../../scripts/validate-submit-inputs.sh"
+
+    - name: Install repogen
+      shell: bash
+      env:
+        REPOGEN_VERSION: ${{ inputs.repogen-version }}
+        REPOGEN_COMMIT: ${{ inputs.repogen-commit }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/repogen-bin"
+        "$GITHUB_ACTION_PATH/../../../scripts/install-release.sh" \
+          --github-release \
+          "$REPOGEN_VERSION" \
+          "$REPOGEN_COMMIT" \
+          "$(uname -m)" \
+          "$RUNNER_TEMP/repogen-bin/repogen"
+
+    - name: Submit
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config }}
+        CONFIG_SHA256: ${{ inputs.config-sha256 }}
+        POLICY_SHA256: ${{ inputs.policy-sha256 }}
+        REQUEST_FILE: ${{ inputs.request }}
+        PROVENANCE_FILE: ${{ inputs.provenance }}
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        SUBMISSION_KEY: ${{ inputs.submission-key }}
+        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+      run: |
+        set -euo pipefail
+        umask 077
+        secrets="$RUNNER_TEMP/repogen-submit-secrets"
+        rm -rf "$secrets"
+        mkdir -m 700 "$secrets"
+
+        # Credentials are read from the environment inside jq, never from argv.
+        jq -n '{access_key_id: env.R2_ACCESS_KEY_ID, secret_access_key: env.R2_SECRET_ACCESS_KEY}' \
+          > "$secrets/r2-credentials.json"
+        chmod 600 "$secrets/r2-credentials.json"
+
+        "$RUNNER_TEMP/repogen-bin/repogen" submit-intake \
+          --config "$CONFIG_FILE" \
+          --config-sha256 "$CONFIG_SHA256" \
+          --policy-sha256 "$POLICY_SHA256" \
+          --request "$REQUEST_FILE" \
+          --provenance "$PROVENANCE_FILE" \
+          --artifacts-dir "$ARTIFACTS_DIR" \
+          --submission-key "$SUBMISSION_KEY" \
+          --credentials-file "$secrets/r2-credentials.json"
+
+    - name: Remove secrets
+      if: always()
+      shell: bash
+      run: |
+        rm -rf "$RUNNER_TEMP/repogen-submit-secrets"

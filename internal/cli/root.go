@@ -45,6 +45,7 @@ Supported package types:
 	rootCmd.AddCommand(NewGenerateCmd())
 	rootCmd.AddCommand(NewValidateProductionCmd())
 	rootCmd.AddCommand(NewReconcileProductionCmd())
+	rootCmd.AddCommand(NewSubmitIntakeCmd())
 	rootCmd.AddCommand(NewVersionCmd())
 
 	return rootCmd

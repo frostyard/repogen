@@ -63,11 +63,29 @@ mismatched config/policy files, any target but `trixie`, and request,
 account, version or commit mismatches before anything is installed. Secrets
 are written only to private mode-`0600` files and removed with `if: always()`.
 No workflow in this repository calls it. Running it still needs a release
-that contains it, the intake and coordination buckets, an intake-submit path,
-and a concrete authorized policy. See the
+that contains it, the intake and coordination buckets, a producer submission
+through the `submit-intake` Action, and a concrete authorized policy. See the
 [CI surface](../specs/production-r2-reconciliation.md#ci-surface) of the
 production contract and the
 [templates](../../production/templates/README.md).
+
+## GitHub Action: `submit-intake`
+
+**Location**: `.github/actions/submit-intake/action.yml`
+
+A composite action that installs an exact repogen release and runs
+`repogen submit-intake` in a producer's release job, placing one trixie
+request, its provenance and its artifacts in the durable intake.
+`scripts/validate-submit-inputs.sh` refuses bad pins, symlinked or mismatched
+files, any target but `trixie`, a config `producer` other than
+`GITHUB_REPOSITORY`, an account mismatch, and intake or coordination buckets
+equal to the publication bucket before anything is installed. Credentials are
+written only to a private mode-`0600` file and removed with `if: always()`.
+Every write is create-if-absent under the intake producer prefixes; the
+existing R2 credentials are not provider-scoped, so that limit is enforced in
+repogen code ([ADR-0015](../adr/0015-ci-run-submit-only-intake.md)). No
+workflow in this repository calls it. See the
+[intake submit contract](../specs/intake-submit.md).
 
 ## GitHub Action: `publish-to-r2`
 
