@@ -526,8 +526,11 @@ generation also enumerates those manifests, so a partial publish preserves
 all previously published extension names in `ext/index`.
 
 The legacy `publish-to-r2` action remains a compatibility path for Snosi
-sysexts and other non-Debian formats. It rejects `package-type: deb` before
-credential setup and no longer converts a failed sysext metadata restore into
+sysexts and other non-Debian formats. It refuses a `codename` or `suite` of
+`stable` for every package type (the signed stable suite is frozen; the
+`codename` input has no default; target names must be plain names), refuses
+any Debian package in `packages-dir` whatever the declared type, rejects `package-type: deb` before
+credential setup, and no longer converts a failed sysext metadata restore into
 empty initialization. Remote R2 still has no atomic multi-object rename:
 the caller must serialize the complete restore/generate/upload cycle, and
 production activation remains blocked until its dedicated storage boundary

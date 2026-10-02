@@ -63,11 +63,11 @@ inputs:
 
   # Debian-specific options
   codename:
-    description: 'Codename for Debian repos (e.g., stable, bookworm)'
+    description: 'Codename for Debian repos (e.g., trixie). No default; required for deb. "stable" is refused: the signed stable suite is frozen'
     required: false
-    default: 'stable'
+    default: ''
   suite:
-    description: 'Suite for Debian repos (defaults to codename)'
+    description: 'Suite for Debian repos (defaults to codename). "stable" is refused'
     required: false
     default: ''
   components:
@@ -147,9 +147,18 @@ runs:
   steps:
     - name: Validate inputs
       shell: bash
+      env:
+        PACKAGE_TYPE: ${{ inputs.package-type }}
+        CODENAME: ${{ inputs.codename }}
+        SUITE: ${{ inputs.suite }}
+        PACKAGES_DIR: ${{ inputs.packages-dir }}
       run: |
         set -e
         echo "::group::Validating inputs"
+
+        # Refuse the frozen signed stable suite, non-plain target names and
+        # any Debian package in packages-dir before anything else runs.
+        sh "$GITHUB_ACTION_PATH/../../../scripts/validate-publish-target.sh"
 
         # Validate package type
         case "${{ inputs.package-type }}" in

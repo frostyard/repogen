@@ -1110,8 +1110,8 @@ jobs:
 | `rsa-private-key`      | No       | -           | RSA private key for Alpine (PEM format)                                                  |
 | `rsa-passphrase`       | No       | -           | RSA key passphrase                                                                       |
 | `rsa-key-name`         | No       | `repogen`   | Key name for Alpine signatures                                                           |
-| `codename`             | No       | `stable`    | Codename for Debian repos                                                                |
-| `suite`                | No       | -           | Suite for Debian repos                                                                   |
+| `codename`             | No       | -           | Codename for Debian repos; no default, required for `deb`; `stable` is refused           |
+| `suite`                | No       | -           | Suite for Debian repos (defaults to codename); `stable` is refused                       |
 | `components`           | No       | `main`      | Components for Debian repos                                                              |
 | `architectures`        | No       | `all,amd64` | Architectures (comma-separated)                                                          |
 | `origin`               | No       | -           | Repository origin name                                                                   |
