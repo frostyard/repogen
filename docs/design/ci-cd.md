@@ -9,7 +9,8 @@
 Runs on PRs and pushes to main/master, two jobs:
 
 `test`:
-1. Sets up Go 1.23 with module caching.
+1. Sets up Go 1.23 with module caching; the `go 1.24` module directive
+   makes the go command build and test with Go 1.24.
 2. Runs the required golangci-lint v2 gate through `make lint`.
 3. Runs unit tests with race detection and coverage (`go test -v -short -race`).
 4. Builds test packages in Docker (`make test-packages-docker`).

@@ -370,4 +370,4 @@ in proposed
 | `github.com/sassoftware/go-rpmutils` | RPM package parsing |
 | `github.com/ulikunitz/xz` | XZ decompression (deb control.tar.xz) |
 
-Go version: 1.23.5
+Go version: 1.24
