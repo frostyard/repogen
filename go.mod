@@ -2,6 +2,8 @@ module github.com/frostyard/repogen
 
 go 1.23.5
 
+toolchain go1.26.10
+
 require (
 	github.com/ProtonMail/go-crypto v1.0.0
 	github.com/aws/aws-sdk-go-v2 v1.36.3
