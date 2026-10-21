@@ -51,7 +51,7 @@ sudo cp repogen /usr/local/bin/
 
 ### Prerequisites
 
-- Go 1.23 or later
+- Go 1.24 or later (the `toolchain` line in `go.mod` builds with Go 1.26.10)
 
 ## Usage
 
