@@ -73,16 +73,20 @@ repogen generate -v
 
 ### Frostyard Production Validation
 
-#### Plan 0007 canary subset (R1–R5)
+#### Plan 0007 R1–R5 (historical)
 
-Core ADR-0048 and Plan 0007 govern Frostyard Debian publication. Items R1–R5
-alone gate the single `trixie` canary; R6–R10 gate expansion beyond it. The
-constraints are: one codename per transaction; component `main` only; one
+Core ADR-0048 and Plan 0007 governed this work. On 2026-10-02 core
+[ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)
+and
+[Plan 0009](https://github.com/frostyard/core/blob/main/docs/plans/0009-debian-publication-through-apt-publisher.md)
+superseded both: `frostyard/apt-publisher` is the only Frostyard Debian writer,
+and Repogen no longer publishes Debian packages. The `trixie` canary planned
+here never ran and will not run. The R1–R5 code stays as a tested capability.
+The constraints are: one codename per transaction; component `main` only; one
 shared immutable `pool/main`; fixed Origin and Label; no `Valid-Until`
 (asserted in `production_restore.go` and the transaction tests); strict
 reconcile of signed prior state versus an explicit initialize; and a Debian
-publisher separate from the sysext path and the legacy composite action. The
-canary is not yet published and needs separate authorization.
+publisher separate from the sysext path and the legacy composite action.
 
 | Item | Code | Tests |
 |------|------|-------|
@@ -187,10 +191,11 @@ in CI from an exact repogen release tag and commit. It validates every input
 before installing (pins, regular files, `trixie` only, `stable` refused,
 request and account binding), writes credentials and the signing key only to
 private mode-`0600` files, and removes them afterwards. No workflow here calls
-it. Canonical config and policy templates live in
+it. No Frostyard workflow will call it: core ADR-0055 rejected Repogen as the
+Debian writer. Whether Repogen retires `reconcile-production` is an open
+question in core Plan 0009. Canonical config and policy templates live in
 [`production/templates/`](production/templates/README.md); they authorize
-nothing, and the concrete files belong to the producer's reviewed canary
-change.
+nothing. No producer canary change exists or is planned.
 
 The legacy composite action still rejects Debian rather than fall back to
 broad sync.
@@ -1091,8 +1096,9 @@ package formats to repositories hosted on Cloudflare R2 storage.
 > It requires an exact Repogen tag and commit but still uses broad
 > synchronization for supported non-Debian formats. Debian is rejected
 > structurally; the action cannot initialize or reconcile Frostyard
-> Trixie/Forky. Provider wiring and the retained canary remain tracked in
-> [Plan 0001](docs/plans/0001-frostyard-production-publisher.md).
+> Trixie/Forky. Frostyard Debian publication moved to `frostyard/apt-publisher`
+> (core ADR-0055). This action stays for sysexts and other non-Debian
+> formats.
 
 ### Quick Start
 
