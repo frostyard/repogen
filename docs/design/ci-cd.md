@@ -10,7 +10,7 @@ Runs on PRs and pushes to main/master, two jobs:
 
 `test`:
 1. Sets up Go from `go.mod` with module caching: the module minimum is
-   1.23.5, and the `toolchain go1.26.10` line makes the go command use Go
+   1.24, and the `toolchain go1.26.10` line makes the go command use Go
    1.26.10 for the linter build, the unit tests, and the integration tests.
 2. Runs the required golangci-lint v2 gate through `make lint`.
 3. Runs unit tests with race detection and coverage (`go test -v -short -race`).

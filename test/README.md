@@ -30,7 +30,7 @@ test/
 ### Prerequisites
 
 - Docker (for running containers)
-- Go 1.23+ (for running tests)
+- Go 1.24+ (for running tests)
 - `dpkg-deb` (for building Debian packages)
 - `rpmbuild` (for building RPM packages)
 

@@ -370,5 +370,5 @@ in proposed
 | `github.com/sassoftware/go-rpmutils` | RPM package parsing |
 | `github.com/ulikunitz/xz` | XZ decompression (deb control.tar.xz) |
 
-Go module minimum: 1.23.5
+Go module minimum: 1.24
 Build toolchain: go1.26.10
