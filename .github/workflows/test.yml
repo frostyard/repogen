@@ -34,6 +34,11 @@ jobs:
         run: go mod download
 
       - name: Install golangci-lint
+        # `go install pkg@version` builds outside this module, so it uses the
+        # setup-go Go (the go.mod `go` line). Force the go.mod `toolchain` so
+        # the linter is built with the same Go it targets.
+        env:
+          GOTOOLCHAIN: go1.26.10
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
