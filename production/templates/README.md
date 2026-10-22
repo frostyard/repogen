@@ -9,8 +9,12 @@ list are deliberately invalid, so the CLI's own validation rejects an
 unfilled copy. `internal/production/template_test.go` keeps them canonical,
 complete and rejected while unfilled.
 
-The concrete config and policy for a request belong to the producer
-repository's reviewed canary change, not to this repository, because they pin
+No producer uses these templates. Core ADR-0055 made
+`frostyard/apt-publisher` the only Debian writer, and the `gchlog` canary
+they were made for will not run.
+
+The concrete config and policy for a request would belong to the producer
+repository's reviewed change, not to this repository, because they pin
 values that exist only once the request, the producer build and the repogen
 release exist.
 

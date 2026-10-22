@@ -94,8 +94,8 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 ### Plans
 
 - [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
-  — R1-R9 local implementation lineage plus the R10 candidate, release, and
-  remaining provider/canary boundaries
+  — R1-R9 local implementation lineage plus the R10 candidate and release;
+  superseded for Debian publication by core ADR-0055
 
 ### Uncategorized
 
