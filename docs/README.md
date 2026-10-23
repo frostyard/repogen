@@ -59,8 +59,8 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   Hive ACMM path checks; directory criteria get real trees; the alias table
   is the registry
 - [ADR-0013 — Separate generic generation from production publishing](adr/0013-separate-generic-generation-from-production-publishing.md)
-  — proposed structural boundary that preserves generic callers while making
-  Frostyard production publication explicit and fail closed
+  — superseded by core ADR-0055 (never accepted): `frostyard/apt-publisher`,
+  not Repogen, publishes Frostyard's Debian packages
 - [ADR-0014 — Debian incremental restore fails closed](adr/0014-debian-incremental-restore-fails-closed.md)
   — Debian incremental initializes only when the suite is absent; every
   existing `Packages`/`Packages.gz` must parse, agree, and be selected, and no

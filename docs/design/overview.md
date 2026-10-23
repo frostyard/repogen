@@ -351,13 +351,13 @@ Debian-input, explicit initialize, and strict signed-reconcile boundaries,
 while the isolated R4 primitive enforces conditional no-overwrite handling
 for shared-pool bytes in fixtures. Neither can generate or publish a
 production repository.
-The complete fail-closed Frostyard production publisher remains specified in
-[Plan 0001](../plans/0001-frostyard-production-publisher.md). The plan
-preserves generic local and unsigned generation while defining the proposed
-production-only target, identity, restore, shared-pool, staging, manifest,
-publication, and rollback contracts. The architectural rationale is recorded
-in proposed
-[ADR-0013](../adr/0013-separate-generic-generation-from-production-publishing.md).
+The complete fail-closed Frostyard production publisher is specified in
+[Plan 0001](../plans/0001-frostyard-production-publisher.md), which is
+superseded for Frostyard Debian publication: core
+[ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md) makes `frostyard/apt-publisher` the only Debian writer, so
+[ADR-0013](../adr/0013-separate-generic-generation-from-production-publishing.md)
+is superseded too. The R2–R10 code stays tested; removing it is a separate
+decision.
 
 ## Dependencies
 
