@@ -6,7 +6,13 @@
 
 ### Test (`.github/workflows/test.yml`)
 
-Runs on PRs and pushes to main/master, two jobs:
+Runs on PRs and pushes to main/master, two jobs. The workflow sets
+top-level `permissions: contents: read` (least privilege). Every external
+action is pinned to a full 40-character commit SHA with a trailing
+`# vX.Y.Z` comment: `actions/checkout` v4.4.0, `actions/setup-go` v5.6.0,
+`actions/cache` v4.3.0, `codecov/codecov-action` v4.6.0
+([core ADR-0021](https://github.com/frostyard/core/blob/main/docs/adr/0021-sha-pinned-actions-and-least-privilege-ci.md)).
+`release.yml` follows the same rule.
 
 `test`:
 1. Sets up Go from `go.mod` with module caching: the module minimum is
@@ -165,6 +171,10 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 - **Commit prefix**: `deps:` — follows the conventional-commit style used in
   this repo (e.g., `perf:`, `fix:`, `docs:`).
 - **Labels**: PRs are labeled `dependencies`.
+- **Ecosystem**: `github-actions` — keeps the SHA-pinned `uses:` lines current
+  (it updates the SHA and the `# vX.Y.Z` comment together). It scans
+  `/` (the workflows) and `/.github/actions/*` (the composite actions), weekly,
+  with commit prefix `ci:` and the `dependencies` label.
 
 Dependabot respects the `go` directive in `go.mod` and will not propose updates
 requiring a newer Go version. Dependabot PRs trigger the `Test` workflow
