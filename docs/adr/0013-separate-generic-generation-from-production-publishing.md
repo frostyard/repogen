@@ -1,7 +1,19 @@
 # 0013 - Separate generic generation from production publishing
 
-- **Status:** Proposed
+- **Status:** Superseded by [core ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md) (never accepted)
 - **Date:** 2026-09-12
+
+> **Superseded, 2026-10-23.** This ADR proposed a Frostyard production path for
+> Debian publication inside Repogen. Core ADR-0055 (Accepted 2026-10-02) makes
+> [`frostyard/apt-publisher`](https://github.com/frostyard/apt-publisher) the
+> only writer of Frostyard's Debian metadata and rejects Repogen as that writer.
+> So the production path below will not carry Frostyard Debian publication.
+> The rest of Repogen does not change: `generate` stays a general-purpose
+> generator (all formats, unsigned output), its output is not a production
+> artifact, and `publish-to-r2` keeps publishing sysexts and refuses `deb`.
+> The R2–R10 production code ([Plan 0001](../plans/0001-frostyard-production-publisher.md))
+> stays in the tree and stays tested; removing it is a separate decision.
+> The text below is kept unchanged as the record.
 
 ## Context
 
