@@ -7,8 +7,7 @@ permission to prepare or review a candidate.
 
 ## 1. Prepare the candidate
 
-1. Start from the exact reviewed R2-R9 lineage and record every consumed
-   commit.
+1. Start from the exact reviewed base commit and record it.
 2. Confirm the worktree is clean except for the intended R10 change.
 3. Run the complete gate from
    [`docs/specs/r10-release-acceptance.md`](../../docs/specs/r10-release-acceptance.md).

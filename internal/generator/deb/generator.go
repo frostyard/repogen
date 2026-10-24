@@ -368,11 +368,11 @@ func (g *Generator) hasReusableSignatures(distsDir string, release []byte) bool 
 	if err != nil {
 		return false
 	}
-	keyring, err := parseProductionKeyRing(publicKey)
+	keyring, err := parseTrustedKeyRing(publicKey)
 	if err != nil {
 		return false
 	}
-	_, err = verifyProductionReleaseSignatures(keyring, release, inRelease, releaseGPG)
+	_, err = verifyReleaseSignatures(keyring, release, inRelease, releaseGPG)
 	return err == nil
 }
 

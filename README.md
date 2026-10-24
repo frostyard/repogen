@@ -71,179 +71,31 @@ repogen generate --input-dir ./debs --output-dir ./repo --codename trixie
 repogen generate -v
 ```
 
-### Frostyard Production Validation
+### Frostyard Debian publication
 
-#### Plan 0007 R1–R5 (historical)
+Repogen does not publish Frostyard Debian packages.
+[`frostyard/apt-publisher`](https://github.com/frostyard/apt-publisher) is the
+only Frostyard Debian writer (core
+[ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)).
+Repogen is a general-purpose generator plus the `publish-to-r2` action for
+sysext and other non-Debian formats. The former production commands, which
+shipped in v0.5.2, were removed
+([ADR-0015](docs/adr/0015-remove-the-superseded-production-path.md); history
+in [ADR-0013](docs/adr/0013-separate-generic-generation-from-production-publishing.md)).
 
-Core ADR-0048 and Plan 0007 governed this work. On 2026-10-02 core
-[ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)
-and
-[Plan 0009](https://github.com/frostyard/core/blob/main/docs/plans/0009-debian-publication-through-apt-publisher.md)
-superseded both: `frostyard/apt-publisher` is the only Frostyard Debian writer,
-and Repogen no longer publishes Debian packages. The `trixie` canary planned
-here never ran and will not run. The R1–R5 code stays as a tested capability.
-The constraints are: one codename per transaction; component `main` only; one
-shared immutable `pool/main`; fixed Origin and Label; no `Valid-Until`
-(asserted in `production_restore.go` and the transaction tests); strict
-reconcile of signed prior state versus an explicit initialize; and a Debian
-publisher separate from the sysext path and the legacy composite action.
+The `publish-to-r2` action refuses the `stable` suite and any Debian input
+(`scripts/validate-publish-target.sh`, `TestPublishTargetRefusesStable`,
+`TestPublishTargetRefusesDebianPackagesForAnyType`). Generic
+`repogen generate` writes `dists/stable` locally when `--codename stable` is
+passed explicitly.
+
+#### Debian `generate` requirements
 
 | Item | Code | Tests |
 |------|------|-------|
-| R1 suite model | this README, [ADR-0013](docs/adr/0013-separate-generic-generation-from-production-publishing.md), [docs/org-adrs.md](docs/org-adrs.md) | — |
-| R2 explicit target | `internal/cli/production.go`, `internal/production/config.go`; generic `generate` requires `--codename` for Debian input | `TestValidateProductionCommandRejectsInputBeforeOutputMutation`, `TestValidateProductionDebianPackage`, `TestGenerateDebianRequiresExplicitCodename`, `TestGenerateDebianRejectsSuiteDifferentFromCodename` |
-| R3 strict restore / initialize | `internal/generator/deb/production_restore.go`; `internal/generator/deb/parser.go` (generic incremental, ADR-0014) | `TestRestoreProductionStateFailsClosedWithoutChangingPriorBytes`, `TestVerifyProductionInitializationRequiresAuthoritativeAbsence`, `TestValidateProductionInitializeRequiresAbsentTarget`, `TestParseExistingMetadata*`, `TestGenerateIncrementalDebianFailsOnCorruptArchWithoutMutation`, `TestGenerateIncrementalDebianCorruptionStopsMixedRunBeforeAnyWrite`, `TestGenerateIncrementalDebianInitializesEmptyOutput` |
-| R4 shared pool | `internal/generator/deb/pool.go`, `internal/utils/package_identity.go` | `TestSharedPoolFakeS3*` (opaque ETag ignored, conditional create, collision fails closed) |
-| R5 transaction | `internal/generator/deb/production_transaction.go`, `internal/objectstore/r2`, `internal/cli/reconcile_production.go` | `TestProductionTransactionPublishesScopedObjectsWithInReleaseLast`, `TestProductionTransactionFailureInjectionNeverExposesIncompleteGeneration`, `TestProductionTransactionPreservesStableTreeByteForByte`, `TestProductionTransactionRealGPGVAndAPTFixture`, `TestPublicationStoreRejectsEveryOutOfScopePathBeforeIO` |
-
-Scope of the "no `stable` writes" guarantee: it covers Frostyard production
-publication to R2, not local output. Generic `repogen generate` stays a
-general-purpose tool ([ADR-0013](docs/adr/0013-separate-generic-generation-from-production-publishing.md))
-and writes `dists/stable` locally when `--codename stable` is passed
-explicitly. No Frostyard path can carry that output to R2:
-`validate-production` rejects `stable`
-(`TestValidateProductionCommandRejectsInputBeforeOutputMutation`),
-`reconcile-production` accepts only the `trixie` target, and the publish-to-r2
-action refuses the `stable` suite and any Debian input
-(`scripts/validate-publish-target.sh`, `TestPublishTargetRefusesStable`,
-`TestPublishTargetRefusesDebianPackagesForAnyType`).
-
-#### Production commands
-
-R2-R3 add a separate, fail-closed validation path for Frostyard production
-Debian requests and prior state. It requires explicit non-moving suite
-identity, the fixed Frostyard Release identity, component `main`, the initial
-`all,amd64` architecture allowlist, non-overlapping input/output paths, and
-Debian-only package input.
-
-An initialize request must explicitly name `--operation initialize`. It
-succeeds only when `dists/<codename>` is absent:
-
-```bash
-repogen validate-production \
-  --input-dir ./debs \
-  --output-dir ./staging \
-  --codename trixie \
-  --suite trixie \
-  --components main \
-  --arch all,amd64 \
-  --operation initialize
-```
-
-A reconcile request must also supply the accepted public key and exact
-expected prior Release SHA-256:
-
-```bash
-repogen validate-production \
-  --input-dir ./debs \
-  --output-dir ./restored-repository \
-  --codename trixie \
-  --suite trixie \
-  --components main \
-  --arch all,amd64 \
-  --operation reconcile \
-  --trusted-public-key ./frostyard-public-key.asc \
-  --expected-prior-release-sha256 <64-lowercase-hex-characters>
-```
-
-Reconcile verifies both InRelease and Release.gpg against that key, requires
-the clear-signed payload to equal Release byte-for-byte, checks the expected
-Release digest and fixed production identity, verifies every MD5/SHA1/SHA256/
-SHA512 index entry, requires the exact all/amd64 index set, and strictly
-parses every plain and gzip index. Each prior SHA-256 by-hash object must
-exist and be byte-identical to its canonical index. Missing, partial,
-malformed, wrong-key, tampered, or mismatched prior state fails without
-changing prior bytes.
-
-This command only validates and restores metadata into memory. It never
-creates the output directory or writes, generates, signs, or publishes
-repository state. R4 provides a separate, provider-neutral shared-pool
-primitive that stream-hashes existing bytes and uses conditional create
-without overwrite.
-
-R5 adds a separate library transaction in
-`internal/generator/deb/production_transaction.go`. It requires a clean
-staging directory and a signer, emits `Acquire-By-Hash: yes` plus SHA-256
-by-hash copies, records compact request/result manifests, verifies exact prior
-object digests before reconcile, serializes by immutable codename, and limits
-writes to conditional `pool/main` objects and one `dists/<codename>` target.
-Every write is read back; indexes precede Release and Release.gpg, and
-InRelease is always last. The implementation has fake-store failure
-injection and real local `gpgv`/apt fixture coverage.
-
-`reconcile-production` adds a separately gated R2/S3 origin adapter around
-that transaction and the durable intake reconciler. It accepts only canonical
-digest-pinned nonsecret configuration and authorization policy files, explicit
-mode-`0600` credential/signing inputs, one exact receipt, one exact `trixie`
-target, and policy-listed pool objects. Conditional creates use
-`If-None-Match`; replacements bind a full-body SHA-256 and the same GET's ETag
-to `If-Match`. The adapter exposes no delete, copy, multipart, broad sync,
-cache, stable, other-codename, root-public-key, or sysext operation.
-
-This code does not authorize a canary or prove provider-side path permissions,
-credential policy, signer custody, authoritative target absence, or operator
-identity. Its non-stealing R2 lock is a liveness aid, not fencing or a
-technical safety boundary. See
-[the exact production contract](docs/specs/production-r2-reconciliation.md).
-
-The composite Action `.github/actions/reconcile-production` runs that command
-in CI from an exact repogen release tag and commit. It validates every input
-before installing (pins, regular files, `trixie` only, `stable` refused,
-request and account binding), writes credentials and the signing key only to
-private mode-`0600` files, and removes them afterwards. No workflow here calls
-it. No Frostyard workflow will call it: core ADR-0055 rejected Repogen as the
-Debian writer. Whether Repogen retires `reconcile-production` is an open
-question in core Plan 0009. Canonical config and policy templates live in
-[`production/templates/`](production/templates/README.md); they authorize
-nothing. No producer canary change exists or is planned.
-
-The legacy composite action still rejects Debian rather than fall back to
-broad sync.
-
-R7 adds a Linux-only local production commit path. It stages a complete
-signed repository tree in the output directory's filesystem, preserving
-unrelated regular-file bytes, sizes, and complete file/directory modes plus
-verified shared-pool bytes, then switches the complete directory into place
-with one `renameat2` operation. Ownership, extended attributes, ACLs, and
-timestamps are not preserved. Reconcile replaces only the transaction's
-canonical indexes and signed Release files; it retains prior immutable
-by-hash objects and unmodeled suite content without treating either as broad
-sync or deletion authority. New suite and pool directories receive a fixed
-`0755` mode independent of the process umask; newly installed generated files
-receive `0644`. Initialize uses no-replace and reconcile uses atomic exchange.
-Failures during package, index, Release, signing, copy, verification, or
-synchronization leave the prior output unchanged unless a concurrent external
-writer caused the detected drift. Each generation reads and hashes the
-complete prior tree, copies all retained content, and needs roughly 2x
-transient repository space. The switch is
-atomically visible and crash-durable: a synchronized sibling generation and
-recovery journal are persisted before the switch, the parent directory is
-synchronized afterward, and `RecoverLocalProductionRepository` completes or
-cleans an interrupted exact prior/candidate state without rolling back a
-visible generation.
-
-R8 also adds a retained local intake store and receipt reconciler under
-`internal/intake`. Authenticated producer identity is passed separately from
-the request. Request bytes use the shared `org.frostyard.repogen.request.v1`
-schema and strict RFC 8785 canonical JSON, so producer-generated request
-digests and writer receipt keys agree byte-for-byte. Writer/action/binary
-attestations come from the linked provenance and are recorded in the result,
-not added to the shared request schema. The store contract requires one
-provider-level atomic create-if-absent operation that never replaces existing
-bytes; read-then-write emulation is not valid. Immutable request objects are
-read back and re-hashed, receipts are monotonic per kind/target, attempts
-remain append-only, and result pointers are created only after public
-read-back. Current policy is checked
-immediately before a new writer attempt; an already completed result remains
-replayable only after its retained bytes and public state verify again.
-Scheduled and manual wake-ups call the same receipt enumeration; same-target
-work is ordered while different codenames may progress concurrently. The
-Debian recovery writer resumes only objects matching the exact prior or
-candidate generation and rejects permission failures, timeouts, missing prior
-objects, unknown target objects, checksum mismatches, and incomplete
-read-back. These are library and local-fixture primitives only: no HTTP
-endpoint, provider adapter, credential, workflow, deployment, or production
-permission is configured or implied.
+| Explicit codename | `internal/cli/generate.go`: Debian input requires `--codename`, and a `--suite` must equal it | `TestGenerateDebianRequiresExplicitCodename`, `TestGenerateDebianRejectsSuiteDifferentFromCodename` |
+| Strict incremental restore | `internal/generator/deb/parser.go` (ADR-0014) | `TestParseExistingMetadata*`, `TestGenerateIncrementalDebianFailsOnCorruptArchWithoutMutation`, `TestGenerateIncrementalDebianCorruptionStopsMixedRunBeforeAnyWrite`, `TestGenerateIncrementalDebianInitializesEmptyOutput` |
+| Signed no-op reuse | `internal/generator/deb/release_signature.go` | `TestParseTrustedKeyRing`, `TestVerifyReleaseSignatures` |
 
 Release binaries now have one contract: the sole tag workflow runs pinned
 GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
@@ -255,14 +107,6 @@ embedded identity before installation. The checksum is unsigned and
 same-origin, so authenticity depends on GitHub and repository release controls;
 there is no independent release signature or attestation. No `latest` lookup
 is accepted. Darwin assets from the retired workflow are not produced.
-
-The R10 candidate also exercises signed Trixie and Forky publication through
-the production transaction, including real `gpgv` and apt verification,
-shared-pool reuse, exact suite identity, by-hash, and frozen-stable
-preservation. This is local fixture evidence only. It does not claim a merged
-provider adapter, live suite, or published Repogen release; those remain
-separate human-authorized and externally verified milestones described in
-[RELEASING.md](RELEASING.md).
 
 The existing `repogen generate` command remains generic and keeps its
 supported formats and unsigned behavior. It has no implicit Debian codename:

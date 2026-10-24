@@ -1,11 +1,19 @@
 # Plan: Frostyard production publisher boundary
 
+> **Status: Superseded. The code is removed per
+> [ADR-0015](../adr/0015-remove-the-superseded-production-path.md).** The plan
+> body below stays unchanged as the record. The code it describes (the
+> `validate-production` and `reconcile-production` commands, `internal/production`,
+> `internal/intake`, `internal/objectstore`, the Debian transaction and local
+> generation) is in git history before the ADR-0015 change. Paths and tests it
+> names no longer exist.
+
 **Superseded for Frostyard Debian publication** on 2026-10-02 by core
 [ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)
 and [Plan 0009](https://github.com/frostyard/core/blob/main/docs/plans/0009-debian-publication-through-apt-publisher.md).
 `frostyard/apt-publisher` is the only Debian writer. The `gchlog` canary in
 this plan never ran and will not run: gchlog was retired on 2026-10-21. Kept
-as a record of the R1–R10 code, which stays tested.
+as a record of the R1–R10 code, now removed.
 
 This plan defines the repository-local implementation contract for the
 Frostyard APT publisher. R1 records the contract, R2 implements its

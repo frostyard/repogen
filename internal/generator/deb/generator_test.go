@@ -311,7 +311,7 @@ func TestGenerateNoOpPreservesSignedRelease(t *testing.T) {
 		time.Date(2026, time.September, 15, 18, 0, 0, 0, time.UTC),
 	}
 	next := 0
-	gpgSigner, err := signerpkg.NewGPGSigner(productionPrivateKeyFixture(), "")
+	gpgSigner, err := signerpkg.NewGPGSigner(testPrivateKeyFixture(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,5 +591,60 @@ func TestGenerateRejectsConflictingPoolDestinationBeforeWriting(t *testing.T) {
 				t.Fatalf("Generate() mutated output before rejecting collision: %v", statErr)
 			}
 		})
+	}
+}
+
+func testPrivateKeyFixture() string {
+	return filepath.Join("..", "..", "..", "test", "fixtures", "gpg-keys", "test-key.asc")
+}
+
+func TestGenericUnsignedGenerationRemainsSupported(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "sample_1.0_amd64.deb")
+	if err := os.WriteFile(source, []byte("generic unsigned package"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checksums, err := utils.CalculateChecksums(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputDir := filepath.Join(root, "repository")
+	config := &models.RepositoryConfig{
+		OutputDir:  outputDir,
+		Codename:   "testing",
+		Suite:      "testing",
+		Origin:     "Generic",
+		Label:      "Generic",
+		Components: []string{"main"},
+		Arches:     []string{"amd64"},
+	}
+	packages := []models.Package{{
+		Name:         "sample",
+		Version:      "1.0",
+		Architecture: "amd64",
+		Filename:     source,
+		Size:         checksums.Size,
+		MD5Sum:       checksums.MD5,
+		SHA1Sum:      checksums.SHA1,
+		SHA256Sum:    checksums.SHA256,
+		SHA512Sum:    checksums.SHA512,
+	}}
+
+	if err := NewGenerator(nil).Generate(context.Background(), config, packages); err != nil {
+		t.Fatalf("generic unsigned Generate() error = %v", err)
+	}
+	release, err := os.ReadFile(filepath.Join(outputDir, "dists", "testing", "Release"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inRelease, err := os.ReadFile(filepath.Join(outputDir, "dists", "testing", "InRelease"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(inRelease, release) {
+		t.Fatal("generic unsigned InRelease no longer matches Release")
+	}
+	if _, err := os.Lstat(filepath.Join(outputDir, "dists", "testing", "Release.gpg")); !os.IsNotExist(err) {
+		t.Fatalf("generic unsigned generation emitted Release.gpg: %v", err)
 	}
 }
