@@ -78,8 +78,8 @@ Repogen does not publish Frostyard Debian packages.
 only Frostyard Debian writer (core
 [ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)).
 Repogen is a general-purpose generator plus the `publish-to-r2` action for
-sysext and other non-Debian formats. The former `validate-production` and
-`reconcile-production` commands, which shipped in v0.5.2, were removed
+sysext and other non-Debian formats. The former production commands, which
+shipped in v0.5.2, were removed
 ([ADR-0015](docs/adr/0015-remove-the-superseded-production-path.md); history
 in [ADR-0013](docs/adr/0013-separate-generic-generation-from-production-publishing.md)).
 

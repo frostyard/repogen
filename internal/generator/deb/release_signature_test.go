@@ -115,6 +115,10 @@ func TestVerifyReleaseSignatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	otherReleaseGPG, err := signer.SignDetached([]byte("Origin: Other\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	wrong, err := openpgp.NewEntity("Wrong", "", "wrong@example.invalid", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +139,7 @@ func TestVerifyReleaseSignatures(t *testing.T) {
 		{name: "valid", ring: ring, release: release, inRelease: inRelease, releaseGPG: releaseGPG},
 		{name: "wrong key", ring: wrongRing, release: release, inRelease: inRelease, releaseGPG: releaseGPG, wantErr: "InRelease signature is invalid"},
 		{name: "InRelease payload differs", ring: ring, release: release, inRelease: otherInRelease, releaseGPG: releaseGPG, wantErr: "not byte-identical"},
-		{name: "Release.gpg for other data", ring: ring, release: []byte("Origin: Changed\n"), inRelease: inRelease, releaseGPG: releaseGPG, wantErr: "not byte-identical"},
+		{name: "Release.gpg for other data", ring: ring, release: release, inRelease: inRelease, releaseGPG: otherReleaseGPG, wantErr: "detached Release.gpg signature is invalid"},
 		{name: "InRelease not clear-signed", ring: ring, release: release, inRelease: release, releaseGPG: releaseGPG, wantErr: "not one complete clear-signed"},
 		{name: "Release.gpg invalid", ring: ring, release: release, inRelease: inRelease, releaseGPG: []byte("bad"), wantErr: "Release.gpg signature is invalid"},
 	}
