@@ -1,6 +1,6 @@
 # 0015 — Remove the superseded production path
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-24
 
 ## Context

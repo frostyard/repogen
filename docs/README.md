@@ -67,7 +67,8 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   existing `Packages`/`Packages.gz` must parse, agree, and be selected, and no
   format writes until all are restored and validated
 - [ADR-0015 — Remove the superseded production path](adr/0015-remove-the-superseded-production-path.md)
-  — deletes the former production commands and the code behind them; `generate` and `publish-to-r2` do not change
+  — accepted 2026-10-24: deletes the former production commands and the code
+  behind them; `generate` and `publish-to-r2` do not change
 
 ### Design
 
