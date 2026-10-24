@@ -74,9 +74,9 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   — accepted 2026-10-24: deletes the former production commands and the code
   behind them; `generate` and `publish-to-r2` do not change
 - [ADR-0016 — Remove RPM generation](adr/0016-remove-rpm-generation.md)
-  — proposed 2026-10-24: GO-2026-5932 (`x/crypto/openpgp`, no fix) is reachable
-  through go-rpmutils and no consumer uses RPM; deletes the `rpm` type, its
-  generator, flags and fixtures; adds pinned govulncheck to CI
+  — accepted 2026-10-24: GO-2026-5932 (`x/crypto/openpgp`, no fix) was
+  reachable through go-rpmutils and no consumer used RPM; deletes the `rpm`
+  type, its generator, flags and fixtures; adds pinned govulncheck to CI
 
 ### Design
 

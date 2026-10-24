@@ -1044,36 +1044,26 @@ MIT License.
 
 ### Creating a Release
 
-See **[RELEASING.md](RELEASING.md)** for detailed instructions on:
+See **[RELEASING.md](RELEASING.md)** for the release process, the required
+gates, and the authoritative asset contract. A release needs a human to create
+and push the tag.
 
-- Preparing and creating releases
-- What happens during the automated release workflow
-- Deploying the generated repository archive to S3 or web servers
-- Troubleshooting common issues
+A `v*.*.*` tag runs `.github/workflows/release.yml`, which uses GoReleaser
+(`.goreleaser.yml`) to publish three assets:
 
-Quick start:
+| Asset | Purpose |
+|---|---|
+| `repogen-linux-amd64` | Raw Linux amd64 executable |
+| `repogen-linux-arm64` | Raw Linux arm64 executable |
+| `SHA256SUMS` | SHA-256 digest list for both executables |
 
-```bash
-# Run tests
-make test
-
-# Create and push a tag
-git tag -a v1.0.0 -m "Release version 1.0.0"
-git push origin v1.0.0
-
-# GitHub Actions will automatically:
-# - Build binaries for 4 platforms
-# - Create native packages (deb, apk, bottle)
-# - Generate a repository using repogen itself
-# - Create release with all artifacts + repository archive
-```
+The release does not build native packages, Darwin binaries, or a repository
+archive.
 
 ### CI/CD Workflows
 
 - **Test Workflow** (`.github/workflows/test.yml`): Runs on PRs and pushes to main
 - **Release Workflow** (`.github/workflows/release.yml`): Runs on version tags (v*.*.\*)
-
-The release workflow generates a `repogen-repository-VERSION.zip` archive containing a complete repository that you can extract and deploy to S3, GitHub Pages, or any web server.
 
 ## Acknowledgments
 
