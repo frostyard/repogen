@@ -3,7 +3,6 @@ package test
 import (
 	"bytes"
 	"context"
-	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,10 +59,6 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("DebianTrixie", func(t *testing.T) {
 		testDebianTrixieRepository(t, projectRoot, testDir)
-	})
-
-	t.Run("RPM", func(t *testing.T) {
-		testRPMRepository(t, projectRoot, testDir)
 	})
 
 	t.Run("Alpine", func(t *testing.T) {
@@ -457,88 +452,6 @@ repogen-gzipped
 	t.Log("✓ Debian Trixie repository test passed")
 }
 
-func testRPMRepository(t *testing.T, projectRoot, testDir string) {
-	repoDir := filepath.Join(testDir, "rpm-repo")
-	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "rpms")
-
-	// Check if test packages exist
-	rpms, _ := filepath.Glob(filepath.Join(fixturesDir, "*.rpm"))
-	if len(rpms) < 2 {
-		t.Skip("RPM test packages not found (need 2), run build-test-packages.sh first")
-	}
-
-	// Generate repository
-	t.Log("Generating RPM repository with 2 packages...")
-	repoGenBin := filepath.Join(projectRoot, "repogen")
-	cmd := exec.Command(repoGenBin, "generate",
-		"--input-dir", fixturesDir,
-		"--output-dir", repoDir,
-		"--base-url", "http://example.com/repo/",
-		"--distro", "fedora",
-	)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
-	}
-
-	// Verify repository structure (2 packages) - new version/arch structure
-	expectedFiles := []string{
-		"40/x86_64/repodata/repomd.xml",
-		"40/x86_64/Packages/repogen-test-1.0.0-1.x86_64.rpm",
-		"40/x86_64/Packages/repogen-utils-2.0.0-1.x86_64.rpm",
-		"fedora.repo",
-	}
-	for _, file := range expectedFiles {
-		path := filepath.Join(repoDir, file)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Errorf("Expected file not found: %s", file)
-		}
-	}
-
-	// Verify .repo file contains $releasever/$basearch
-	repoFileContent, err := os.ReadFile(filepath.Join(repoDir, "fedora.repo"))
-	if err != nil {
-		t.Fatalf("Failed to read .repo file: %v", err)
-	}
-	repoContent := string(repoFileContent)
-	if !strings.Contains(repoContent, "$releasever/$basearch") {
-		t.Errorf(".repo file missing $releasever/$basearch variables. Content:\n%s", repoContent)
-	}
-	if !strings.Contains(repoContent, "[") {
-		t.Errorf(".repo file appears to be malformed. Content:\n%s", repoContent)
-	}
-
-	// Test repository in Docker
-	t.Log("Testing repository in Fedora container...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	dockerCmd := exec.CommandContext(ctx, "docker", "run", "--rm",
-		"-v", fmt.Sprintf("%s:/repo:ro", repoDir),
-		"fedora:latest",
-		"bash", "-c", `
-set -e
-cat > /etc/yum.repos.d/test.repo <<EOF
-[test]
-name=Test Repository
-baseurl=file:///repo/40/x86_64
-enabled=1
-gpgcheck=0
-EOF
-dnf install -y repogen-test repogen-utils
-repogen-test
-repogen-utils
-`,
-	)
-	dockerCmd.Stdout = os.Stdout
-	dockerCmd.Stderr = os.Stderr
-
-	if err := dockerCmd.Run(); err != nil {
-		t.Fatalf("Docker test failed: %v", err)
-	}
-
-	t.Log("✓ RPM repository test passed")
-}
-
 func testAlpineRepository(t *testing.T, projectRoot, testDir string) {
 	repoDir := filepath.Join(testDir, "alpine-repo")
 	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "apks")
@@ -825,10 +738,6 @@ func testChecksumVerification(t *testing.T, projectRoot, testDir string) {
 		verifyDebianChecksums(t, projectRoot, testDir)
 	})
 
-	t.Run("RPM", func(t *testing.T) {
-		verifyRPMChecksums(t, projectRoot, testDir)
-	})
-
 	t.Run("APK", func(t *testing.T) {
 		verifyAPKChecksums(t, projectRoot, testDir)
 	})
@@ -926,63 +835,6 @@ func verifyDebianChecksums(t *testing.T, projectRoot, testDir string) {
 				relPath, expectedMD5, actualMD5)
 		} else {
 			t.Logf("✓ Checksum verified for %s", relPath)
-		}
-	}
-}
-
-func verifyRPMChecksums(t *testing.T, projectRoot, testDir string) {
-	repoDir := filepath.Join(testDir, "checksum-rpm-repo")
-	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "rpms")
-
-	// Check if test packages exist
-	rpms, _ := filepath.Glob(filepath.Join(fixturesDir, "*.rpm"))
-	if len(rpms) == 0 {
-		t.Skip("RPM test packages not found")
-	}
-
-	// Generate repository
-	t.Log("Generating RPM repository for checksum verification...")
-	repoGenBin := filepath.Join(projectRoot, "repogen")
-	cmd := exec.Command(repoGenBin, "generate",
-		"--input-dir", fixturesDir,
-		"--output-dir", repoDir,
-	)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
-	}
-
-	// Find repodata directory (RPM repos have nested structure with OS version and arch)
-	repodataDir, err := findRepodataDir(repoDir)
-	if err != nil {
-		t.Fatalf("Failed to find repodata directory: %v", err)
-	}
-
-	// Parse primary.xml
-	primaryXML, err := findPrimaryXML(repodataDir)
-	if err != nil {
-		t.Fatalf("Failed to find primary.xml: %v", err)
-	}
-
-	checksums, err := extractRPMChecksums(primaryXML)
-	if err != nil {
-		t.Fatalf("Failed to extract checksums from primary.xml: %v", err)
-	}
-
-	// Verify checksums match actual files (Packages dir is next to repodata)
-	packagesDir := filepath.Join(filepath.Dir(repodataDir), "Packages")
-	for filename, expectedSHA256 := range checksums {
-		pkgPath := filepath.Join(packagesDir, filename)
-		actualSHA256, err := calculateSHA256(pkgPath)
-		if err != nil {
-			t.Errorf("Failed to calculate checksum for %s: %v", filename, err)
-			continue
-		}
-
-		if actualSHA256 != expectedSHA256 {
-			t.Errorf("Checksum mismatch for %s:\n  Expected (from primary.xml): %s\n  Actual (from file): %s",
-				filename, expectedSHA256, actualSHA256)
-		} else {
-			t.Logf("✓ Checksum verified for %s", filename)
 		}
 	}
 }
@@ -1172,57 +1024,6 @@ func extractDebianChecksums(packagesPath string) (map[string]string, error) {
 	return checksums, nil
 }
 
-func extractRPMChecksums(primaryXMLPath string) (map[string]string, error) {
-	checksums := make(map[string]string)
-
-	// Decompress primary.xml.gz
-	gzFile, err := os.Open(primaryXMLPath)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = gzFile.Close() }()
-
-	gzReader, err := exec.Command("gzip", "-d", "-c", primaryXMLPath).Output()
-	if err != nil {
-		return nil, err
-	}
-
-	content := string(gzReader)
-
-	// Simple XML parsing - look for location and checksum
-	var currentLocation, currentChecksum string
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, `<location href="`) {
-			start := strings.Index(line, `href="`) + 6
-			end := strings.Index(line[start:], `"`)
-			if end > 0 {
-				location := line[start : start+end]
-				// Extract just the filename from Packages/filename.rpm
-				parts := strings.Split(location, "/")
-				if len(parts) > 0 {
-					currentLocation = parts[len(parts)-1]
-				}
-			}
-		}
-		if strings.Contains(line, `<checksum type="sha256"`) {
-			start := strings.Index(line, ">") + 1
-			end := strings.Index(line[start:], "<")
-			if end > 0 {
-				currentChecksum = line[start : start+end]
-			}
-		}
-
-		if currentLocation != "" && currentChecksum != "" {
-			checksums[currentLocation] = currentChecksum
-			currentLocation = ""
-			currentChecksum = ""
-		}
-	}
-
-	return checksums, nil
-}
-
 func extractAPKChecksums(apkindexPath string) (map[string]string, error) {
 	checksums := make(map[string]string)
 
@@ -1280,64 +1081,6 @@ func extractAPKChecksums(apkindexPath string) (map[string]string, error) {
 	return checksums, nil
 }
 
-func findRepodataDir(rootDir string) (string, error) {
-	var repodataDir string
-	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && info.Name() == "repodata" {
-			repodataDir = path
-			return filepath.SkipDir
-		}
-		return nil
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	if repodataDir == "" {
-		return "", fmt.Errorf("repodata directory not found in %s", rootDir)
-	}
-
-	return repodataDir, nil
-}
-
-func findPrimaryXML(repodataDir string) (string, error) {
-	// Use repomd.xml as the source of truth rather than scanning for any
-	// matching filename — a repo may have multiple HASH-primary.xml.gz files
-	// present at once (older ones are valid to retain), so a directory scan
-	// would risk returning a stale one.
-	repomdPath := filepath.Join(repodataDir, "repomd.xml")
-	data, err := os.ReadFile(repomdPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read repomd.xml: %w", err)
-	}
-
-	var doc struct {
-		Data []struct {
-			Type     string `xml:"type,attr"`
-			Location struct {
-				Href string `xml:"href,attr"`
-			} `xml:"location"`
-		} `xml:"data"`
-	}
-	if err := xml.Unmarshal(data, &doc); err != nil {
-		return "", fmt.Errorf("failed to parse repomd.xml: %w", err)
-	}
-
-	for _, d := range doc.Data {
-		if d.Type == "primary" {
-			// href is relative to the arch dir (parent of repodata/)
-			archDir := filepath.Dir(repodataDir)
-			return filepath.Join(archDir, d.Location.Href), nil
-		}
-	}
-
-	return "", fmt.Errorf("primary entry not found in %s", repomdPath)
-}
-
 func calculateMD5(path string) (string, error) {
 	cmd := exec.Command("md5sum", path)
 	output, err := cmd.Output()
@@ -1368,30 +1111,15 @@ func calculateSHA1(path string) (string, error) {
 	return parts[0], nil
 }
 
-func calculateSHA256(path string) (string, error) {
-	cmd := exec.Command("sha256sum", path)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	parts := strings.Fields(string(output))
-	if len(parts) == 0 {
-		return "", fmt.Errorf("invalid sha256sum output")
-	}
-
-	return parts[0], nil
-}
-
 // testIncrementalSkipDuplicates tests the --skip-duplicates flag behavior
 func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	repoDir := filepath.Join(testDir, "incremental-skip-duplicates-repo")
-	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "rpms")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "apks")
 	repoGenBin := filepath.Join(projectRoot, "repogen")
 
 	// Check if test packages exist
-	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test-1.0.0-1.x86_64.rpm")); os.IsNotExist(err) {
-		t.Skip("RPM test packages not found, run build-test-packages.sh first")
+	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test-1.0.0-r0.apk")); os.IsNotExist(err) {
+		t.Skip("APK test packages not found, run build-test-packages.sh first")
 	}
 
 	// Clean up repo directory
@@ -1409,13 +1137,14 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 
 	// Copy first package to input directory
 	if err := copyFile(
-		filepath.Join(fixturesDir, "repogen-test-1.0.0-1.x86_64.rpm"),
-		filepath.Join(initialInputDir, "repogen-test-1.0.0-1.x86_64.rpm"),
+		filepath.Join(fixturesDir, "repogen-test-1.0.0-r0.apk"),
+		filepath.Join(initialInputDir, "repogen-test-1.0.0-r0.apk"),
 	); err != nil {
 		t.Fatalf("Failed to copy first package: %v", err)
 	}
 
 	cmd := exec.Command(repoGenBin, "generate",
+		"--arch", "x86_64",
 		"--input-dir", initialInputDir,
 		"--output-dir", repoDir,
 	)
@@ -1424,11 +1153,12 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	}
 
 	// Verify initial repository has 1 package
-	verifyRPMPackageCount(t, repoDir, 1)
+	verifyAPKPackageCount(t, repoDir, 1)
 
 	// Step 2: Run incremental with duplicate - should fail WITHOUT --skip-duplicates
 	t.Log("Step 2: Testing incremental mode fails on duplicate without --skip-duplicates...")
 	cmd = exec.Command(repoGenBin, "generate",
+		"--arch", "x86_64",
 		"--input-dir", initialInputDir,
 		"--output-dir", repoDir,
 		"--incremental",
@@ -1445,6 +1175,7 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	// Step 3: Run incremental with duplicate and --skip-duplicates - should succeed
 	t.Log("Step 3: Testing incremental mode with --skip-duplicates skips duplicate...")
 	cmd = exec.Command(repoGenBin, "generate",
+		"--arch", "x86_64",
 		"--input-dir", initialInputDir,
 		"--output-dir", repoDir,
 		"--incremental",
@@ -1460,7 +1191,7 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	t.Log("  ✓ Correctly skipped duplicate with --skip-duplicates")
 
 	// Verify repository still has 1 package (no duplicates added)
-	verifyRPMPackageCount(t, repoDir, 1)
+	verifyAPKPackageCount(t, repoDir, 1)
 
 	// Step 4: Run incremental with new package and duplicate, --skip-duplicates should add new only
 	t.Log("Step 4: Testing incremental with mix of duplicate and new package...")
@@ -1472,19 +1203,20 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 
 	// Copy both packages (one duplicate, one new)
 	if err := copyFile(
-		filepath.Join(fixturesDir, "repogen-test-1.0.0-1.x86_64.rpm"),
-		filepath.Join(mixedInputDir, "repogen-test-1.0.0-1.x86_64.rpm"),
+		filepath.Join(fixturesDir, "repogen-test-1.0.0-r0.apk"),
+		filepath.Join(mixedInputDir, "repogen-test-1.0.0-r0.apk"),
 	); err != nil {
 		t.Fatalf("Failed to copy duplicate package: %v", err)
 	}
 	if err := copyFile(
-		filepath.Join(fixturesDir, "repogen-utils-2.0.0-1.x86_64.rpm"),
-		filepath.Join(mixedInputDir, "repogen-utils-2.0.0-1.x86_64.rpm"),
+		filepath.Join(fixturesDir, "repogen-utils-2.0.0-r0.apk"),
+		filepath.Join(mixedInputDir, "repogen-utils-2.0.0-r0.apk"),
 	); err != nil {
 		t.Fatalf("Failed to copy new package: %v", err)
 	}
 
 	cmd = exec.Command(repoGenBin, "generate",
+		"--arch", "x86_64",
 		"--input-dir", mixedInputDir,
 		"--output-dir", repoDir,
 		"--incremental",
@@ -1498,7 +1230,7 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	t.Log("  ✓ Correctly processed mix of duplicate and new package")
 
 	// Verify repository now has 2 packages (original + new, not the duplicate)
-	verifyRPMPackageCount(t, repoDir, 2)
+	verifyAPKPackageCount(t, repoDir, 2)
 
 	// Step 5: Verify --skip-duplicates has no effect without --incremental
 	t.Log("Step 5: Testing --skip-duplicates without --incremental (non-incremental mode)...")
@@ -1508,6 +1240,7 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	}
 
 	cmd = exec.Command(repoGenBin, "generate",
+		"--arch", "x86_64",
 		"--input-dir", initialInputDir,
 		"--output-dir", nonIncrementalDir,
 		"--skip-duplicates", // Without --incremental, this should be a no-op
@@ -1521,28 +1254,23 @@ func testIncrementalSkipDuplicates(t *testing.T, projectRoot, testDir string) {
 	t.Log("✓ Incremental --skip-duplicates tests passed")
 }
 
-// verifyRPMPackageCount checks that the repository has the expected number of packages
-func verifyRPMPackageCount(t *testing.T, repoDir string, expectedCount int) {
+// verifyAPKPackageCount checks that the repository has the expected number of packages
+func verifyAPKPackageCount(t *testing.T, repoDir string, expectedCount int) {
 	t.Helper()
 
-	repodataDir, err := findRepodataDir(repoDir)
+	apkindexPath := filepath.Join(repoDir, "x86_64", "APKINDEX.tar.gz")
+	output, err := exec.Command("tar", "-xzf", apkindexPath, "-O", "APKINDEX").Output()
 	if err != nil {
-		t.Fatalf("Failed to find repodata directory: %v", err)
-	}
-	primaryXMLPath, err := findPrimaryXML(repodataDir)
-	if err != nil {
-		t.Fatalf("Failed to find primary.xml.gz: %v", err)
+		t.Fatalf("Failed to extract APKINDEX: %v", err)
 	}
 
-	// Read and decompress primary.xml.gz
-	cmd := exec.Command("zcat", primaryXMLPath)
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to decompress primary.xml.gz: %v", err)
+	// Each package entry starts with a "P:" (package name) line
+	packageCount := 0
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "P:") {
+			packageCount++
+		}
 	}
-
-	// Count package entries
-	packageCount := strings.Count(string(output), "<package type=\"rpm\">")
 	if packageCount != expectedCount {
 		t.Errorf("Expected %d packages in repository, found %d", expectedCount, packageCount)
 	}

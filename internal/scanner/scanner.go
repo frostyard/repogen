@@ -8,7 +8,6 @@ type PackageType int
 const (
 	TypeUnknown PackageType = iota
 	TypeDeb
-	TypeRpm
 	TypeApk
 	TypeHomebrewBottle
 	TypePacman
@@ -20,8 +19,6 @@ func (pt PackageType) String() string {
 	switch pt {
 	case TypeDeb:
 		return "deb"
-	case TypeRpm:
-		return "rpm"
 	case TypeApk:
 		return "apk"
 	case TypeHomebrewBottle:

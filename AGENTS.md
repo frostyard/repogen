@@ -21,7 +21,6 @@ Edit only the canonical paths; keep content tool-agnostic.
 ## Supported package types
 
 - **Debian/APT** (.deb packages)
-- **Yum/RPM** (.rpm packages)
 - **Alpine/APK** (.apk packages)
 - **Arch Linux/Pacman** (.pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz)
 - **Homebrew** (bottle files)
@@ -38,7 +37,6 @@ internal/
     deb/              # Debian APT repository generator
     homebrew/         # Homebrew bottle repository generator
     pacman/           # Arch Linux Pacman repository generator
-    rpm/              # RPM/Yum repository generator
     sysext/           # systemd-sysext repository generator
   models/             # Data models (Package, RepositoryConfig, errors)
   scanner/            # Package detection and file scanning
@@ -94,7 +92,9 @@ frostyard/core — edit there, not here.
   [ADR-0012](docs/adr/0012-acmm-conformance-via-canonical-aliases.md) —
   edit their canonical targets, never the aliases.
 - CI gate: [.github/workflows/test.yml](.github/workflows/test.yml) runs the
-  Go tests, the integration suite, and `node scripts/check-docs.mjs` (every
+  Go tests, a pinned `govulncheck` (a reachable vulnerability fails CI,
+  [ADR-0016](docs/adr/0016-remove-rpm-generation.md)), the integration
+  suite, and `node scripts/check-docs.mjs` (every
   doc indexed, every relative link resolving, every symlink intact —
   thresholds in `.coverage-thresholds.json`, `never_relax`). Run the gates
   locally before pushing.

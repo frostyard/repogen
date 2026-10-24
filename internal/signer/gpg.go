@@ -161,7 +161,7 @@ func (s *GPGSigner) SignCleartext(data []byte) ([]byte, error) {
 	return signedData, nil
 }
 
-// SignDetached creates a detached ASCII-armored signature (for Debian Release.gpg, RPM repomd.xml.asc)
+// SignDetached creates a detached ASCII-armored signature (for Debian Release.gpg)
 func (s *GPGSigner) SignDetached(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 

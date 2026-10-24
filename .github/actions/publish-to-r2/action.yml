@@ -26,7 +26,7 @@ inputs:
     description: 'Directory containing packages to add (.deb, .raw, .raw.zst, etc.)'
     required: true
   package-type:
-    description: 'Type of packages: deb, sysext, rpm, apk, pacman, homebrew'
+    description: 'Type of packages: deb, sysext, apk, pacman, homebrew'
     required: true
 
   # Repository configuration
@@ -93,16 +93,6 @@ inputs:
     required: false
     default: ''
 
-  # RPM-specific options
-  distro-variant:
-    description: 'Distribution variant for RPM repos (fedora, centos, rhel)'
-    required: false
-    default: 'fedora'
-  version:
-    description: 'Release version for RPM repos (e.g., 40 for Fedora 40)'
-    required: false
-    default: ''
-
   # Repogen version
   repogen-version:
     description: 'Exact v-prefixed repogen release tag'
@@ -162,11 +152,11 @@ runs:
 
         # Validate package type
         case "${{ inputs.package-type }}" in
-          deb|sysext|rpm|apk|pacman|homebrew)
+          deb|sysext|apk|pacman|homebrew)
             echo "✓ Package type: ${{ inputs.package-type }}"
             ;;
           *)
-            echo "::error::Invalid package-type '${{ inputs.package-type }}'. Must be one of: deb, sysext, rpm, apk, pacman, homebrew"
+            echo "::error::Invalid package-type '${{ inputs.package-type }}'. Must be one of: deb, sysext, apk, pacman, homebrew. RPM generation was removed in repogen v0.7.0 (ADR-0016)"
             exit 1
             ;;
         esac
@@ -220,7 +210,7 @@ runs:
         # List contents of packages directory for debugging
         echo ""
         echo "Contents of ${{ inputs.packages-dir }}:"
-        find "${{ inputs.packages-dir }}" -type f -name "*.raw*" -o -name "*.deb" -o -name "*.rpm" -o -name "*.apk" -o -name "*.pkg.tar.*" -o -name "*.bottle.tar.gz" 2>/dev/null | head -20 || echo "  (no matching package files found)"
+        find "${{ inputs.packages-dir }}" -type f -name "*.raw*" -o -name "*.deb" -o -name "*.apk" -o -name "*.pkg.tar.*" -o -name "*.bottle.tar.gz" 2>/dev/null | head -20 || echo "  (no matching package files found)"
         echo ""
 
         echo "::endgroup::"
@@ -306,21 +296,6 @@ runs:
               --exclude "*.raw.xz" \
               --exclude "*.raw.gz" \
               2>&1
-            ;;
-          rpm)
-            # Sync repodata directory
-            VERSION="${{ inputs.version }}"
-            if [[ -n "$VERSION" ]]; then
-              aws s3 sync "${S3_PATH}/${VERSION}/x86_64/repodata" "./repo/${VERSION}/x86_64/repodata" \
-                --endpoint-url "$R2_ENDPOINT" \
-                --delete \
-                2>/dev/null || echo "No existing repodata directory found"
-            else
-              aws s3 sync "${S3_PATH}" "./repo" \
-                --endpoint-url "$R2_ENDPOINT" \
-                --exclude "*.rpm" \
-                2>/dev/null || echo "No existing repository found"
-            fi
             ;;
           apk)
             # Sync APKINDEX files
@@ -435,7 +410,6 @@ runs:
         echo "Searching for packages..."
         PACKAGE_FILES=$(find "${{ inputs.packages-dir }}" -type f \( \
           -name "*.deb" -o \
-          -name "*.rpm" -o \
           -name "*.apk" -o \
           -name "*.pkg.tar.zst" -o \
           -name "*.pkg.tar.xz" -o \
@@ -461,7 +435,7 @@ runs:
 
         if [[ "$PACKAGE_COUNT" -eq 0 ]]; then
           echo "::error::No packages found in ${{ inputs.packages-dir }}"
-          echo "Expected file extensions: .deb, .rpm, .apk, .pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz, .raw, .raw.zst, .raw.xz, .raw.gz, .bottle.tar.gz"
+          echo "Expected file extensions: .deb, .apk, .pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz, .raw, .raw.zst, .raw.xz, .raw.gz, .bottle.tar.gz"
           exit 1
         fi
 
@@ -510,14 +484,6 @@ runs:
         fi
         if [[ -n "${{ inputs.repo-name }}" ]]; then
           REPOGEN_ARGS+=("--repo-name" "${{ inputs.repo-name }}")
-        fi
-
-        # Add RPM options
-        if [[ -n "${{ inputs.distro-variant }}" ]]; then
-          REPOGEN_ARGS+=("--distro" "${{ inputs.distro-variant }}")
-        fi
-        if [[ -n "${{ inputs.version }}" ]]; then
-          REPOGEN_ARGS+=("--version" "${{ inputs.version }}")
         fi
 
         # Add signing options

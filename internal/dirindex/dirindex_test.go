@@ -80,7 +80,7 @@ func TestGenerate_IndexHtmlExcluded(t *testing.T) {
 	dir := t.TempDir()
 	// Pre-create an index.html — it should be overwritten and not self-listed
 	writeTestFile(t, filepath.Join(dir, "index.html"), "<old>")
-	writeTestFile(t, filepath.Join(dir, "real.rpm"), "rpm data")
+	writeTestFile(t, filepath.Join(dir, "real.deb"), "deb data")
 
 	if err := Generate(dir); err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -90,8 +90,8 @@ func TestGenerate_IndexHtmlExcluded(t *testing.T) {
 	if strings.Contains(html, `href="index.html"`) {
 		t.Error("index.html should not list itself")
 	}
-	if !strings.Contains(html, "real.rpm") {
-		t.Error("index.html should list real.rpm")
+	if !strings.Contains(html, "real.deb") {
+		t.Error("index.html should list real.deb")
 	}
 }
 

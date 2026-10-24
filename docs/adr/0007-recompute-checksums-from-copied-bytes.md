@@ -1,6 +1,6 @@
 # 0007 — Checksums come from copied bytes, never from parsed metadata
 
-- **Status:** Accepted
+- **Status:** Accepted; RPM parts superseded by [ADR-0016](0016-remove-rpm-generation.md)
 - **Date:** 2026-08-12
 
 ## Context

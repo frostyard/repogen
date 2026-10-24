@@ -1,6 +1,6 @@
 # 0004 — RPM layout is `{version}/{arch}/` with a version-resolution ladder
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0016](0016-remove-rpm-generation.md)
 - **Date:** 2026-08-12
 
 ## Context

@@ -24,7 +24,7 @@ func TestPublishTargetRefusesStable(t *testing.T) {
 		{name: "sysext trixie", packageType: "sysext", codename: "trixie", ok: true},
 		{name: "deb trixie", packageType: "deb", codename: "trixie", ok: true},
 		{name: "codename stable", packageType: "sysext", codename: "stable", message: "stable"},
-		{name: "codename Stable", packageType: "rpm", codename: "Stable", message: "stable"},
+		{name: "codename Stable", packageType: "apk", codename: "Stable", message: "stable"},
 		{name: "codename padded stable", packageType: "sysext", codename: " stable ", message: "stable"},
 		{name: "suite stable", packageType: "sysext", codename: "trixie", suite: "stable", message: "stable"},
 		{name: "suite STABLE without codename", packageType: "sysext", suite: "STABLE", message: "stable"},

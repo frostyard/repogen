@@ -61,7 +61,7 @@ repogen version --short
 ```
 
 The former hand-built package/repository release workflow is not a second
-publisher. Native `.deb`, `.rpm`, `.apk`, bottles, and generated repository
+publisher. Native `.deb`, `.apk`, bottles, and generated repository
 archives are not part of this release contract.
 
 ## Creating a release

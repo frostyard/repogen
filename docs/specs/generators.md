@@ -12,6 +12,10 @@ Each generator implements `generator.Generator` and produces a complete
 repository structure from a list of `models.Package` entries — the exact
 output layout, metadata file formats, and signing behavior per format.
 
+RPM generation was removed in
+[ADR-0016](../adr/0016-remove-rpm-generation.md); `.rpm` files are not detected
+and are ignored by `generate`.
+
 ## Debian/APT (`internal/generator/deb/`)
 
 **Files**: `generator.go`, `parser.go`, `metadata.go`, `release.go`,
@@ -88,53 +92,6 @@ existing suite with no selected index, an unreadable index, a malformed field
 line or invalid `Size`, or a stanza missing `Package`, `Version`, `Architecture`, `Filename` or
 `SHA256`. `generate` stops before any format writes. Other package types keep
 their existing fallback.
-
----
-
-## Yum/RPM (`internal/generator/rpm/`)
-
-**Files**: `generator.go`, `parser.go`
-**Decisions**: [ADR-0004 (`{version}/{arch}/` layout and version ladder)](../adr/0004-rpm-version-arch-layout-and-version-ladder.md),
-[ADR-0005 (content-addressed repodata)](../adr/0005-content-addressed-repodata.md),
-[ADR-0010 (`.repo` file policy)](../adr/0010-dnf-repo-file-policy.md)
-
-### Output Structure
-
-```
-<output>/
-  {version}/{arch}/
-    Packages/{file}.rpm                    # Package files
-    repodata/
-      repomd.xml                           # Repository metadata index
-      repomd.xml.asc                       # GPG signature (if signed)
-      {sha256}-primary.xml.gz              # Package metadata (content-addressed)
-  {repo-name}.repo                         # dnf/yum config file (if --base-url set)
-```
-
-### Key Behaviors
-
-- Packages are grouped by version and architecture into separate repositories.
-- Version is determined by priority: `--version` flag > RPM `DistroVersion`
-  metadata > distro-variant default (Fedora=40, CentOS/RHEL=9).
-- `primary.xml.gz` filename includes its SHA256 hash (content-addressed).
-- `repomd.xml` records both a checksum of the compressed file and an
-  open-checksum computed from the uncompressed `primary.xml`.
-- `.repo` file uses `$releasever/$basearch` variables for dnf substitution.
-- `.repo` file name priority: `--repo-name` > `--distro` > sanitized origin.
-- Fedora enables `repo_gpgcheck` when signed; RHEL/CentOS add
-  `metadata_expire=86400`.
-
-### Parser
-
-`ParsePackage()` uses `go-rpmutils` to read RPM headers, extracting name,
-version, release, architecture, description, and other fields. Stores
-format-specific data (Release, BuildTime, Group, DistroVersion) in
-`Package.Metadata`.
-
-### Incremental Mode
-
-`ParseExistingMetadata()` reads `repodata/repomd.xml` to find the
-primary.xml.gz location, then parses primary.xml to reconstruct packages.
 
 ---
 

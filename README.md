@@ -11,17 +11,23 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 ## Supported Package Types
 
 - **Debian/APT** (.deb packages)
-- **Yum/RPM** (.rpm packages)
 - **Alpine/APK** (.apk packages)
 - **Arch Linux/Pacman** (.pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz)
 - **Homebrew** (bottle files)
 - **systemd-sysext** (.raw, .raw.zst, .raw.xz, .raw.gz)
 
+> **RPM is not supported.** RPM generation was removed in v0.7.0
+> ([ADR-0016](docs/adr/0016-remove-rpm-generation.md)) because its parser
+> depended on the unmaintained `golang.org/x/crypto/openpgp` package
+> (GO-2026-5932, no fix). `.rpm` files are ignored by `generate`, and the
+> `--distro`, `--version` and `--gpg-key-url` flags no longer exist. Use
+> Repogen v0.6.0 or earlier if you still need RPM repositories.
+
 ## Features
 
 - **Automatic Package Detection**: Scans directories and auto-detects package types using magic bytes
 - **Metadata Generation**: Creates all necessary index and metadata files for each repository type
-- **Repository Signing**: Signs repositories with GPG (Debian/RPM/Pacman) or RSA (Alpine) keys
+- **Repository Signing**: Signs repositories with GPG (Debian/Pacman/sysext) or RSA (Alpine) keys
 - **Deterministic Debian Metadata**: Canonical package, field, architecture,
   component, checksum, and gzip output with a controlled Release timestamp
 - **Safe Debian No-op**: Preserves valid existing Release signatures when the
@@ -51,7 +57,7 @@ sudo cp repogen /usr/local/bin/
 
 ### Prerequisites
 
-- Go 1.24 or later (the `toolchain` line in `go.mod` builds with Go 1.26.10)
+- Go 1.26.0 or later (the `toolchain` line in `go.mod` builds with Go 1.26.10)
 
 ## Usage
 
@@ -167,23 +173,6 @@ repogen generate --input-dir ./new-packages --output-dir ./repo --codename trixi
 aws s3 sync ./repo s3://my-bucket/repo
 ```
 
-#### RPM Repository
-
-```bash
-# Sync only metadata
-aws s3 sync s3://my-bucket/repo/40/x86_64/repodata ./repo/40/x86_64/repodata --delete
-
-# Add new packages
-repogen generate \
-  --input-dir ./new-packages \
-  --output-dir ./repo \
-  --incremental \
-  --version 40
-
-# Sync back (without --delete to preserve existing packages)
-aws s3 sync ./repo s3://my-bucket/repo
-```
-
 #### Pacman Repository
 
 ```bash
@@ -248,10 +237,10 @@ aws s3 sync ./repo s3://my-bucket/repo
 
 ### With Signing
 
-#### Debian/RPM/Pacman (GPG Signing)
+#### Debian/Pacman (GPG Signing)
 
 ```bash
-# Generate signed Debian/RPM repositories (--codename is required for Debian)
+# Generate a signed Debian repository (--codename is required for Debian)
 repogen generate \
   --input-dir ./packages \
   --output-dir ./repo \
@@ -294,7 +283,7 @@ Flags:
   # Incremental Mode
       --incremental             Add new packages to existing repository without removing existing ones
 
-  # GPG Signing (Debian/RPM)
+  # GPG Signing (Debian, Pacman, sysext)
   -k, --gpg-key string          Path to GPG private key
   -p, --gpg-passphrase string   GPG key passphrase
 
@@ -353,45 +342,6 @@ echo "deb http://your-server.com/repo stable main" | sudo tee /etc/apt/sources.l
 # Update and install
 sudo apt update
 sudo apt install package-name
-```
-
-### RPM/Yum Repository
-
-```
-repo/
-├── repodata/
-│   ├── repomd.xml              # Main metadata index
-│   ├── repomd.xml.asc          # GPG signature
-│   └── {hash}-primary.xml.gz   # Package metadata
-└── Packages/
-    └── *.rpm
-```
-
-**Using the Repository:**
-
-```bash
-# Create repo file
-sudo tee /etc/yum.repos.d/repo.repo <<EOF
-[myrepo]
-name=My Repository
-baseurl=http://your-server.com/repo
-enabled=1
-gpgcheck=0
-EOF
-
-# With GPG checking
-sudo rpm --import http://your-server.com/repo/public.key
-sudo tee /etc/yum.repos.d/repo.repo <<EOF
-[myrepo]
-name=My Repository
-baseurl=http://your-server.com/repo
-enabled=1
-gpgcheck=1
-gpgkey=http://your-server.com/repo/public.key
-EOF
-
-# Install packages
-sudo yum install package-name
 ```
 
 ### Alpine/APK Repository
@@ -613,20 +563,6 @@ Key fields in Packages file:
 - Size, MD5sum, SHA1, SHA256, SHA512
 - Description, Depends, Maintainer
 
-### RPM Repository Format
-
-Repogen generates RPM repositories compatible with yum/dnf:
-
-- **repomd.xml**: Master index with checksums of metadata files
-- **primary.xml.gz**: Core package information and dependencies
-- Minimal metadata (primary only) for simplicity
-
-The generated repositories can be consumed by:
-
-- yum (RHEL/CentOS 7 and earlier)
-- dnf (RHEL/CentOS 8+, Fedora)
-- zypper (openSUSE)
-
 ### Alpine Repository Format
 
 Repogen generates Alpine repositories in the apk v2 format:
@@ -696,21 +632,7 @@ repogen generate \
   --label "Production Packages"
 ```
 
-### Example 3: Signed RPM Repository
-
-```bash
-# Generate repository with GPG signing
-repogen generate \
-  --input-dir rpms \
-  --output-dir /var/www/repo \
-  --gpg-key ~/.gnupg/secring.gpg \
-  --gpg-passphrase "secret"
-
-# Export public key for users
-gpg --export --armor YOUR_KEY_ID > /var/www/repo/RPM-GPG-KEY
-```
-
-### Example 4: Homebrew Tap with Multiple Bottles
+### Example 3: Homebrew Tap with Multiple Bottles
 
 ```bash
 # Organize bottles
@@ -769,7 +691,7 @@ make test-integration
 Test packages are minimal dummy packages used to verify repository functionality:
 
 ```bash
-# Build test packages natively (requires dpkg-deb, rpmbuild)
+# Build test packages natively (requires dpkg-deb)
 make test-packages
 
 # Build test packages using Docker (recommended if tools not available)
@@ -779,7 +701,6 @@ make test-packages-docker
 This creates:
 
 - `test/fixtures/debs/repogen-test_1.0.0_amd64.deb`
-- `test/fixtures/rpms/repogen-test-1.0.0-1.x86_64.rpm`
 - `test/fixtures/apks/repogen-test-1.0.0-r0.apk`
 - `test/fixtures/pacman/repogen-test-1.0.0-1-x86_64.pkg.tar.zst`
 - `test/fixtures/bottles/repogen-test--1.0.0.x86_64_linux.bottle.tar.gz`
@@ -797,7 +718,6 @@ Integration tests use Docker to:
 **Tested Distributions:**
 
 - **Debian**: Debian Bookworm and Trixie containers
-- **RPM**: Fedora latest container
 - **Alpine**: Alpine latest container
 - **Pacman**: Arch Linux latest container
 - **Homebrew**: Formula validation (local)
@@ -820,7 +740,7 @@ go test -v -short ./...
 Integration tests verify:
 
 - ✓ Repository structure (all expected files present)
-- ✓ Metadata files (Release, Packages, APKINDEX, repomd.xml)
+- ✓ Metadata files (Release, Packages, APKINDEX)
 - ✓ Package manager can read repository metadata
 - ✓ Package manager can install packages
 - ✓ Installed binaries execute successfully
@@ -833,10 +753,6 @@ Example output:
     Generating Debian repository...
     Testing repository in Debian container...
     ✓ Debian repository test passed
-=== RUN   TestIntegration/RPM
-    Generating RPM repository...
-    Testing repository in Fedora container...
-    ✓ RPM repository test passed
 === RUN   TestIntegration/Alpine
     Generating Alpine repository...
     Testing repository in Alpine container...
@@ -898,7 +814,7 @@ apt install repogen-test
 
 ### No packages found
 
-- Check that package files have correct extensions (.deb, .rpm, .apk, .pkg.tar.zst/.pkg.tar.xz/.pkg.tar.gz, .bottle.tar.gz)
+- Check that package files have correct extensions (.deb, .apk, .pkg.tar.zst/.pkg.tar.xz/.pkg.tar.gz, .bottle.tar.gz)
 - Verify magic bytes in files (packages may be corrupted)
 - Use `--verbose` flag to see detailed scanning output
 
@@ -1021,8 +937,6 @@ jobs:
 | `origin`               | No       | -           | Repository origin name                                                                   |
 | `label`                | No       | -           | Repository label                                                                         |
 | `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                                                |
-| `distro-variant`       | No       | `fedora`    | Distribution for RPM repos                                                               |
-| `version`              | No       | -           | Release version for RPM repos                                                            |
 | `repogen-version`      | Yes      | -           | Exact v-prefixed Repogen release tag                                                     |
 | `repogen-commit`       | Yes      | -           | Exact 40-character commit embedded in the binary                                         |
 | `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
@@ -1149,7 +1063,7 @@ git push origin v1.0.0
 
 # GitHub Actions will automatically:
 # - Build binaries for 4 platforms
-# - Create native packages (deb, rpm, apk, bottle)
+# - Create native packages (deb, apk, bottle)
 # - Generate a repository using repogen itself
 # - Create release with all artifacts + repository archive
 ```
@@ -1165,12 +1079,10 @@ The release workflow generates a `repogen-repository-VERSION.zip` archive contai
 
 - Built with [spf13/cobra](https://github.com/spf13/cobra) for CLI
 - Uses [ProtonMail/go-crypto](https://github.com/ProtonMail/go-crypto) for GPG operations
-- Uses [sassoftware/go-rpmutils](https://github.com/sassoftware/go-rpmutils) for RPM parsing
 - Uses [klauspost/compress](https://github.com/klauspost/compress) for fast compression
 
 ## See Also
 
 - [Debian Repository Format](https://wiki.debian.org/DebianRepository/Format)
-- [RPM Repository Format](https://rpm-software-management.github.io/)
 - [Alpine APK Spec](https://wiki.alpinelinux.org/wiki/Apk_spec)
 - [Homebrew Tap Documentation](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)

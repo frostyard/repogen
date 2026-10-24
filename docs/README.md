@@ -29,31 +29,35 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   — `main` hardcoded in dists/pool paths; `--components` only relabels the
   Release file and errors on anything else
 - [ADR-0004 — RPM layout is `{version}/{arch}/` with a version-resolution ladder](adr/0004-rpm-version-arch-layout-and-version-ladder.md)
-  — `--version` > RPM `DistroVersion` metadata > per-variant default; the
-  shard makes `$releasever/$basearch` resolve
+  — superseded by ADR-0016 (RPM generation removed): `--version` > RPM
+  `DistroVersion` metadata > per-variant default; the shard made
+  `$releasever/$basearch` resolve
 - [ADR-0005 — Content-addressed repodata with open-checksum discipline](adr/0005-content-addressed-repodata.md)
-  — `{sha256}-primary.xml.gz` named by compressed-bytes hash; repomd records
-  checksum and open-checksum separately; repodata grows unbounded
+  — superseded by ADR-0016 (RPM generation removed): `{sha256}-primary.xml.gz`
+  named by compressed-bytes hash; repomd recorded checksum and open-checksum
+  separately; repodata grew unbounded
 - [ADR-0006 — Pacman databases are written twice: `.db.tar.zst` and `.db`](adr/0006-pacman-dual-database-files.md)
   — byte-identical copies (and dual `.sig`) because static storage has no
   symlinks; the pair must never diverge
 - [ADR-0007 — Checksums come from copied bytes, never from parsed metadata](adr/0007-recompute-checksums-from-copied-bytes.md)
   — recompute after every copy; three-stage skip check
-  (path → size → sha256); missing-locally is OK under incremental
+  (path → size → sha256); missing-locally is OK under incremental; RPM parts
+  superseded by ADR-0016
 - [ADR-0008 — Package detection sniffs magic bytes first, falls back to filenames](adr/0008-magic-bytes-detection-with-extension-fallback.md)
   — 512-byte sniff with per-format OR/AND/filename semantics; detection
-  routes, parsers validate
+  routes, parsers validate; RPM parts superseded by ADR-0016
 - [ADR-0009 — GPG signing splits between the gpg CLI and go-crypto](adr/0009-gpg-cli-and-go-crypto-signing-split.md)
   — cleartext and binary detached via gpg CLI in an ephemeral
   `repogen-gpg-*` home, ASCII detached via go-crypto; routing is
-  correctness-critical
+  correctness-critical; RPM parts superseded by ADR-0016
 - [ADR-0010 — dnf `.repo` file naming, ID, and flag policy](adr/0010-dnf-repo-file-policy.md)
-  — filename `--repo-name` > `--distro` > sanitized origin;
-  `$releasever/$basearch` always appended; distro-conditional
-  gpgcheck/metadata_expire flags
+  — superseded by ADR-0016 (RPM generation removed): filename `--repo-name` >
+  `--distro` > sanitized origin; `$releasever/$basearch` always appended;
+  distro-conditional gpgcheck/metadata_expire flags
 - [ADR-0011 — Incremental mode reconstructs state from published metadata](adr/0011-incremental-state-from-published-metadata.md)
   — the published indices are the only incremental state; format-aware
-  conflict identity; warn-and-fallback on unparsable metadata
+  conflict identity; warn-and-fallback on unparsable metadata; RPM parts
+  superseded by ADR-0016
 - [ADR-0012 — ACMM conformance via canonical aliases](adr/0012-acmm-conformance-via-canonical-aliases.md)
   — one canonical `AGENTS.md` plus committed relative symlinks satisfy the
   Hive ACMM path checks; directory criteria get real trees; the alias table
@@ -69,6 +73,10 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 - [ADR-0015 — Remove the superseded production path](adr/0015-remove-the-superseded-production-path.md)
   — accepted 2026-10-24: deletes the former production commands and the code
   behind them; `generate` and `publish-to-r2` do not change
+- [ADR-0016 — Remove RPM generation](adr/0016-remove-rpm-generation.md)
+  — proposed 2026-10-24: GO-2026-5932 (`x/crypto/openpgp`, no fix) is reachable
+  through go-rpmutils and no consumer uses RPM; deletes the `rpm` type, its
+  generator, flags and fixtures; adds pinned govulncheck to CI
 
 ### Design
 
@@ -83,7 +91,7 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
 ### Specs
 
 - [Generator Details](specs/generators.md) — per-format output directory
-  layout, metadata file formats, parser behavior, and signing for all six
+  layout, metadata file formats, parser behavior, and signing for all five
   generators
 - [PR acceptance metric](specs/pr-acceptance-metric.md) — the acceptance-rate
   definition and window rules; `docs/metrics.md` is its conformance alias

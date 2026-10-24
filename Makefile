@@ -29,8 +29,6 @@ test-packages-docker:
 	@chmod +x test/build-test-packages.sh
 	@echo "Building Debian packages..."
 	@docker run --rm -v $(PWD):/work -w /work debian:bookworm bash -c "apt-get update -qq && apt-get install -y -qq dpkg-dev > /dev/null 2>&1 && ./test/build-test-packages.sh"
-	@echo "Building RPM packages..."
-	@docker run --rm -v $(PWD):/work -w /work fedora:latest bash -c "dnf install -y -q rpm-build > /dev/null 2>&1 && ./test/build-test-packages.sh"
 	@echo "✓ All test packages built successfully"
 
 # Run integration tests (requires Docker)
@@ -48,7 +46,7 @@ clean:
 	@echo "Cleaning..."
 	@rm -f repogen
 	@rm -rf test/integration-output
-	@rm -rf test/fixtures/deb-build test/fixtures/rpm-build test/fixtures/apk-build test/fixtures/bottle-build
+	@rm -rf test/fixtures/deb-build test/fixtures/apk-build test/fixtures/bottle-build
 	@echo "✓ Clean complete"
 
 # Install to system
@@ -103,7 +101,6 @@ help:
 	@echo "Requirements for integration tests:"
 	@echo "  - Docker (for running tests in containers)"
 	@echo "  - dpkg-deb (for building Debian packages)"
-	@echo "  - rpmbuild (for building RPM packages)"
 	@echo ""
 	@echo "Quick start:"
 	@echo "  make build          # Build the binary"

@@ -45,27 +45,6 @@ func TestPackageIdentity(t *testing.T) {
 			expected: "test-pkg:3.0.0:x86_64",
 		},
 		{
-			name: "rpm package identity with release",
-			pkg: models.Package{
-				Name:         "test-pkg",
-				Version:      "1.0.0",
-				Architecture: "x86_64",
-				Metadata:     map[string]interface{}{"Release": "2"},
-			},
-			pkgType:  scanner.TypeRpm,
-			expected: "test-pkg:1.0.0:2:x86_64",
-		},
-		{
-			name: "rpm package identity without release defaults to 1",
-			pkg: models.Package{
-				Name:         "test-pkg",
-				Version:      "1.0.0",
-				Architecture: "x86_64",
-			},
-			pkgType:  scanner.TypeRpm,
-			expected: "test-pkg:1.0.0:1:x86_64",
-		},
-		{
 			name: "homebrew bottle identity",
 			pkg: models.Package{
 				Name:    "test-bottle",
@@ -316,19 +295,6 @@ func TestFilterOutConflicts(t *testing.T) {
 			pkgType:       scanner.TypeSysext,
 			expectedCount: 2,
 			expectedNames: []string{"ext2", "ext3"},
-		},
-		{
-			name: "rpm package filtering with release metadata",
-			packages: []models.Package{
-				{Name: "rpm1", Version: "1.0.0", Architecture: "x86_64", Metadata: map[string]interface{}{"Release": "1"}},
-				{Name: "rpm2", Version: "1.0.0", Architecture: "x86_64", Metadata: map[string]interface{}{"Release": "2"}},
-			},
-			toExclude: []models.Package{
-				{Name: "rpm1", Version: "1.0.0", Architecture: "x86_64", Metadata: map[string]interface{}{"Release": "1"}},
-			},
-			pkgType:       scanner.TypeRpm,
-			expectedCount: 1,
-			expectedNames: []string{"rpm2"},
 		},
 		{
 			name: "homebrew bottle filtering",

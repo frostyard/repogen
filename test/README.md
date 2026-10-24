@@ -20,7 +20,6 @@ test/
 ├── README.md                  # This file
 └── fixtures/                  # Test package fixtures
     ├── debs/                  # Debian test packages
-    ├── rpms/                  # RPM test packages
     ├── apks/                  # Alpine test packages
     └── bottles/               # Homebrew test bottles
 ```
@@ -30,9 +29,8 @@ test/
 ### Prerequisites
 
 - Docker (for running containers)
-- Go 1.24+ (for running tests)
+- Go 1.26+ (for running tests)
 - `dpkg-deb` (for building Debian packages)
-- `rpmbuild` (for building RPM packages)
 
 Or use Docker to build all packages:
 
@@ -59,9 +57,6 @@ make test-integration
 # Run only Debian tests
 go test -v -run TestIntegration/Debian .
 
-# Run only RPM tests
-go test -v -run TestIntegration/RPM .
-
 # Run only Alpine tests
 go test -v -run TestIntegration/Alpine .
 
@@ -80,16 +75,6 @@ Minimal Debian package with:
 - Control file with metadata
 - Binary: `/usr/bin/repogen-test`
 - Architecture: amd64
-
-### RPM Package
-
-**File**: `fixtures/rpms/repogen-test-1.0.0-1.x86_64.rpm`
-
-Minimal RPM package with:
-
-- Spec file with metadata
-- Binary: `/usr/bin/repogen-test`
-- Architecture: x86_64
 
 ### Alpine APK Package
 
@@ -151,20 +136,6 @@ docker run --rm -v $(pwd)/repo:/repo debian:bookworm bash -c "
 "
 ```
 
-**Fedora:**
-
-```bash
-docker run --rm -v $(pwd)/repo:/repo fedora:latest bash -c "
-  cat > /etc/yum.repos.d/test.repo <<EOF
-  [test]
-  baseurl=file:///repo
-  gpgcheck=0
-  EOF
-  dnf install -y repogen-test
-  repogen-test
-"
-```
-
 **Alpine:**
 
 ```bash
@@ -192,10 +163,6 @@ docker run --rm -v $(pwd)/repo:/repo alpine:latest sh -c "
     integration_test.go:45: Generating Debian repository...
     integration_test.go:70: Testing repository in Debian container...
     integration_test.go:98: ✓ Debian repository test passed
-=== RUN   TestIntegration/RPM
-    integration_test.go:115: Generating RPM repository...
-    integration_test.go:134: Testing repository in Fedora container...
-    integration_test.go:158: ✓ RPM repository test passed
 === RUN   TestIntegration/Alpine
     integration_test.go:175: Generating Alpine repository...
     integration_test.go:195: Testing repository in Alpine container...
@@ -205,7 +172,6 @@ docker run --rm -v $(pwd)/repo:/repo alpine:latest sh -c "
     integration_test.go:262: ✓ Homebrew repository test passed
 --- PASS: TestIntegration (45.23s)
     --- PASS: TestIntegration/Debian (12.45s)
-    --- PASS: TestIntegration/RPM (14.32s)
     --- PASS: TestIntegration/Alpine (10.21s)
     --- PASS: TestIntegration/Homebrew (8.25s)
 PASS
