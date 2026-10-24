@@ -16,13 +16,19 @@ action is pinned to a full 40-character commit SHA with a trailing
 
 `test`:
 1. Sets up Go from `go.mod` with module caching: the module minimum is
-   1.24, and the `toolchain go1.26.10` line makes the go command use Go
+   1.26.0, and the `toolchain go1.26.10` line makes the go command use Go
    1.26.10 for the linter build, the unit tests, and the integration tests.
-2. Runs the required golangci-lint v2 gate through `make lint`.
-3. Runs unit tests with race detection and coverage (`go test -v -short -race`).
-4. Builds test packages in Docker (`make test-packages-docker`).
-5. Runs integration tests (`make test-integration`).
-6. Uploads coverage to Codecov.
+2. Runs the required golangci-lint v2 gate through `make lint`. The linter
+   install step sets `GOTOOLCHAIN: go1.26.10`; keep it equal to the `go.mod`
+   `toolchain` line.
+3. Runs `govulncheck` (`go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`).
+   The version is pinned, and the Go checksum database verifies the module. A
+   vulnerability that the code reaches fails the job
+   ([ADR-0016](../adr/0016-remove-rpm-generation.md)).
+4. Runs unit tests with race detection and coverage (`go test -v -short -race`).
+5. Builds test packages in Docker (`make test-packages-docker`).
+6. Runs integration tests (`make test-integration`).
+7. Uploads coverage to Codecov.
 
 `docs-gate`:
 1. Runs `node scripts/check-docs.mjs` — docs-index coverage, relative-link
@@ -85,7 +91,8 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    (such as `stable/`), refuses any Debian package found in `packages-dir`
    whatever the declared type (repogen generates every detected type), and
    requires `codename` for `deb` (there is no default). It then checks package type, required flags (base-url for
-   sysext, repo-name for pacman), directory existence.
+   sysext, repo-name for pacman), directory existence. `rpm` is not a valid
+   package type ([ADR-0016](../adr/0016-remove-rpm-generation.md)).
 2. **Install repogen** — requires an exact tag and commit, uses a fixed GitHub
    release origin, downloads the exact architecture asset plus unsigned
    `SHA256SUMS`, verifies the selected digest, and verifies the embedded
@@ -95,7 +102,6 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    binaries) from R2 for incremental mode. Sync strategy varies by format:
    - deb: `dists/` directory
    - sysext: `ext/` excluding `.raw*` files; any restore error aborts
-   - rpm: `repodata/` directory
    - apk: everything except `.apk` files
    - pacman: everything except `.pkg.tar.*` and `.sig` files
    - homebrew: `Formula/` directory
@@ -180,7 +186,6 @@ automatically, providing CI validation before merge.
 
 `test/fixtures/` contains pre-built packages for unit tests:
 - `debs/` — 3 .deb files (including a gzip-compressed variant)
-- `rpms/` — 2 .rpm files
 - `apks/` — 2 .apk files
 - `pacman/` — 1 .pkg.tar.zst file
 - `bottles/` — 2 Homebrew bottles

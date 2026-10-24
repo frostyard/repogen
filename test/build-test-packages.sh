@@ -10,7 +10,7 @@ FIXTURES_DIR="${SCRIPT_DIR}/fixtures"
 echo "Building test packages..."
 
 # Only clean build directories, preserve final packages
-for dir in deb-build rpm-build apk-build bottle-build; do
+for dir in deb-build apk-build bottle-build; do
     if [ -d "${FIXTURES_DIR}/${dir}" ]; then
         if [ -w "${FIXTURES_DIR}/${dir}" ]; then
             rm -rf "${FIXTURES_DIR}/${dir}"
@@ -107,85 +107,6 @@ EOF
     dpkg-deb -Zgzip --build "${DEB_BUILD_DIR}/testpkg3" "${FIXTURES_DIR}/debs/repogen-gzipped_3.0.0_amd64.deb"
 
     echo "✓ Debian packages created (3)"
-}
-
-# ============================================================================
-# Build RPM Package
-# ============================================================================
-build_rpm() {
-    echo "Building RPM test packages..."
-
-    RPM_BUILD_DIR="${FIXTURES_DIR}/rpm-build"
-    rm -rf "${RPM_BUILD_DIR}"
-    mkdir -p "${RPM_BUILD_DIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
-    # Create first spec file: repogen-test
-    cat > "${RPM_BUILD_DIR}/SPECS/repogen-test.spec" <<'EOF'
-Name:           repogen-test
-Version:        1.0.0
-Release:        1
-Summary:        Test package for repogen
-License:        MIT
-BuildArch:      x86_64
-
-%description
-This is a minimal test package used to verify
-that repogen-generated repositories work correctly.
-
-%install
-mkdir -p %{buildroot}/usr/bin
-cat > %{buildroot}/usr/bin/repogen-test <<'SCRIPT'
-#!/bin/sh
-echo "Repogen test package v1.0.0 installed successfully!"
-SCRIPT
-chmod +x %{buildroot}/usr/bin/repogen-test
-
-%files
-/usr/bin/repogen-test
-
-%changelog
-* Tue Dec 10 2025 Repogen <test@example.com> - 1.0.0-1
-- Initial release
-EOF
-
-    # Create second spec file: repogen-utils
-    cat > "${RPM_BUILD_DIR}/SPECS/repogen-utils.spec" <<'EOF'
-Name:           repogen-utils
-Version:        2.0.0
-Release:        1
-Summary:        Utility package for repogen
-License:        MIT
-BuildArch:      x86_64
-
-%description
-This is a second test package to verify
-multi-package repository generation.
-
-%install
-mkdir -p %{buildroot}/usr/bin
-cat > %{buildroot}/usr/bin/repogen-utils <<'SCRIPT'
-#!/bin/sh
-echo "Repogen utils package v2.0.0 installed successfully!"
-SCRIPT
-chmod +x %{buildroot}/usr/bin/repogen-utils
-
-%files
-/usr/bin/repogen-utils
-
-%changelog
-* Tue Dec 10 2025 Repogen <test@example.com> - 2.0.0-1
-- Initial release
-EOF
-
-    # Build RPMs
-    rpmbuild --define "_topdir ${RPM_BUILD_DIR}" -bb "${RPM_BUILD_DIR}/SPECS/repogen-test.spec"
-    rpmbuild --define "_topdir ${RPM_BUILD_DIR}" -bb "${RPM_BUILD_DIR}/SPECS/repogen-utils.spec"
-
-    # Copy to fixtures
-    cp "${RPM_BUILD_DIR}/RPMS/x86_64/repogen-test-1.0.0-1.x86_64.rpm" "${FIXTURES_DIR}/rpms/"
-    cp "${RPM_BUILD_DIR}/RPMS/x86_64/repogen-utils-2.0.0-1.x86_64.rpm" "${FIXTURES_DIR}/rpms/"
-
-    echo "✓ RPM packages created (2)"
 }
 
 # ============================================================================
@@ -320,8 +241,6 @@ package_exists() {
 DEB_PACKAGE1="${FIXTURES_DIR}/debs/repogen-test_1.0.0_amd64.deb"
 DEB_PACKAGE2="${FIXTURES_DIR}/debs/repogen-utils_2.0.0_amd64.deb"
 DEB_PACKAGE3="${FIXTURES_DIR}/debs/repogen-gzipped_3.0.0_amd64.deb"
-RPM_PACKAGE1="${FIXTURES_DIR}/rpms/repogen-test-1.0.0-1.x86_64.rpm"
-RPM_PACKAGE2="${FIXTURES_DIR}/rpms/repogen-utils-2.0.0-1.x86_64.rpm"
 APK_PACKAGE1="${FIXTURES_DIR}/apks/repogen-test-1.0.0-r0.apk"
 APK_PACKAGE2="${FIXTURES_DIR}/apks/repogen-utils-2.0.0-r0.apk"
 BOTTLE_PACKAGE1="${FIXTURES_DIR}/bottles/repogen-test--1.0.0.x86_64_linux.bottle.tar.gz"
@@ -333,15 +252,6 @@ if ! (package_exists "$DEB_PACKAGE1" && package_exists "$DEB_PACKAGE2" && packag
         build_deb
     else
         echo "⚠ Skipping Debian packages (dpkg-deb not available)"
-    fi
-fi
-
-# Build RPM packages
-if ! (package_exists "$RPM_PACKAGE1" && package_exists "$RPM_PACKAGE2"); then
-    if check_tool rpmbuild; then
-        build_rpm
-    else
-        echo "⚠ Skipping RPM packages (rpmbuild not available)"
     fi
 fi
 
@@ -359,6 +269,5 @@ echo ""
 echo "Test packages summary:"
 echo "======================"
 ls -lh "${FIXTURES_DIR}"/debs/*.deb 2>/dev/null || echo "  No Debian packages"
-ls -lh "${FIXTURES_DIR}"/rpms/*.rpm 2>/dev/null || echo "  No RPM packages"
 ls -lh "${FIXTURES_DIR}"/apks/*.apk 2>/dev/null || echo "  No Alpine packages"
 ls -lh "${FIXTURES_DIR}"/bottles/*.bottle.tar.gz 2>/dev/null || echo "  No Homebrew bottles"

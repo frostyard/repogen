@@ -12,9 +12,6 @@ var (
 	// Debian packages start with "!<arch>\ndebian"
 	debMagic = []byte("!<arch>\ndebian")
 
-	// RPM packages start with 0xED 0xAB 0xEE 0xDB
-	rpmMagic = []byte{0xED, 0xAB, 0xEE, 0xDB}
-
 	// Gzip magic bytes (APK files are gzipped tars)
 	gzipMagic = []byte{0x1F, 0x8B}
 
@@ -48,11 +45,6 @@ func DetectPackageType(path string) (PackageType, error) {
 	// Check for Debian package
 	if bytes.HasPrefix(header, debMagic) || ext == ".deb" {
 		return TypeDeb, nil
-	}
-
-	// Check for RPM package
-	if bytes.HasPrefix(header, rpmMagic) || ext == ".rpm" {
-		return TypeRpm, nil
 	}
 
 	// Check for Alpine APK (gzipped tar with .apk extension)

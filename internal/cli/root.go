@@ -23,10 +23,10 @@ repository structures that can be served as websites.
 
 Supported package types:
   - Debian/APT (.deb packages)
-  - Yum/RPM (.rpm packages)
   - Alpine/APK (.apk packages)
   - Arch/Pacman (.pkg.tar.* packages)
-  - Homebrew (bottle files)`,
+  - Homebrew (bottle files)
+  - systemd-sysext (.raw, .raw.zst, .raw.xz, .raw.gz images)`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Setup logging
 			verbose, _ := cmd.Flags().GetBool("verbose")

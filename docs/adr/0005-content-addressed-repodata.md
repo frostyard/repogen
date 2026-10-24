@@ -1,6 +1,6 @@
 # 0005 — Content-addressed repodata with open-checksum discipline
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0016](0016-remove-rpm-generation.md)
 - **Date:** 2026-08-12
 
 ## Context

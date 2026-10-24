@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 )
@@ -47,6 +48,11 @@ func (s *FileSystemScanner) Scan(ctx context.Context, dir string) ([]ScannedPack
 
 		// Skip unknown types
 		if pkgType == TypeUnknown {
+			// RPM support was removed (ADR-0016); say so instead of
+			// dropping the file silently.
+			if strings.EqualFold(filepath.Ext(path), ".rpm") {
+				logrus.Warnf("Skipping %s: RPM generation was removed from repogen (ADR-0016)", path)
+			}
 			return nil
 		}
 

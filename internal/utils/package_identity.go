@@ -14,12 +14,6 @@ func PackageIdentity(pkg models.Package, pkgType scanner.PackageType) string {
 	switch pkgType {
 	case scanner.TypeDeb, scanner.TypeApk, scanner.TypePacman:
 		return fmt.Sprintf("%s:%s:%s", pkg.Name, pkg.Version, pkg.Architecture)
-	case scanner.TypeRpm:
-		release := "1"
-		if r, ok := pkg.Metadata["Release"].(string); ok {
-			release = r
-		}
-		return fmt.Sprintf("%s:%s:%s:%s", pkg.Name, pkg.Version, release, pkg.Architecture)
 	case scanner.TypeHomebrewBottle:
 		return fmt.Sprintf("%s:%s", pkg.Name, pkg.Version)
 	case scanner.TypeSysext:

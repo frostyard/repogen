@@ -11,14 +11,14 @@ labels: bug
 ## What you expected
 
 <!-- What should it have done? For repository-output bugs, say which
-package manager fails to consume the result and how (apt/dnf/apk/pacman/
+package manager fails to consume the result and how (apt/apk/pacman/
 brew/systemd-sysupdate error output is ideal). -->
 
 ## Reproduction
 
 - repogen version / commit:
 - Command:
-- Package type(s): <!-- deb / rpm / apk / pacman / homebrew / sysext -->
+- Package type(s): <!-- deb / apk / pacman / homebrew / sysext -->
 - Signing: <!-- unsigned / GPG / RSA -->
 - Incremental mode: <!-- yes / no -->
 

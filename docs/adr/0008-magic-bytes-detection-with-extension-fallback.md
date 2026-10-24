@@ -1,6 +1,6 @@
 # 0008 — Package detection sniffs magic bytes first, falls back to filenames
 
-- **Status:** Accepted
+- **Status:** Accepted; RPM parts superseded by [ADR-0016](0016-remove-rpm-generation.md)
 - **Date:** 2026-08-12
 
 ## Context

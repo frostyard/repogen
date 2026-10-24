@@ -9,12 +9,11 @@ type RepositoryConfig struct {
 	// Repository metadata
 	Origin     string
 	Label      string
-	RepoName   string   // Repository name for Pacman .db files and optional RPM .repo naming
+	RepoName   string   // Repository name for Pacman .db files
 	Codename   string   // For Debian
 	Suite      string   // For Debian
 	Components []string // For Debian (main, contrib, etc.)
 	Arches     []string // Architectures to support
-	Version    string   // For RPM: release version (e.g., "40" for Fedora 40)
 
 	// Signing
 	GPGKeyPath    string
@@ -24,9 +23,7 @@ type RepositoryConfig struct {
 	RSAKeyName    string // For Alpine
 
 	// Type-specific options
-	BaseURL       string // For Homebrew bottles and RPM .repo files
-	GPGKeyURL     string // For RPM: explicit GPG key URL (supports $releasever/$basearch variables)
-	DistroVariant string // For RPM: fedora, centos, rhel (affects .repo defaults)
+	BaseURL string // For Homebrew bottles and sysext transfer files
 
 	// Incremental mode
 	Incremental    bool // Add new packages to existing repository without removing existing ones

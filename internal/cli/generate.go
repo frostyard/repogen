@@ -14,7 +14,6 @@ import (
 	"github.com/frostyard/repogen/internal/generator/deb"
 	"github.com/frostyard/repogen/internal/generator/homebrew"
 	"github.com/frostyard/repogen/internal/generator/pacman"
-	"github.com/frostyard/repogen/internal/generator/rpm"
 	"github.com/frostyard/repogen/internal/generator/sysext"
 	"github.com/frostyard/repogen/internal/models"
 	"github.com/frostyard/repogen/internal/scanner"
@@ -51,7 +50,7 @@ structures with appropriate metadata files and signatures.`,
 	cmd.Flags().StringVarP(&config.InputDir, "input-dir", "i", ".", "Input directory to scan")
 	cmd.Flags().StringVarP(&config.OutputDir, "output-dir", "o", "./repo", "Output directory")
 
-	// GPG signing flags (for Debian/RPM)
+	// GPG signing flags (for Debian, Pacman and sysext)
 	cmd.Flags().StringVarP(&config.GPGKeyPath, "gpg-key", "k", "", "Path to GPG private key")
 	cmd.Flags().StringVarP(&config.GPGPassphrase, "gpg-passphrase", "p", "", "GPG key passphrase")
 
@@ -63,17 +62,14 @@ structures with appropriate metadata files and signatures.`,
 	// Repository metadata flags
 	cmd.Flags().StringVar(&config.Origin, "origin", "", "Repository origin name")
 	cmd.Flags().StringVar(&config.Label, "label", "", "Repository label")
-	cmd.Flags().StringVar(&config.RepoName, "repo-name", "", "Repository name for Pacman database files and optional RPM .repo file naming")
+	cmd.Flags().StringVar(&config.RepoName, "repo-name", "", "Repository name for Pacman database files")
 	cmd.Flags().StringVar(&config.Codename, "codename", "", "Codename for Debian repos (required when Debian packages are present)")
 	cmd.Flags().StringVar(&config.Suite, "suite", "", "Suite for Debian repos (defaults to codename)")
 	cmd.Flags().StringSliceVar(&config.Components, "components", []string{"main"}, "Components for Debian repos")
 	cmd.Flags().StringSliceVar(&config.Arches, "arch", []string{"amd64"}, "Architectures to support")
 
 	// Type-specific options
-	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles, RPM .repo files, and sysext transfer files (required for sysext)")
-	cmd.Flags().StringVar(&config.GPGKeyURL, "gpg-key-url", "", "GPG key URL for RPM .repo files (supports $releasever/$basearch variables)")
-	cmd.Flags().StringVar(&config.DistroVariant, "distro", "fedora", "Distribution variant for RPM repos (fedora, centos, rhel)")
-	cmd.Flags().StringVar(&config.Version, "version", "", "Release version for RPM repos (e.g., 40 for Fedora 40). Auto-detected from RPM metadata if not provided")
+	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles and sysext transfer files (required for sysext)")
 
 	// Incremental mode
 	cmd.Flags().BoolVar(&config.Incremental, "incremental", false, "Add new packages to existing repository without removing existing ones")
@@ -181,8 +177,6 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		switch scanned.Type {
 		case scanner.TypeDeb:
 			pkg, parseErr = deb.ParsePackage(scanned.Path)
-		case scanner.TypeRpm:
-			pkg, parseErr = rpm.ParsePackage(scanned.Path)
 		case scanner.TypeApk:
 			pkg, parseErr = apk.ParsePackage(scanned.Path)
 		case scanner.TypePacman:
@@ -245,7 +239,6 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	// Step 4: Generate repositories for each type
 	generators := make(map[scanner.PackageType]generator.Generator)
 	generators[scanner.TypeDeb] = deb.NewGenerator(gpgSigner)
-	generators[scanner.TypeRpm] = rpm.NewGenerator(gpgSigner)
 	generators[scanner.TypeApk] = apk.NewGenerator(rsaSigner, config.RSAKeyName)
 	generators[scanner.TypePacman] = pacman.NewGenerator(gpgSigner)
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
