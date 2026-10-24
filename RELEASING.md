@@ -130,6 +130,6 @@ evidence.
 - Do not treat a successful workflow alone as proof that a consumer download
   was digest- and identity-verified.
 
-The production Debian transaction is separate from this release pipeline.
 Publishing Repogen does not authorize package ingestion, repository writes,
-credential changes, cache mutation, or a Frostyard canary.
+credential changes, cache mutation, or a Frostyard canary. Frostyard Debian
+publication is not part of Repogen (ADR-0015).

@@ -1,6 +1,6 @@
 # 0013 - Separate generic generation from production publishing
 
-- **Status:** Superseded by [core ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md) (never accepted)
+- **Status:** Superseded by [core ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md) (never accepted); code removed per [ADR-0015](0015-remove-the-superseded-production-path.md)
 - **Date:** 2026-09-12
 
 > **Superseded, 2026-10-23.** This ADR proposed a Frostyard production path for
@@ -12,7 +12,7 @@
 > generator (all formats, unsigned output), its output is not a production
 > artifact, and `publish-to-r2` keeps publishing sysexts and refuses `deb`.
 > The R2–R10 production code ([Plan 0001](../plans/0001-frostyard-production-publisher.md))
-> stays in the tree and stays tested; removing it is a separate decision.
+> is removed per [ADR-0015](0015-remove-the-superseded-production-path.md).
 > The text below is kept unchanged as the record.
 
 ## Context

@@ -43,8 +43,6 @@ Supported package types:
 
 	// Add subcommands
 	rootCmd.AddCommand(NewGenerateCmd())
-	rootCmd.AddCommand(NewValidateProductionCmd())
-	rootCmd.AddCommand(NewReconcileProductionCmd())
 	rootCmd.AddCommand(NewVersionCmd())
 
 	return rootCmd

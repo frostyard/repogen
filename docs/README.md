@@ -60,11 +60,15 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   is the registry
 - [ADR-0013 — Separate generic generation from production publishing](adr/0013-separate-generic-generation-from-production-publishing.md)
   — superseded by core ADR-0055 (never accepted): `frostyard/apt-publisher`,
-  not Repogen, publishes Frostyard's Debian packages
+  not Repogen, publishes Frostyard's Debian packages; code removed per
+  ADR-0015
 - [ADR-0014 — Debian incremental restore fails closed](adr/0014-debian-incremental-restore-fails-closed.md)
   — Debian incremental initializes only when the suite is absent; every
   existing `Packages`/`Packages.gz` must parse, agree, and be selected, and no
   format writes until all are restored and validated
+- [ADR-0015 — Remove the superseded production path](adr/0015-remove-the-superseded-production-path.md)
+  — deletes the `validate-production`/`reconcile-production` commands and the
+  code behind them; `generate` and `publish-to-r2` do not change
 
 ### Design
 
@@ -87,15 +91,12 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   review applies; `docs/review-rubric.md` is its conformance alias
 - [R10 release acceptance](specs/r10-release-acceptance.md) — exact local,
   merge, and published-release evidence for the hardened Repogen artifact
-- [Exact R2 production reconciliation](specs/production-r2-reconciliation.md)
-  — one-request CLI, canonical configuration/policy, conditional S3 writes,
-  target scoping, signer/executable binding, and honest lock limitations
 
 ### Plans
 
 - [Frostyard production publisher boundary](plans/0001-frostyard-production-publisher.md)
-  — R1-R9 local implementation lineage plus the R10 candidate and release;
-  superseded for Debian publication by core ADR-0055
+  — superseded by core ADR-0055; code removed per ADR-0015; kept as the
+  record
 
 ### Uncategorized
 
