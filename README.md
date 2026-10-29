@@ -41,6 +41,40 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 
 ## Installation
 
+### From a release
+
+Each `vMAJOR.MINOR.PATCH` release publishes `repogen-linux-amd64`,
+`repogen-linux-arm64` and `SHA256SUMS`. [RELEASING.md](RELEASING.md) holds
+the release contract.
+
+Run `scripts/install-release.sh` from a clone. It needs the exact tag and its
+full 40-character commit:
+
+```bash
+scripts/install-release.sh --github-release v0.7.0 c3c9f63c0f9b04106cfdb84318f5ec935566ab89 amd64 /usr/local/bin/repogen
+```
+
+The destination must be writable; use `sudo` for `/usr/local/bin`. The run
+prints:
+
+```
+installed 0.7.0 c3c9f63c0f9b04106cfdb84318f5ec935566ab89 from repogen-linux-amd64
+```
+
+The architecture is `amd64` or `arm64`; `x86_64` and `aarch64` are also
+accepted. Get the commit of a tag with `git rev-list -n1 <tag>`.
+
+Release binaries have one contract: the sole tag workflow runs pinned
+GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
+Each binary embeds the exact version and full commit shown by
+`repogen version --short`. Consumers must name an exact tag and commit;
+`scripts/install-release.sh --github-release` retrieves both files from the
+fixed GitHub release origin, verifies the selected SHA-256 entry, and checks
+embedded identity before installation. The checksum is unsigned and
+same-origin, so authenticity depends on GitHub and repository release controls;
+there is no independent release signature or attestation. No `latest` lookup
+is accepted. Darwin assets from the retired workflow are not produced.
+
 ### From Source
 
 ```bash
@@ -102,17 +136,6 @@ passed explicitly.
 | Explicit codename | `internal/cli/generate.go`: Debian input requires `--codename`, and a `--suite` must equal it | `TestGenerateDebianRequiresExplicitCodename`, `TestGenerateDebianRejectsSuiteDifferentFromCodename` |
 | Strict incremental restore | `internal/generator/deb/parser.go` (ADR-0014) | `TestParseExistingMetadata*`, `TestGenerateIncrementalDebianFailsOnCorruptArchWithoutMutation`, `TestGenerateIncrementalDebianCorruptionStopsMixedRunBeforeAnyWrite`, `TestGenerateIncrementalDebianInitializesEmptyOutput` |
 | Signed no-op reuse | `internal/generator/deb/release_signature.go` | `TestParseTrustedKeyRing`, `TestVerifyReleaseSignatures` |
-
-Release binaries now have one contract: the sole tag workflow runs pinned
-GoReleaser and publishes `repogen-linux-{amd64,arm64}` with `SHA256SUMS`.
-Each binary embeds the exact version and full commit shown by
-`repogen version --short`. Consumers must name an exact tag and commit;
-`scripts/install-release.sh --github-release` retrieves both files from the
-fixed GitHub release origin, verifies the selected SHA-256 entry, and checks
-embedded identity before installation. The checksum is unsigned and
-same-origin, so authenticity depends on GitHub and repository release controls;
-there is no independent release signature or attestation. No `latest` lookup
-is accepted. Darwin assets from the retired workflow are not produced.
 
 The existing `repogen generate` command remains generic and keeps its
 supported formats and unsigned behavior. It has no implicit Debian codename:
@@ -1062,8 +1085,13 @@ archive.
 
 ### CI/CD Workflows
 
-- **Test Workflow** (`.github/workflows/test.yml`): Runs on PRs and pushes to main
-- **Release Workflow** (`.github/workflows/release.yml`): Runs on version tags (v*.*.\*)
+- **Test Workflow** (`.github/workflows/test.yml`): Runs on pull requests and
+  pushes to `main`. The "Run Tests" job runs `make lint`, a pinned
+  `govulncheck` (`v1.9.0`), the unit tests with `-race`,
+  `make test-packages-docker` and `make test-integration`. The "Docs
+  integrity" job runs `node scripts/check-docs.mjs`.
+- **Release Workflow** (`.github/workflows/release.yml`): Runs on version tags
+  (v*.*.\*) and publishes the three assets in the table above.
 
 ## Acknowledgments
 
