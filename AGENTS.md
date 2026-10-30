@@ -73,6 +73,38 @@ frostyard/core — edit there, not here.
   must pass `--repo frostyard/repogen` explicitly or it may target the
   upstream parent.
 
+## Releases and dependencies
+
+Facts for hygiene work (`~/.pi/agent/skills/repo-hygiene/SKILL.md`); the
+release process is in [RELEASING.md](RELEASING.md).
+
+- **Trap: the highest semver tag is not the latest release.** Tags `v1.0.0`
+  to `v1.0.4` come from the upstream fork `ralt/repogen` (2026-01-06 to
+  2026-01-22) and have no GitHub release; `v1.0.4` is not on `main`. The real
+  series is `v0.x`, from `v0.1.0` (2026-01-14); the latest release when this
+  was written is `v0.7.0` (2026-10-24). So `git tag --sort=-v:refname | head -1`
+  and the skill's "highest stable semver tag" fallback give a wrong answer here. Find the latest
+  release with `gh release list --repo frostyard/repogen`, never from the tags,
+  and count unreleased commits from that tag.
+- Tag format: annotated `vMAJOR.MINOR.PATCH` ([RELEASING.md](RELEASING.md));
+  one series, `v0.x`.
+- How a release starts: the tag push runs `.github/workflows/release.yml`
+  (GoReleaser `v2.18.1`), which publishes `repogen-linux-amd64`,
+  `repogen-linux-arm64` and `SHA256SUMS`.
+- Who tags: Brian. Agents never tag, push tags or release.
+- Version rule: no tool (no svu config). Pick the version by semver from the
+  Conventional Commit subjects since the latest release; on `v0.x` a breaking
+  change gives a minor.
+- Internal dependencies: none (`go.mod` has no frostyard or bketelsen module).
+- Who uses this repository: `frostyard/snosi` `.github/workflows/build.yml`
+  publishes sysexts with `frostyard/repogen/.github/actions/publish-to-r2`,
+  pinned by SHA to `v0.4.1` with `repogen-version: v0.4.1`. snosi keeps that pin
+  on purpose (the comment there says v0.5.0 failed its sysext publication), so
+  a newer repogen release is not a bump to open in snosi; ask its owner first.
+  Debian packages are no longer published with repogen
+  ([ADR-0015](docs/adr/0015-remove-the-superseded-production-path.md);
+  frostyard/apt-publisher publishes them, core ADR-0055).
+
 ## Code conventions (live — the code exists)
 
 - Follow standard Go conventions and idioms: meaningful names, small focused
