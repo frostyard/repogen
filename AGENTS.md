@@ -98,10 +98,11 @@ release process is in [RELEASING.md](RELEASING.md).
 - Internal dependencies: none (`go.mod` has no frostyard or bketelsen module).
 - Who uses this repository: `frostyard/snosi` `.github/workflows/build.yml`
   publishes sysexts with `frostyard/repogen/.github/actions/publish-to-r2`,
-  pinned by SHA to `v0.4.1` with `repogen-version: v0.4.1`. snosi keeps that pin
-  on purpose (the comment there says v0.5.0 failed its sysext publication), so
-  a newer repogen release is not a bump to open in snosi; ask its owner first.
-  Debian packages are no longer published with repogen
+  pinned by SHA `c3c9f63` (`v0.7.0`), with `repogen-version: v0.7.0` and
+  `repogen-commit` naming that same commit. A newer repogen release is not a
+  bump to open in snosi on your own; ask its owner (Murbella) first. `frostyard/chairlift` and
+  `frostyard/pilothouse` only name the action in pin-check test fixtures, not
+  in a workflow. Debian packages are no longer published with repogen
   ([ADR-0015](docs/adr/0015-remove-the-superseded-production-path.md);
   frostyard/apt-publisher publishes them, core ADR-0055).
 

@@ -183,6 +183,16 @@ repogen generate \
 
 The incremental mode is particularly powerful when combined with S3. You can sync only the metadata files (not the packages themselves), add new packages, and regenerate.
 
+A manual upload must also upload packages before metadata, so live metadata
+never lists a package that is not in the bucket
+([ADR-0017](docs/adr/0017-upload-payloads-before-metadata.md)). For sysext:
+
+```bash
+# Payloads first, then everything else (metadata and indexes)
+aws s3 sync ./repo s3://my-bucket/repo --exclude '*' --include '*.raw*'
+aws s3 sync ./repo s3://my-bucket/repo --exclude '*.raw*'
+```
+
 #### Debian Repository
 
 ```bash
