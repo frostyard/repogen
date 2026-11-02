@@ -75,7 +75,9 @@ repository hosted on Cloudflare R2. Designed for CI/CD pipelines that
 build packages and want to add them to a repository incrementally.
 
 The action restores partial paths, uses generic incremental fallback
-behavior, and broadly synchronizes non-Debian output. It rejects Debian
+behavior, and synchronizes non-Debian output in a fixed order: payloads, then
+metadata, then directory indexes
+([ADR-0017](../adr/0017-upload-payloads-before-metadata.md)). It rejects Debian
 structurally: `frostyard/apt-publisher` is the only Frostyard Debian writer
 ([ADR-0015](../adr/0015-remove-the-superseded-production-path.md)).
 For sysext, a restore error is fatal and the calling workflow must serialize
@@ -109,8 +111,35 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    ASCII armored).
 6. **Run repogen** — always uses `--incremental` mode with all provided
    configuration.
-7. **Upload to R2** — `aws s3 sync` without `--delete` to preserve
-   existing packages not present locally.
+7. **Upload to R2** — runs `scripts/upload-to-r2.sh`, which never uses
+   `--delete` (existing packages that are not local are preserved) and works in
+   this order:
+   0. classify: refuse the run, before any upload, when a base name has one of
+      the two non-end-anchored detector shapes (`.pkg.tar.` or `.bottle.tar`)
+      and no payload pattern matches the path; only the generated sysext
+      transfer file `ext/<name>/<name>.transfer` and payload shapes inside a
+      directory name are exempt;
+   1. payloads only (`--exclude '*'` plus one `--include` per payload pattern);
+   2. a verify pass with `--dryrun --size-only` over the same filters, which
+      fails the step before any metadata is uploaded if a payload is missing
+      from the bucket or has another size (it does not compare bytes);
+   3. metadata (everything that is not a payload and not a directory index);
+   4. directory indexes (`index`, `*/index`, `index.html`, `*/index.html`)
+      last, because an index enumerates the other two groups.
+
+   The payload patterns are end-anchored: `*.raw`, `*.raw.zst`, `*.raw.xz`,
+   `*.raw.gz`, `*.apk`, `*.pkg.tar`, `*.pkg.tar.zst`, `*.pkg.tar.xz`,
+   `*.pkg.tar.gz`, their `.sig` files, `*.bottle.tar` and `*.bottle.tar.gz`. A
+   trailing `*` (for example `*.pkg.tar.*`) would also match a file inside a
+   directory whose name looks like a payload, such as
+   `ext/foo.pkg.tar.x/SHA256SUMS`, and phase 1 would upload that manifest
+   beside its payload.
+
+   Phases 1, 3 and 4 retry up to `UPLOAD_ATTEMPTS` times (default 4, delay
+   `UPLOAD_RETRY_DELAY * N`, default 15s); `aws s3 sync` is idempotent, so a
+   retry sends only what is still missing. The rule the order enforces: live
+   metadata must never reference a payload that is not in the bucket
+   ([ADR-0017](../adr/0017-upload-payloads-before-metadata.md), issue #84).
 8. **Purge Cloudflare cache** (optional) — purges by hostname via
    Cloudflare API.
 9. **Cleanup** — removes temp key files, clears AWS credentials.

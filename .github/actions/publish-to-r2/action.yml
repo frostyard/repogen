@@ -511,12 +511,12 @@ runs:
 
     - name: Upload repository to R2
       shell: bash
+      env:
+        BUCKET: ${{ inputs.r2-bucket }}
+        PREFIX: ${{ inputs.repo-prefix }}
       run: |
         set -e
         echo "::group::Uploading repository to R2"
-
-        BUCKET="${{ inputs.r2-bucket }}"
-        PREFIX="${{ inputs.repo-prefix }}"
 
         # Build S3 path
         if [[ -n "$PREFIX" ]]; then
@@ -533,10 +533,13 @@ runs:
 
         echo "Uploading repository to R2..."
 
-        # Sync repository to R2
-        # Note: We don't use --delete to preserve existing packages that aren't local
-        aws s3 sync "./repo" "${S3_PATH}" \
-          --endpoint-url "$R2_ENDPOINT"
+        # Ordered upload: payloads first, then metadata, then directory
+        # indexes, each phase retried (scripts/upload-to-r2.sh, ADR-0017).
+        # Live metadata must never reference a payload that is not in the
+        # bucket, so a single parallel sync is not used (issue #84).
+        # No --delete: existing packages that are not local are preserved.
+        export S3_PATH
+        REPO_DIR=./repo "$GITHUB_ACTION_PATH/../../../scripts/upload-to-r2.sh"
 
         echo ""
         echo "✓ Repository uploaded successfully to ${S3_PATH}"

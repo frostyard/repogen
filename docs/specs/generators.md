@@ -274,4 +274,8 @@ other non-Debian formats. It refuses a `codename` or `suite` of
 any Debian package in `packages-dir` whatever the declared type, rejects `package-type: deb` before
 credential setup, and no longer converts a failed sysext metadata restore into
 empty initialization. Remote R2 still has no atomic multi-object rename:
-the caller must serialize the complete restore/generate/upload cycle.
+the caller must serialize the complete restore/generate/upload cycle. Within
+one run the upload is ordered — payloads, then metadata, then directory
+indexes, with a verify pass before any metadata — so live metadata never
+lists a payload that is not in the bucket
+([ADR-0017](../adr/0017-upload-payloads-before-metadata.md)).

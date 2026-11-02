@@ -77,6 +77,10 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   — accepted 2026-10-24: GO-2026-5932 (`x/crypto/openpgp`, no fix) was
   reachable through go-rpmutils and no consumer used RPM; deletes the `rpm`
   type, its generator, flags and fixtures; adds pinned govulncheck to CI
+- [ADR-0017 — Upload payloads before metadata before indexes](adr/0017-upload-payloads-before-metadata.md)
+  — proposed 2026-11-02: `publish-to-r2` uploads in 3 ordered phases with a
+  verify pass and retries, so live metadata never lists a payload that is not
+  in the bucket (issue #84)
 
 ### Design
 
