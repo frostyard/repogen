@@ -185,13 +185,23 @@ The incremental mode is particularly powerful when combined with S3. You can syn
 
 A manual upload must also upload packages before metadata, so live metadata
 never lists a package that is not in the bucket
-([ADR-0017](docs/adr/0017-upload-payloads-before-metadata.md)). For sysext:
+([ADR-0017](docs/adr/0017-upload-payloads-before-metadata.md)). For sysext,
+the two commands are joined with `&&`, so a failed payload upload stops before
+the metadata goes up:
 
 ```bash
-# Payloads first, then everything else (metadata and indexes)
-aws s3 sync ./repo s3://my-bucket/repo --exclude '*' --include '*.raw*'
-aws s3 sync ./repo s3://my-bucket/repo --exclude '*.raw*'
+# Payloads first; the metadata upload runs only if that one succeeded
+aws s3 sync ./repo s3://my-bucket/repo --exclude '*' \
+    --include '*.raw' --include '*.raw.zst' \
+    --include '*.raw.xz' --include '*.raw.gz' \
+  && aws s3 sync ./repo s3://my-bucket/repo \
+    --exclude '*.raw' --exclude '*.raw.zst' \
+    --exclude '*.raw.xz' --exclude '*.raw.gz'
 ```
+
+`scripts/upload-to-r2.sh` does the full ordered upload: it verifies every
+payload is in the bucket, uploads metadata and indexes last, and retries each
+phase.
 
 #### Debian Repository
 

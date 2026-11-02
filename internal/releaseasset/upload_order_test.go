@@ -226,8 +226,9 @@ func (e *uploadEnv) run() (string, error) {
 	return string(output), err
 }
 
-// uploads returns the relative paths the fake aws copied, in order.
-func (e *uploadEnv) uploads() []string {
+// logLines returns every line the fake aws appended, in order. A run that
+// never called the fake returns nothing.
+func (e *uploadEnv) logLines() []string {
 	e.t.Helper()
 	data, err := os.ReadFile(e.logPath)
 	if err != nil {
@@ -237,14 +238,40 @@ func (e *uploadEnv) uploads() []string {
 		e.t.Fatal(err)
 	}
 
-	var rels []string
+	var lines []string
 	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	return lines
+}
+
+// uploads returns the relative paths the fake aws copied, in order.
+func (e *uploadEnv) uploads() []string {
+	e.t.Helper()
+	var rels []string
+	for _, line := range e.logLines() {
 		if rel, ok := strings.CutPrefix(line, "upload "); ok {
 			rels = append(rels, rel)
 		}
 	}
 
 	return rels
+}
+
+// syncCalls returns every filter set the script asked the fake aws to sync.
+func (e *uploadEnv) syncCalls() []string {
+	e.t.Helper()
+	var calls []string
+	for _, line := range e.logLines() {
+		if call, ok := strings.CutPrefix(line, "sync "); ok {
+			calls = append(calls, call)
+		}
+	}
+
+	return calls
 }
 
 func (e *uploadEnv) bucketFile(rel string) (string, bool) {
@@ -353,6 +380,8 @@ func TestUploadToR2ClassifiesEveryFormatPayload(t *testing.T) {
 	}{
 		{"x86_64/foo-1-1-x86_64.pkg.tar.zst", payloadPhase},
 		{"x86_64/foo-1-1-x86_64.pkg.tar.zst.sig", payloadPhase},
+		{"x86_64/foo-1-1-x86_64.pkg.tar.xz", payloadPhase},
+		{"x86_64/foo-1-1-x86_64.pkg.tar.xz.sig", payloadPhase},
 		{"x86_64/myrepo.db", metadataPhase},
 		{"myrepo.db.tar.zst", metadataPhase},
 		{"myrepo.db.sig", metadataPhase},
@@ -499,6 +528,112 @@ func TestUploadToR2VerifyPhaseStopsSilentlySkippedPayload(t *testing.T) {
 	}
 	if _, ok := env.bucketFile("index.html"); ok {
 		t.Fatal("index was uploaded although the payload was missing from the bucket")
+	}
+}
+
+func TestUploadToR2KeepsPayloadLikeDirectoryManifestOutOfPayloadPhase(t *testing.T) {
+	requireBash(t)
+
+	// A sysext identity may itself contain ".pkg.tar", so its directory name
+	// looks like a pacman payload. A trailing-wildcard payload pattern such as
+	// "*.pkg.tar.*" matches this directory's SHA256SUMS; phase 1 then uploaded
+	// that manifest beside its payload. The patterns are end-anchored, and only
+	// the base name counts, so the manifest stays in phase 3.
+	files := map[string]string{
+		"ext/foo.pkg.tar.x/foo.pkg.tar.x_1_13_x86-64.raw": "payload",
+		"ext/foo.pkg.tar.x/SHA256SUMS":                    "manifest",
+		"ext/foo.pkg.tar.x/index.html":                    "index",
+	}
+	env := newUploadEnv(t, files)
+
+	output, err := env.run()
+	if err != nil {
+		t.Fatalf("ordered upload failed: %v\n%s", err, output)
+	}
+
+	want := []string{
+		"ext/foo.pkg.tar.x/foo.pkg.tar.x_1_13_x86-64.raw",
+		"ext/foo.pkg.tar.x/SHA256SUMS",
+		"ext/foo.pkg.tar.x/index.html",
+	}
+	uploads := env.uploads()
+	if len(uploads) != len(want) {
+		t.Fatalf("uploads = %v, want %v", uploads, want)
+	}
+	for index, rel := range want {
+		if uploads[index] != rel {
+			t.Fatalf("upload %d = %q, want %q (all: %v)", index, uploads[index], rel, uploads)
+		}
+	}
+	for rel, content := range files {
+		got, ok := env.bucketFile(rel)
+		if !ok {
+			t.Fatalf("bucket lacks %q after a successful upload", rel)
+		}
+		if got != content {
+			t.Fatalf("bucket %q = %q, want %q", rel, got, content)
+		}
+	}
+}
+
+func TestUploadToR2FailedPayloadKeepsPayloadLikeDirectoryManifest(t *testing.T) {
+	requireBash(t)
+
+	env := newUploadEnv(t, map[string]string{
+		"ext/foo.pkg.tar.x/foo.pkg.tar.x_1_13_x86-64.raw": "payload",
+		"ext/foo.pkg.tar.x/SHA256SUMS":                    "new manifest",
+		"ext/foo.pkg.tar.x/index.html":                    "index",
+	})
+	env.writeBucketFile("ext/foo.pkg.tar.x/SHA256SUMS", "old manifest")
+	env.setEnv("FAKE_FAIL_PATTERN", "ext/foo.pkg.tar.x/*.raw")
+	env.setFailCounter(100)
+
+	output, err := env.run()
+	if err == nil {
+		t.Fatalf("permanent payload failure unexpectedly succeeded: %s", output)
+	}
+	if !strings.Contains(output, "::error::") {
+		t.Fatalf("failure output lacks a ::error:: annotation: %s", output)
+	}
+
+	manifest, ok := env.bucketFile("ext/foo.pkg.tar.x/SHA256SUMS")
+	if !ok {
+		t.Fatal("pre-existing published manifest disappeared")
+	}
+	if manifest != "old manifest" {
+		t.Fatalf("pre-existing published manifest changed to %q", manifest)
+	}
+	if _, ok := env.bucketFile("ext/foo.pkg.tar.x/index.html"); ok {
+		t.Fatal("index was uploaded although the payload phase failed")
+	}
+	if uploads := env.uploads(); len(uploads) != 0 {
+		t.Fatalf("failed payload phase uploaded %v, want nothing", uploads)
+	}
+}
+
+func TestUploadToR2ClassifyGuardRefusesUnmatchedPayloadLikeName(t *testing.T) {
+	requireBash(t)
+
+	env := newUploadEnv(t, map[string]string{
+		"x86_64/foo-1-1-x86_64.pkg.tar.weird": "payload",
+		"x86_64/myrepo.db":                    "database",
+	})
+
+	output, err := env.run()
+	if err == nil {
+		t.Fatalf("unmatched payload-like file name unexpectedly succeeded: %s", output)
+	}
+	if !strings.Contains(output, "::error::") {
+		t.Fatalf("failure output lacks a ::error:: annotation: %s", output)
+	}
+	if !strings.Contains(output, "x86_64/foo-1-1-x86_64.pkg.tar.weird") {
+		t.Fatalf("failure output does not name the file: %s", output)
+	}
+	if calls := env.syncCalls(); len(calls) != 0 {
+		t.Fatalf("guard let %d sync calls through, want none: %v", len(calls), calls)
+	}
+	if uploads := env.uploads(); len(uploads) != 0 {
+		t.Fatalf("guard uploaded %v, want nothing", uploads)
 	}
 }
 

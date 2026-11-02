@@ -13,6 +13,9 @@
 # `aws s3 sync` with include/exclude filters over the paths that
 # `internal/scanner/detector.go` detects:
 #
+#   Phase 0 (classify) refuses to start when a file name looks like a payload
+#     but no payload pattern matches it, because such a file would otherwise go
+#     up with the metadata while a consumer expects a payload.
 #   Phase 1 (payloads) uploads only package payloads (`.raw*`, `.apk`,
 #     `.pkg.tar*` with their `.sig` files, Homebrew bottles).
 #   Phase 2 (verify payloads) re-runs the phase 1 filters as `--dryrun
@@ -70,9 +73,14 @@ if [[ ! "$UPLOAD_RETRY_DELAY" =~ ^[0-9]+$ ]]; then
 fi
 
 # Payload patterns. An `aws s3 sync` filter is matched against the path
-# relative to the source, and `*` also matches `/`, so these cover nested
-# directories. Debian payloads are absent on purpose: the publish-to-r2 action
-# refuses `deb` (ADR-0015).
+# relative to the source, and `*` also matches `/`. Every pattern here is
+# end-anchored on purpose: a trailing `*` such as `*.pkg.tar.*` or
+# `*.bottle.tar*` would also match a file inside a directory whose name merely
+# looks like a payload (for example `ext/foo.pkg.tar.x/SHA256SUMS`), and phase 1
+# would then upload that manifest beside its payload. Phase 0 below catches a
+# payload-like file name that these patterns do not cover.
+# Debian payloads are absent on purpose: the publish-to-r2 action refuses `deb`
+# (ADR-0015).
 payload_patterns=(
   '*.raw'
   '*.raw.zst'
@@ -80,8 +88,15 @@ payload_patterns=(
   '*.raw.gz'
   '*.apk'
   '*.pkg.tar'
-  '*.pkg.tar.*'
-  '*.bottle.tar*'
+  '*.pkg.tar.zst'
+  '*.pkg.tar.xz'
+  '*.pkg.tar.gz'
+  '*.pkg.tar.sig'
+  '*.pkg.tar.zst.sig'
+  '*.pkg.tar.xz.sig'
+  '*.pkg.tar.gz.sig'
+  '*.bottle.tar'
+  '*.bottle.tar.gz'
 )
 
 # Directory index patterns, uploaded last.
@@ -134,6 +149,42 @@ run_phase() {
 }
 
 echo "Uploading $REPO_DIR to $S3_PATH in payload -> metadata -> index order"
+
+# Phase 0: classify. A file whose base name carries a payload marker but is
+# matched by no payload pattern would be uploaded in phase 3, beside metadata
+# that may list it as a payload. Refuse the whole run instead, before any
+# upload. Only the base name is inspected, so a directory that merely looks
+# like a payload (`ext/foo.pkg.tar.x/`) does not trip this guard.
+echo "Phase 0 (classify): checking every file name against the payload patterns"
+unclassified=()
+while IFS= read -r -d '' file; do
+  rel="${file#"$REPO_DIR"/}"
+  base="${rel##*/}"
+  case "$base" in
+    *.raw* | *.pkg.tar* | *.bottle.tar*) ;;
+    *) continue ;;
+  esac
+
+  matched=0
+  for pattern in "${payload_patterns[@]}"; do
+    # The pattern stays unquoted on purpose: this is a glob match with the
+    # same semantics as an `aws s3 sync` filter.
+    # shellcheck disable=SC2053
+    if [[ $rel == $pattern ]]; then
+      matched=1
+      break
+    fi
+  done
+  ((matched)) || unclassified+=("$rel")
+done < <(find "$REPO_DIR" -type f -print0 | LC_ALL=C sort -z)
+
+if (( ${#unclassified[@]} > 0 )); then
+  for rel in "${unclassified[@]}"; do
+    echo "::error::$rel has a payload-like name that no payload pattern matches; refusing to upload it with metadata"
+  done
+  echo "::error::Phase 0 (classify) failed; nothing was uploaded"
+  exit 1
+fi
 
 # Phase 1: payloads only.
 if ! run_phase 1 "payloads" \

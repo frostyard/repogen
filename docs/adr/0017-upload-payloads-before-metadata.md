@@ -28,15 +28,28 @@ reference a payload that is not in the bucket.**
 
 ## Decision
 
-The action uploads in three upload phases and one verify pass, in this order, through a new script
-`scripts/upload-to-r2.sh` (the action keeps only bucket/prefix plumbing):
+The action uploads in a fixed order through `scripts/upload-to-r2.sh` (the
+action keeps only bucket/prefix plumbing): one classify guard, three upload
+phases, and one verify pass.
 
+0. **Classify** — phase 0 runs before any upload. It walks every file under
+   `REPO_DIR`; when a base name contains `.pkg.tar`, `.bottle.tar` or `.raw`
+   and the path matches no payload pattern, the script prints `::error::`
+   naming the file and stops, so such a file never goes up with the metadata.
+   Only the base name is inspected, so a directory that merely looks like a
+   payload (`ext/foo.pkg.tar.x/`) does not trip the guard.
 1. **Payloads** — `aws s3 sync` with `--exclude '*'` followed by one
    `--include` per payload pattern: `*.raw`, `*.raw.zst`, `*.raw.xz`,
-   `*.raw.gz`, `*.apk`, `*.pkg.tar`, `*.pkg.tar.*` (this also covers pacman
-   `.sig` files) and `*.bottle.tar*`. These are the shapes
-   `internal/scanner/detector.go` detects; Debian is absent because the action
-   refuses `deb` ([ADR-0015](0015-remove-the-superseded-production-path.md)).
+   `*.raw.gz`, `*.apk`, `*.pkg.tar`, `*.pkg.tar.zst`, `*.pkg.tar.xz`,
+   `*.pkg.tar.gz`, `*.pkg.tar.sig`, `*.pkg.tar.zst.sig`, `*.pkg.tar.xz.sig`,
+   `*.pkg.tar.gz.sig`, `*.bottle.tar` and `*.bottle.tar.gz`. These are the
+   shapes `internal/scanner/detector.go` detects; Debian is absent because the
+   action refuses `deb`
+   ([ADR-0015](0015-remove-the-superseded-production-path.md)). Every pattern
+   is end-anchored on purpose: a trailing `*` such as `*.pkg.tar.*` or
+   `*.bottle.tar*` would also match a file inside a directory whose name looks
+   like a payload (`ext/foo.pkg.tar.x/SHA256SUMS`, a valid sysext name), and
+   phase 1 would upload that manifest beside its payload.
 2. **Verify payloads** — the same filters with `--dryrun --size-only`. Any
    listed `upload:` line means a payload is missing or has another size (the
    pass does not compare bytes; phase 1 already overwrote any older object of
@@ -65,6 +78,10 @@ never expands them.
   contains this change.
 - A failed payload phase now leaves the previously published metadata live and
   consistent. No metadata is uploaded in that run.
+- A tree with a payload-like file name that no pattern covers now fails in the
+  classify guard, before any upload. That is a new red run where the old single
+  sync uploaded the file with the metadata; the fix is to add the name's
+  pattern to `payload_patterns`.
 - Each run costs 3 to 4 extra `ListObjectsV2` calls (one per phase plus the
   verify pass). Payload PUTs are unchanged; the phases only split them.
 - **Residual, not fixed:** inside phase 3, `SHA256SUMS` and `SHA256SUMS.gpg`
