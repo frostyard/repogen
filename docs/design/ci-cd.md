@@ -116,8 +116,9 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    this order:
    0. classify: refuse the run, before any upload, when a base name has one of
       the two non-end-anchored detector shapes (`.pkg.tar.` or `.bottle.tar`)
-      and no payload pattern matches the path; `*.transfer` files and payload
-      shapes inside a directory name are not guarded;
+      and no payload pattern matches the path; only the generated sysext
+      transfer file `ext/<name>/<name>.transfer` and payload shapes inside a
+      directory name are exempt;
    1. payloads only (`--exclude '*'` plus one `--include` per payload pattern);
    2. a verify pass with `--dryrun --size-only` over the same filters, which
       fails the step before any metadata is uploaded if a payload is missing

@@ -40,11 +40,13 @@ phases, and one verify pass.
    naming the file and stops, so the file never goes up with the metadata.
    Two exclusions keep valid metadata out of the guard: a directory whose name
    merely looks like a payload (`ext/foo.pkg.tar.x/`) is not a base name, and
-   `*.transfer` is skipped because the sysext generator writes
-   `ext/<name>/<name>.transfer` and `<name>` may itself contain one of those
-   shapes. A sysext needs no guard: the scanner detects it only by the
-   end-anchored suffixes `.raw`, `.raw.zst`, `.raw.xz` and `.raw.gz`, which are
-   exactly the four patterns phase 1 uses.
+   the one generated sysext transfer file `ext/<name>/<name>.transfer` is
+   exempt, because `<name>` may itself contain one of those shapes. That
+   exemption is exact and applies to no other `.transfer` file: a bottle named
+   `foo--1.0.arm64_sonoma.bottle.tar.gz.transfer` is still refused. A sysext
+   needs no guard at all: the scanner detects it only by the end-anchored
+   suffixes `.raw`, `.raw.zst`, `.raw.xz` and `.raw.gz`, which are exactly the
+   four patterns phase 1 uses.
 1. **Payloads** — `aws s3 sync` with `--exclude '*'` followed by one
    `--include` per payload pattern: `*.raw`, `*.raw.zst`, `*.raw.xz`,
    `*.raw.gz`, `*.apk`, `*.pkg.tar`, `*.pkg.tar.zst`, `*.pkg.tar.xz`,
@@ -86,10 +88,10 @@ never expands them.
 - A failed payload phase now leaves the previously published metadata live and
   consistent. No metadata is uploaded in that run.
 - A tree with a file name that has a non-end-anchored payload shape
-  (`.pkg.tar.` or `.bottle.tar`, and no `.transfer`) but that no pattern covers
-  now fails in the classify guard, before any upload. That is a new red run
-  where the old single sync uploaded the file with the metadata; the fix is to
-  add the name's pattern to `payload_patterns`.
+  (`.pkg.tar.` or `.bottle.tar`) but that no pattern covers now fails in the
+  classify guard, before any upload. Only `ext/<name>/<name>.transfer` is
+  exempt. That is a new red run where the old single sync uploaded the file with
+  the metadata; the fix is to add the name's pattern to `payload_patterns`.
 - Each run costs 3 to 4 extra `ListObjectsV2` calls (one per phase plus the
   verify pass). Payload PUTs are unchanged; the phases only split them.
 - **Residual, not fixed:** inside phase 3, `SHA256SUMS` and `SHA256SUMS.gpg`

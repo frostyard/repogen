@@ -692,6 +692,33 @@ func TestUploadToR2ClassifyGuardRefusesUnmatchedPayloadLikeName(t *testing.T) {
 	}
 }
 
+func TestUploadToR2ClassifyGuardRefusesBottleNamedTransfer(t *testing.T) {
+	requireBash(t)
+
+	// Only the generated sysext transfer file `ext/<name>/<name>.transfer` is
+	// exempt. A bottle whose name itself ends in ".transfer" is still a payload
+	// by the scanner's rule (the name contains ".bottle.tar"), and no payload
+	// pattern matches it.
+	env := newUploadEnv(t, map[string]string{
+		"bottles/foo--1.0.arm64_sonoma.bottle.tar.gz.transfer": "bottle",
+		"Formula/foo.rb": "formula",
+	})
+
+	output, err := env.run()
+	if err == nil {
+		t.Fatalf("unmatched bottle-like name unexpectedly succeeded: %s", output)
+	}
+	if !strings.Contains(output, "::error::") {
+		t.Fatalf("failure output lacks a ::error:: annotation: %s", output)
+	}
+	if !strings.Contains(output, "bottles/foo--1.0.arm64_sonoma.bottle.tar.gz.transfer") {
+		t.Fatalf("failure output does not name the file: %s", output)
+	}
+	if calls := env.syncCalls(); len(calls) != 0 {
+		t.Fatalf("guard let %d sync calls through, want none: %v", len(calls), calls)
+	}
+}
+
 func TestPublishActionUsesOrderedUploadScript(t *testing.T) {
 	root := repositoryRoot(t)
 	action := readContractFile(t, filepath.Join(root, ".github", "actions", "publish-to-r2", "action.yml"))

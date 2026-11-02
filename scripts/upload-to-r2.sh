@@ -163,9 +163,11 @@ echo "Uploading $REPO_DIR to $S3_PATH in payload -> metadata -> index order"
 # Two exclusions keep valid metadata out of the guard:
 #   - only the base name is inspected, so a directory that merely looks like a
 #     payload (`ext/foo.pkg.tar.x/`) does not trip it;
-#   - `*.transfer` is skipped, because the sysext generator writes
-#     `ext/<name>/<name>.transfer` and `<name>` may itself contain `.pkg.tar.`
-#     or `.bottle.tar` (`foo.pkg.tar.x.transfer`, `foo.bottle.tar.transfer`).
+#   - the one generated sysext transfer file, `ext/<name>/<name>.transfer`, is
+#     exempt, because `<name>` may itself contain `.pkg.tar.` or `.bottle.tar`
+#     (`ext/foo.pkg.tar.x/foo.pkg.tar.x.transfer`). No other `.transfer` file
+#     is exempt: a bottle named `foo--1.0.arm64_sonoma.bottle.tar.gz.transfer`
+#     is still refused, because no payload pattern matches it.
 #
 # A sysext has no such problem: the scanner detects it only by the end-anchored
 # suffixes `.raw`, `.raw.zst`, `.raw.xz` and `.raw.gz`, which are exactly the
@@ -175,8 +177,16 @@ unclassified=()
 while IFS= read -r -d '' file; do
   rel="${file#"$REPO_DIR"/}"
   base="${rel##*/}"
+
+  if [[ $rel == ext/*/*.transfer ]]; then
+    dir="${rel%/*}"
+    name="${dir#ext/}"
+    if [[ $name != */* && $base == "$name.transfer" ]]; then
+      continue
+    fi
+  fi
+
   case "$base" in
-    *.transfer) continue ;;
     *.pkg.tar.* | *.bottle.tar*) ;;
     *) continue ;;
   esac
