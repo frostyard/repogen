@@ -32,12 +32,19 @@ The action uploads in a fixed order through `scripts/upload-to-r2.sh` (the
 action keeps only bucket/prefix plumbing): one classify guard, three upload
 phases, and one verify pass.
 
-0. **Classify** — phase 0 runs before any upload. It walks every file under
-   `REPO_DIR`; when a base name contains `.pkg.tar`, `.bottle.tar` or `.raw`
-   and the path matches no payload pattern, the script prints `::error::`
-   naming the file and stops, so such a file never goes up with the metadata.
-   Only the base name is inspected, so a directory that merely looks like a
-   payload (`ext/foo.pkg.tar.x/`) does not trip the guard.
+0. **Classify** — phase 0 runs before any upload, and inspects only the base
+   name of every file under `REPO_DIR`. The scanner detects a payload by magic
+   bytes plus one of two name shapes that are not end-anchored: any base name
+   that contains `.pkg.tar.`, and any base name that contains `.bottle.tar`.
+   When such a name matches no payload pattern, the script prints `::error::`
+   naming the file and stops, so the file never goes up with the metadata.
+   Two exclusions keep valid metadata out of the guard: a directory whose name
+   merely looks like a payload (`ext/foo.pkg.tar.x/`) is not a base name, and
+   `*.transfer` is skipped because the sysext generator writes
+   `ext/<name>/<name>.transfer` and `<name>` may itself contain one of those
+   shapes. A sysext needs no guard: the scanner detects it only by the
+   end-anchored suffixes `.raw`, `.raw.zst`, `.raw.xz` and `.raw.gz`, which are
+   exactly the four patterns phase 1 uses.
 1. **Payloads** — `aws s3 sync` with `--exclude '*'` followed by one
    `--include` per payload pattern: `*.raw`, `*.raw.zst`, `*.raw.xz`,
    `*.raw.gz`, `*.apk`, `*.pkg.tar`, `*.pkg.tar.zst`, `*.pkg.tar.xz`,
@@ -78,10 +85,11 @@ never expands them.
   contains this change.
 - A failed payload phase now leaves the previously published metadata live and
   consistent. No metadata is uploaded in that run.
-- A tree with a payload-like file name that no pattern covers now fails in the
-  classify guard, before any upload. That is a new red run where the old single
-  sync uploaded the file with the metadata; the fix is to add the name's
-  pattern to `payload_patterns`.
+- A tree with a file name that has a non-end-anchored payload shape
+  (`.pkg.tar.` or `.bottle.tar`, and no `.transfer`) but that no pattern covers
+  now fails in the classify guard, before any upload. That is a new red run
+  where the old single sync uploaded the file with the metadata; the fix is to
+  add the name's pattern to `payload_patterns`.
 - Each run costs 3 to 4 extra `ListObjectsV2` calls (one per phase plus the
   verify pass). Payload PUTs are unchanged; the phases only split them.
 - **Residual, not fixed:** inside phase 3, `SHA256SUMS` and `SHA256SUMS.gpg`

@@ -13,9 +13,11 @@
 # `aws s3 sync` with include/exclude filters over the paths that
 # `internal/scanner/detector.go` detects:
 #
-#   Phase 0 (classify) refuses to start when a file name looks like a payload
-#     but no payload pattern matches it, because such a file would otherwise go
-#     up with the metadata while a consumer expects a payload.
+#   Phase 0 (classify) refuses to start when a base name has one of the two
+#     detector shapes that are not end-anchored (`.pkg.tar.` and
+#     `.bottle.tar`) but no payload pattern matches the path, because such a
+#     file would otherwise go up with the metadata while a consumer expects a
+#     payload.
 #   Phase 1 (payloads) uploads only package payloads (`.raw*`, `.apk`,
 #     `.pkg.tar*` with their `.sig` files, Homebrew bottles).
 #   Phase 2 (verify payloads) re-runs the phase 1 filters as `--dryrun
@@ -150,18 +152,32 @@ run_phase() {
 
 echo "Uploading $REPO_DIR to $S3_PATH in payload -> metadata -> index order"
 
-# Phase 0: classify. A file whose base name carries a payload marker but is
-# matched by no payload pattern would be uploaded in phase 3, beside metadata
+# Phase 0: classify. The scanner detects a payload by magic bytes plus one of
+# two name shapes that are not end-anchored: any base name that contains
+# `.pkg.tar.`, and any base name that contains `.bottle.tar`. The payload
+# patterns cover only the end-anchored suffixes, so a file with one of those two
+# shapes that no pattern matches would be uploaded in phase 3, beside metadata
 # that may list it as a payload. Refuse the whole run instead, before any
-# upload. Only the base name is inspected, so a directory that merely looks
-# like a payload (`ext/foo.pkg.tar.x/`) does not trip this guard.
+# upload.
+#
+# Two exclusions keep valid metadata out of the guard:
+#   - only the base name is inspected, so a directory that merely looks like a
+#     payload (`ext/foo.pkg.tar.x/`) does not trip it;
+#   - `*.transfer` is skipped, because the sysext generator writes
+#     `ext/<name>/<name>.transfer` and `<name>` may itself contain `.pkg.tar.`
+#     or `.bottle.tar` (`foo.pkg.tar.x.transfer`, `foo.bottle.tar.transfer`).
+#
+# A sysext has no such problem: the scanner detects it only by the end-anchored
+# suffixes `.raw`, `.raw.zst`, `.raw.xz` and `.raw.gz`, which are exactly the
+# four patterns phase 1 uses, so no sysext payload can be missed here.
 echo "Phase 0 (classify): checking every file name against the payload patterns"
 unclassified=()
 while IFS= read -r -d '' file; do
   rel="${file#"$REPO_DIR"/}"
   base="${rel##*/}"
   case "$base" in
-    *.raw* | *.pkg.tar* | *.bottle.tar*) ;;
+    *.transfer) continue ;;
+    *.pkg.tar.* | *.bottle.tar*) ;;
     *) continue ;;
   esac
 

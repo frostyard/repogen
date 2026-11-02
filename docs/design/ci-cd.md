@@ -114,9 +114,10 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 7. **Upload to R2** — runs `scripts/upload-to-r2.sh`, which never uses
    `--delete` (existing packages that are not local are preserved) and works in
    this order:
-   0. classify: refuse the run, before any upload, when a file has a
-      payload-like base name (`.pkg.tar`, `.bottle.tar`, `.raw`) that no
-      payload pattern matches;
+   0. classify: refuse the run, before any upload, when a base name has one of
+      the two non-end-anchored detector shapes (`.pkg.tar.` or `.bottle.tar`)
+      and no payload pattern matches the path; `*.transfer` files and payload
+      shapes inside a directory name are not guarded;
    1. payloads only (`--exclude '*'` plus one `--include` per payload pattern);
    2. a verify pass with `--dryrun --size-only` over the same filters, which
       fails the step before any metadata is uploaded if a payload is missing

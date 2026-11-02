@@ -542,6 +542,7 @@ func TestUploadToR2KeepsPayloadLikeDirectoryManifestOutOfPayloadPhase(t *testing
 	files := map[string]string{
 		"ext/foo.pkg.tar.x/foo.pkg.tar.x_1_13_x86-64.raw": "payload",
 		"ext/foo.pkg.tar.x/SHA256SUMS":                    "manifest",
+		"ext/foo.pkg.tar.x/foo.pkg.tar.x.transfer":        "transfer",
 		"ext/foo.pkg.tar.x/index.html":                    "index",
 	}
 	env := newUploadEnv(t, files)
@@ -554,6 +555,7 @@ func TestUploadToR2KeepsPayloadLikeDirectoryManifestOutOfPayloadPhase(t *testing
 	want := []string{
 		"ext/foo.pkg.tar.x/foo.pkg.tar.x_1_13_x86-64.raw",
 		"ext/foo.pkg.tar.x/SHA256SUMS",
+		"ext/foo.pkg.tar.x/foo.pkg.tar.x.transfer",
 		"ext/foo.pkg.tar.x/index.html",
 	}
 	uploads := env.uploads()
@@ -582,6 +584,7 @@ func TestUploadToR2FailedPayloadKeepsPayloadLikeDirectoryManifest(t *testing.T) 
 	env := newUploadEnv(t, map[string]string{
 		"ext/foo.pkg.tar.x/foo.pkg.tar.x_1_13_x86-64.raw": "payload",
 		"ext/foo.pkg.tar.x/SHA256SUMS":                    "new manifest",
+		"ext/foo.pkg.tar.x/foo.pkg.tar.x.transfer":        "transfer",
 		"ext/foo.pkg.tar.x/index.html":                    "index",
 	})
 	env.writeBucketFile("ext/foo.pkg.tar.x/SHA256SUMS", "old manifest")
@@ -594,6 +597,14 @@ func TestUploadToR2FailedPayloadKeepsPayloadLikeDirectoryManifest(t *testing.T) 
 	}
 	if !strings.Contains(output, "::error::") {
 		t.Fatalf("failure output lacks a ::error:: annotation: %s", output)
+	}
+	// The failure must come from the payload phase, not from phase 0
+	// refusing this tree: the tree is valid.
+	if !strings.Contains(output, "Phase 1 (payloads)") {
+		t.Fatalf("failure did not reach the payload phase: %s", output)
+	}
+	if calls := env.syncCalls(); len(calls) == 0 {
+		t.Fatal("no sync call was made: phase 0 refused a valid tree")
 	}
 
 	manifest, ok := env.bucketFile("ext/foo.pkg.tar.x/SHA256SUMS")
@@ -608,6 +619,50 @@ func TestUploadToR2FailedPayloadKeepsPayloadLikeDirectoryManifest(t *testing.T) 
 	}
 	if uploads := env.uploads(); len(uploads) != 0 {
 		t.Fatalf("failed payload phase uploaded %v, want nothing", uploads)
+	}
+}
+
+func TestUploadToR2KeepsRawNamedDirectoryMetadataOutOfPayloadPhase(t *testing.T) {
+	requireBash(t)
+
+	// An extension may itself be named "foo.raw", so its directory name and its
+	// transfer file both carry ".raw". The scanner detects a sysext only by an
+	// end-anchored suffix, so the classify guard does not look at ".raw" at
+	// all, and these metadata files stay in phase 3.
+	files := map[string]string{
+		"ext/foo.raw/foo.raw_1_13_x86-64.raw.zst": "payload",
+		"ext/foo.raw/SHA256SUMS":                  "manifest",
+		"ext/foo.raw/foo.raw.transfer":            "transfer",
+	}
+	env := newUploadEnv(t, files)
+
+	output, err := env.run()
+	if err != nil {
+		t.Fatalf("ordered upload failed: %v\n%s", err, output)
+	}
+
+	want := []string{
+		"ext/foo.raw/foo.raw_1_13_x86-64.raw.zst",
+		"ext/foo.raw/SHA256SUMS",
+		"ext/foo.raw/foo.raw.transfer",
+	}
+	uploads := env.uploads()
+	if len(uploads) != len(want) {
+		t.Fatalf("uploads = %v, want %v", uploads, want)
+	}
+	for index, rel := range want {
+		if uploads[index] != rel {
+			t.Fatalf("upload %d = %q, want %q (all: %v)", index, uploads[index], rel, uploads)
+		}
+	}
+	for rel, content := range files {
+		got, ok := env.bucketFile(rel)
+		if !ok {
+			t.Fatalf("bucket lacks %q after a successful upload", rel)
+		}
+		if got != content {
+			t.Fatalf("bucket %q = %q, want %q", rel, got, content)
+		}
 	}
 }
 
