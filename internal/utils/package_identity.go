@@ -52,6 +52,40 @@ func DetectDigestConflicts(existing, newPackages []models.Package, pkgType scann
 	return conflicts
 }
 
+// SkippedPackage is an incoming package that a run skipped because its logical
+// identity is already published. Package is the incoming package, Published is
+// the already published package with the same identity.
+type SkippedPackage struct {
+	Package   models.Package
+	Published models.Package
+}
+
+// SplitPublishedIdentities splits newPackages into the packages to keep and the
+// packages to skip because published already lists a package with the same
+// identity.
+//
+// It matches on PackageIdentity only: the bytes and the filename do not matter,
+// so a rebuild with other bytes or with another compression suffix is skipped.
+// It keeps the input order in both results and ignores the bytes and filenames
+// of published.
+func SplitPublishedIdentities(published, newPackages []models.Package, pkgType scanner.PackageType) (keep []models.Package, skipped []SkippedPackage) {
+	publishedByIdentity := make(map[string]models.Package, len(published))
+	for _, pkg := range published {
+		publishedByIdentity[PackageIdentity(pkg, pkgType)] = pkg
+	}
+
+	for _, pkg := range newPackages {
+		publishedPkg, exists := publishedByIdentity[PackageIdentity(pkg, pkgType)]
+		if !exists {
+			keep = append(keep, pkg)
+			continue
+		}
+		skipped = append(skipped, SkippedPackage{Package: pkg, Published: publishedPkg})
+	}
+
+	return keep, skipped
+}
+
 // DetectConflicts returns packages from newPackages that conflict with existing
 func DetectConflicts(existing, newPackages []models.Package, pkgType scanner.PackageType) []models.Package {
 	existingMap := make(map[string]bool)

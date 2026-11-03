@@ -93,7 +93,9 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    (such as `stable/`), refuses any Debian package found in `packages-dir`
    whatever the declared type (repogen generates every detected type), and
    requires `codename` for `deb` (there is no default). It then checks package type, required flags (base-url for
-   sysext, repo-name for pacman), directory existence. `rpm` is not a valid
+   sysext, repo-name for pacman), directory existence, and refuses
+   `skip-published-identities: true` unless `package-type` is `sysext`.
+   `rpm` is not a valid
    package type ([ADR-0016](../adr/0016-remove-rpm-generation.md)).
 2. **Install repogen** — requires an exact tag and commit, uses a fixed GitHub
    release origin, downloads the exact architecture asset plus unsigned
@@ -110,8 +112,23 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 5. **Prepare signing keys** — decodes GPG/RSA keys from secrets (base64 or
    ASCII armored).
 6. **Run repogen** — always uses `--incremental` mode with all provided
-   configuration.
-7. **Upload to R2** — runs `scripts/upload-to-r2.sh`, which never uses
+   configuration. With `skip-published-identities: true` it also passes
+   `--skip-published-identities` and `--skipped-report
+   "$RUNNER_TEMP/repogen-skipped.txt"`, and exports `SKIPPED_REPORT`. An
+   empty `packages-dir` stays an error. `packages-added` counts the payloads
+   `repogen` added under `./repo` (the metadata sync brings no payloads), so a
+   run that skipped every built identity writes `packages-added=0` and
+   `published=false` with a `::notice::`.
+7. **Check skipped identities have their payloads** — runs
+   `scripts/check-published-payloads.sh` when `skip-published-identities` is
+   `true`. It makes one `ListObjectsV2` call under `<prefix>ext/` and fails
+   when a payload named in the report is not in the bucket, because the
+   rebuild cannot repair that identity
+   ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
+   An empty report makes no call.
+8. **Upload to R2** — gated on `steps.run-repogen.outputs.published == 'true'`,
+   so a fully skipped run uploads nothing. It runs `scripts/upload-to-r2.sh`,
+   which never uses
    `--delete` (existing packages that are not local are preserved) and works in
    this order:
    0. classify: refuse the run, before any upload, when a base name has one of
@@ -140,9 +157,10 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    retry sends only what is still missing. The rule the order enforces: live
    metadata must never reference a payload that is not in the bucket
    ([ADR-0017](../adr/0017-upload-payloads-before-metadata.md), issue #84).
-8. **Purge Cloudflare cache** (optional) — purges by hostname via
-   Cloudflare API.
-9. **Cleanup** — removes temp key files, clears AWS credentials.
+9. **Purge Cloudflare cache** (optional) — purges by hostname via
+   Cloudflare API. Gated on `purge-cache == 'true'` **and**
+   `steps.run-repogen.outputs.published == 'true'`.
+10. **Cleanup** — removes temp key files, clears AWS credentials.
 
 ### Required Inputs
 
@@ -166,6 +184,7 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 | `suite` | | Defaults to codename; `stable` refused |
 | `repo-prefix` | | Path prefix in R2 bucket |
 | `skip-duplicates` | `false` | Useful for nightly builds |
+| `skip-published-identities` | `false` | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Known gap: a content change without a version or revision bump is not republished ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)) |
 | `html-index` | `true` | Generates browsable directory pages |
 | `purge-cache` | `false` | Requires `cloudflare-zone` and `cloudflare-api-token` |
 
@@ -174,6 +193,7 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 | Output | Description |
 |--------|-------------|
 | `packages-added` | Number of packages added to the repository |
+| `published` | `'true'` when the action uploaded to R2; `'false'` when `skip-published-identities` left nothing to publish |
 
 ## Dependabot
 

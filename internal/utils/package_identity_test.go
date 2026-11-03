@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/frostyard/repogen/internal/models"
@@ -354,6 +355,112 @@ func TestFilterOutConflicts(t *testing.T) {
 			for _, expectedName := range tt.expectedNames {
 				if !resultNames[expectedName] {
 					t.Errorf("FilterOutConflicts() result missing expected package %q", expectedName)
+				}
+			}
+		})
+	}
+}
+
+func TestSplitPublishedIdentities(t *testing.T) {
+	sysext := func(name, version, osVersion, arch, filename, digest string) models.Package {
+		return models.Package{
+			Name:         name,
+			Version:      version,
+			Architecture: arch,
+			Filename:     filename,
+			SHA256Sum:    digest,
+			Metadata:     map[string]interface{}{"OSVersion": osVersion},
+		}
+	}
+
+	published := []models.Package{
+		sysext("incus", "7.3", "13", "x86-64", "repo/ext/incus/incus_7.3_13_x86-64.raw", "aaa"),
+		sysext("incus", "7.4", "14", "x86-64", "repo/ext/incus/incus_7.4_14_x86-64.raw", "bbb"),
+	}
+
+	tests := []struct {
+		name            string
+		published       []models.Package
+		newPackages     []models.Package
+		wantKeepNames   []string
+		wantSkippedFrom []string
+	}{
+		{
+			name:      "no published packages keeps everything",
+			published: nil,
+			newPackages: []models.Package{
+				sysext("incus", "7.3", "13", "x86-64", "input/incus_7.3_13_x86-64.raw", "ccc"),
+			},
+			wantKeepNames: []string{"incus_7.3_13_x86-64.raw"},
+		},
+		{
+			name:      "all identities published skips everything",
+			published: published,
+			newPackages: []models.Package{
+				sysext("incus", "7.3", "13", "x86-64", "input/incus_7.3_13_x86-64.raw", "ccc"),
+				sysext("incus", "7.4", "14", "x86-64", "input/incus_7.4_14_x86-64.raw", "ddd"),
+			},
+			wantSkippedFrom: []string{"incus_7.3_13_x86-64.raw", "incus_7.4_14_x86-64.raw"},
+		},
+		{
+			name:      "mixed keeps the new identity in input order",
+			published: published,
+			newPackages: []models.Package{
+				sysext("incus", "7.5", "13", "x86-64", "input/incus_7.5_13_x86-64.raw", "eee"),
+				sysext("incus", "7.3", "13", "x86-64", "input/incus_7.3_13_x86-64.raw", "ccc"),
+				sysext("incus", "7.6", "13", "x86-64", "input/incus_7.6_13_x86-64.raw", "fff"),
+			},
+			wantKeepNames:   []string{"incus_7.5_13_x86-64.raw", "incus_7.6_13_x86-64.raw"},
+			wantSkippedFrom: []string{"incus_7.3_13_x86-64.raw"},
+		},
+		{
+			name:      "same identity with another compression suffix is skipped",
+			published: published,
+			newPackages: []models.Package{
+				sysext("incus", "7.3", "13", "x86-64", "input/incus_7.3_13_x86-64.raw.zst", "ccc"),
+			},
+			wantSkippedFrom: []string{"incus_7.3_13_x86-64.raw.zst"},
+		},
+		{
+			name:      "another OSVersion is not a match",
+			published: published,
+			newPackages: []models.Package{
+				sysext("incus", "7.3", "14", "x86-64", "input/incus_7.3_14_x86-64.raw", "ccc"),
+			},
+			wantKeepNames: []string{"incus_7.3_14_x86-64.raw"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keep, skipped := SplitPublishedIdentities(tt.published, tt.newPackages, scanner.TypeSysext)
+
+			var keepNames []string
+			for _, pkg := range keep {
+				keepNames = append(keepNames, filepath.Base(pkg.Filename))
+			}
+			if len(keepNames) != len(tt.wantKeepNames) {
+				t.Fatalf("keep = %v, want %v", keepNames, tt.wantKeepNames)
+			}
+			for index := range keepNames {
+				if keepNames[index] != tt.wantKeepNames[index] {
+					t.Fatalf("keep = %v, want %v", keepNames, tt.wantKeepNames)
+				}
+			}
+
+			var skippedNames []string
+			for _, entry := range skipped {
+				skippedNames = append(skippedNames, filepath.Base(entry.Package.Filename))
+				if want := PackageIdentity(entry.Package, scanner.TypeSysext); PackageIdentity(entry.Published, scanner.TypeSysext) != want {
+					t.Fatalf("skipped entry pairs %q with published package of another identity", want)
+				}
+			}
+			if len(skippedNames) != len(tt.wantSkippedFrom) {
+				t.Fatalf("skipped = %v, want %v", skippedNames, tt.wantSkippedFrom)
+			}
+			for index := range skippedNames {
+				if skippedNames[index] != tt.wantSkippedFrom[index] {
+					t.Fatalf("skipped = %v, want %v", skippedNames, tt.wantSkippedFrom)
 				}
 			}
 		})

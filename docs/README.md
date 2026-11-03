@@ -81,6 +81,11 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   — proposed 2026-11-02: `publish-to-r2` uploads in 3 ordered phases with a
   verify pass and retries, so live metadata never lists a payload that is not
   in the bucket (issue #84)
+- [ADR-0018 — Opt-in identity-level skip for already published sysexts](adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)
+  — proposed 2026-11-03: `--skip-published-identities` skips a rebuilt sysext
+  whose identity the signature-verified `SHA256SUMS` already lists, whatever
+  its bytes; the action checks that each skipped payload is still in the bucket
+  and uploads nothing when every identity is published
 
 ### Design
 
