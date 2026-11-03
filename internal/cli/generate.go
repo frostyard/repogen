@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/frostyard/repogen/internal/dirindex"
@@ -74,6 +77,8 @@ structures with appropriate metadata files and signatures.`,
 	// Incremental mode
 	cmd.Flags().BoolVar(&config.Incremental, "incremental", false, "Add new packages to existing repository without removing existing ones")
 	cmd.Flags().BoolVar(&config.SkipDuplicates, "skip-duplicates", false, "In incremental mode, skip packages that already exist instead of failing")
+	cmd.Flags().BoolVar(&config.SkipPublishedIdentities, "skip-published-identities", false, "In incremental mode, skip each sysext whose identity (name, version, OSVersion, arch) is already listed in the signature-verified SHA256SUMS, whatever its bytes or compression suffix (sysext only)")
+	cmd.Flags().StringVar(&config.SkippedReportPath, "skipped-report", "", "With --skip-published-identities, write the published payload path (ext/NAME/FILE) of each skipped sysext to this file, one per line")
 
 	// Output options
 	cmd.Flags().BoolVar(&config.HTMLIndex, "html-index", false, "Generate HTML directory index pages for browser-friendly navigation")
@@ -93,6 +98,29 @@ func validateConfig(config *models.RepositoryConfig) error {
 		return &models.RepoGenError{
 			Type: models.ErrInvalidConfig,
 			Err:  fmt.Errorf("output-dir is required"),
+		}
+	}
+
+	if config.SkipPublishedIdentities && !config.Incremental {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--skip-published-identities requires --incremental"),
+		}
+	}
+
+	// Published identities are read only from signature-verified manifests, so
+	// the mode cannot work without a key to verify them.
+	if config.SkipPublishedIdentities && config.GPGKeyPath == "" {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--skip-published-identities requires --gpg-key: published identities are read only from signature-verified SHA256SUMS"),
+		}
+	}
+
+	if config.SkippedReportPath != "" && !config.SkipPublishedIdentities {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--skipped-report requires --skip-published-identities"),
 		}
 	}
 
@@ -158,12 +186,39 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		}
 	}
 
+	// Scan logs and drops a file whose type detection fails (a zero-byte .raw
+	// gives EOF), which would make the identity skip silently miss a rebuilt
+	// extension. Checked before the empty-input return, because such a file is
+	// the only input here.
+	if config.SkipPublishedIdentities {
+		if err := validateSysextCandidates(config.InputDir, scannedPackages); err != nil {
+			return &models.RepoGenError{
+				Type: models.ErrInvalidConfig,
+				Err:  err,
+			}
+		}
+	}
+
 	if len(scannedPackages) == 0 {
 		logrus.Warn("No packages found in input directory")
 		return nil
 	}
 
 	logrus.Infof("Found %d packages", len(scannedPackages))
+
+	// --skip-published-identities reads and merges sysext manifests only, so a
+	// run that finds any other package type is refused before any parsing.
+	if config.SkipPublishedIdentities {
+		for _, scanned := range scannedPackages {
+			if scanned.Type != scanner.TypeSysext {
+				return &models.RepoGenError{
+					Type: models.ErrInvalidConfig,
+					Err: fmt.Errorf("--skip-published-identities supports only sysext packages (found %s: %s)",
+						scanned.Type, scanned.Path),
+				}
+			}
+		}
+	}
 
 	// Step 2: Parse packages by type
 	packagesByType := make(map[scanner.PackageType][]models.Package)
@@ -200,6 +255,14 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		}
 
 		if parseErr != nil {
+			// With --skip-published-identities an unparsable sysext must not
+			// vanish into a "nothing to publish" success: fail closed.
+			if config.SkipPublishedIdentities {
+				return &models.RepoGenError{
+					Type: models.ErrPackageParse,
+					Err:  fmt.Errorf("--skip-published-identities: failed to parse %s: %w", scanned.Path, parseErr),
+				}
+			}
 			logrus.Warnf("Failed to parse %s: %v", scanned.Path, parseErr)
 			continue
 		}
@@ -248,6 +311,7 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	// every format before any format writes output, so a failure in one format
 	// cannot leave another format's output half-updated.
 	plannedPackages := make(map[scanner.PackageType][]models.Package)
+	var skippedReportLines []string
 	for pkgType, newPackages := range packagesByType {
 		gen, ok := generators[pkgType]
 		if !ok {
@@ -256,6 +320,47 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		}
 
 		var finalPackages []models.Package
+
+		if config.SkipPublishedIdentities && pkgType == scanner.TypeSysext {
+			// Skip by identity from the signature-verified manifests, before the
+			// conflict checks below: a rebuild with other bytes is intended here.
+			publishedGenerator, ok := gen.(interface {
+				PublishedPackages(*models.RepositoryConfig) ([]models.Package, error)
+			})
+			if !ok {
+				return &models.RepoGenError{
+					Type: models.ErrInvalidConfig,
+					Err:  fmt.Errorf("--skip-published-identities: %s generator cannot read published identities", pkgType),
+				}
+			}
+
+			publishedPackages, err := publishedGenerator.PublishedPackages(config)
+			if err != nil {
+				return &models.RepoGenError{
+					Type: models.ErrInvalidConfig,
+					Err:  fmt.Errorf("skip-published-identities: read signature-verified sysext metadata: %w", err),
+				}
+			}
+
+			incomingCount := len(newPackages)
+			keep, skipped := utils.SplitPublishedIdentities(publishedPackages, newPackages, pkgType)
+			for _, entry := range skipped {
+				logrus.Infof("Skipping %s: identity %s is already published as %s",
+					filepath.Base(entry.Package.Filename),
+					utils.PackageIdentity(entry.Package, pkgType),
+					filepath.Base(entry.Published.Filename))
+				skippedReportLines = append(skippedReportLines, path.Join(
+					"ext",
+					entry.Published.Name,
+					filepath.Base(entry.Published.Filename),
+				))
+			}
+			newPackages = keep
+			if len(newPackages) == 0 {
+				logrus.Infof("All %d sysext package(s) are already published; nothing to publish", incomingCount)
+				continue
+			}
+		}
 
 		if config.Incremental {
 			logrus.Infof("Incremental mode: parsing existing %s metadata...", pkgType)
@@ -346,6 +451,17 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		plannedPackages[pkgType] = finalPackages
 	}
 
+	// The identity skip may leave nothing at all. That is a clean no-op: no
+	// output is written and no directory index is generated, so a nightly
+	// rebuild of unchanged sysexts succeeds without touching the repository.
+	if config.SkipPublishedIdentities && len(plannedPackages) == 0 {
+		if err := writeSkippedReport(config.SkippedReportPath, skippedReportLines); err != nil {
+			return err
+		}
+		logrus.Info("Nothing to publish: every sysext identity is already published")
+		return nil
+	}
+
 	// Phase 2: write each format's output.
 	for pkgType, finalPackages := range plannedPackages {
 		gen := generators[pkgType]
@@ -369,10 +485,83 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		}
 	}
 
+	// The report is a proof of a successful run, so it is written last.
+	if config.SkipPublishedIdentities {
+		if err := writeSkippedReport(config.SkippedReportPath, skippedReportLines); err != nil {
+			return err
+		}
+	}
+
 	logrus.Info("Repository generation completed successfully!")
 	logrus.Infof("Output directory: %s", config.OutputDir)
 
 	return nil
+}
+
+// writeSkippedReport writes the sorted skipped-identity lines, one per line, to
+// reportPath. An empty path writes nothing; a run that skipped nothing writes
+// an empty file.
+func writeSkippedReport(reportPath string, lines []string) error {
+	if reportPath == "" {
+		return nil
+	}
+
+	sorted := append([]string(nil), lines...)
+	sort.Strings(sorted)
+
+	var builder strings.Builder
+	for _, line := range sorted {
+		builder.WriteString(line)
+		builder.WriteString("\n")
+	}
+
+	if err := os.WriteFile(reportPath, []byte(builder.String()), 0o644); err != nil {
+		return &models.RepoGenError{
+			Type: models.ErrFileOp,
+			Err:  fmt.Errorf("failed to write skipped report %s: %w", reportPath, err),
+		}
+	}
+
+	return nil
+}
+
+// validateSysextCandidates reports an error when the scanner dropped a sysext
+// candidate. It walks the input directory the same way
+// internal/scanner/filesystem.go does and requires every non-directory entry
+// (regular file or symlink) whose base name ends in .raw, .raw.zst, .raw.xz or .raw.gz to be present in scanned
+// as a sysext, so a file that detection could not classify cannot be skipped
+// silently.
+func validateSysextCandidates(inputDir string, scanned []scanner.ScannedPackage) error {
+	detected := make(map[string]struct{}, len(scanned))
+	for _, pkg := range scanned {
+		if pkg.Type == scanner.TypeSysext {
+			detected[filepath.Clean(pkg.Path)] = struct{}{}
+		}
+	}
+
+	return filepath.Walk(inputDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk input directory for sysext candidates: %w", walkErr)
+		}
+		// filepath.Walk uses Lstat, so a symlink is not a directory here. The
+		// scanner opens (and so follows) every non-directory entry, so a
+		// symlink is a candidate too: a dangling one, or one to a file that
+		// fails detection, must fail the run like a regular file.
+		if info.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if !strings.HasSuffix(base, ".raw") &&
+			!strings.HasSuffix(base, ".raw.zst") &&
+			!strings.HasSuffix(base, ".raw.xz") &&
+			!strings.HasSuffix(base, ".raw.gz") {
+			return nil
+		}
+		if _, ok := detected[filepath.Clean(path)]; !ok {
+			return fmt.Errorf("--skip-published-identities: sysext candidate %s was not detected as a sysext", path)
+		}
+		return nil
+	})
 }
 
 // hasPacmanPackages checks if input directory contains Pacman packages

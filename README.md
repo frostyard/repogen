@@ -177,7 +177,33 @@ repogen generate \
   --output-dir ./repo \
   --incremental \
   --skip-duplicates
+
+# Skip rebuilt sysexts whose identity is already published (sysext only)
+repogen generate \
+  --input-dir ./built-extensions \
+  --output-dir ./repo \
+  --incremental \
+  --gpg-key /path/to/private.asc \
+  --skip-published-identities \
+  --skipped-report /tmp/repogen-skipped.txt
 ```
+
+`--skip-published-identities` reads the published identities from the
+signature-verified `SHA256SUMS` of each extension and skips every incoming
+sysext whose identity `name:version:OSVersion:arch` is already listed, whatever
+its bytes and whatever its compression suffix. It requires `--incremental` and
+`--gpg-key`, it accepts only sysext input, and it fails closed: it refuses to
+run without a signing key, and a missing or unverifiable manifest signature
+stops the run. A repository published unsigned therefore cannot use the mode.
+`--skipped-report FILE` writes the published
+payload path (`ext/NAME/FILE`) of each skipped sysext, one per line. When every
+identity was skipped the run succeeds without writing output. mkosi builds are
+not byte-reproducible, so this is how a nightly rebuild of the same extension
+succeeds ([ADR-0018](docs/adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
+
+**Known gap:** a content change without a version or `SYSEXT_REVISION` bump
+keeps its identity, so it is skipped and **is not republished**; the old bytes
+stay live. Bump the version or the revision to publish new bytes.
 
 **S3 Workflow Examples:**
 
@@ -269,6 +295,12 @@ aws s3 sync ./repo s3://my-bucket/repo
 
 - Incremental mode will error if a package with the same name+version already exists (conflict detection)
 - Use `--skip-duplicates` to silently skip packages that already exist instead of failing (useful for nightly builds)
+- Use `--skip-published-identities` (sysext only, needs `--gpg-key`) to skip
+  rebuilt extensions
+  whose identity the signature-verified `SHA256SUMS` already lists, whatever
+  their bytes; `--skipped-report FILE` records what was skipped. A content
+  change without a version or revision bump keeps its identity and is not
+  republished (ADR-0018)
 - If metadata files don't exist, it falls back to normal mode automatically.
   For Debian, existing but unreadable, malformed or unselected metadata is an
   error, never a silent fallback (ADR-0014)
@@ -325,6 +357,10 @@ Flags:
 
   # Incremental Mode
       --incremental             Add new packages to existing repository without removing existing ones
+      --skip-duplicates         Skip packages that already exist instead of failing
+      --skip-published-identities
+                                Skip sysexts whose identity is already in the signature-verified SHA256SUMS
+      --skipped-report string   Write the published payload path of each skipped sysext to this file
 
   # GPG Signing (Debian, Pacman, sysext)
   -k, --gpg-key string          Path to GPG private key
@@ -983,6 +1019,7 @@ jobs:
 | `repogen-version`      | Yes      | -           | Exact v-prefixed Repogen release tag                                                     |
 | `repogen-commit`       | Yes      | -           | Exact 40-character commit embedded in the binary                                         |
 | `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
+| `skip-published-identities` | No  | `false`     | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Requires `gpg-private-key` and a `./repo` without payloads. Known gap: a content change without a version or revision bump is not republished |
 | `purge-cache`          | No       | `false`     | Purge Cloudflare cache after upload                                                      |
 | `cloudflare-zone`      | No\*     | -           | Cloudflare Zone ID (\*required if `purge-cache` is `true`)                               |
 | `cloudflare-api-token` | No\*     | -           | Cloudflare API Token with Cache Purge permission (\*required if `purge-cache` is `true`) |
@@ -992,13 +1029,17 @@ jobs:
 | Output           | Description                                |
 | ---------------- | ------------------------------------------ |
 | `packages-added` | Number of packages added to the repository |
+| `published`      | `'true'` when the action uploaded to R2; `'false'` when `skip-published-identities` left nothing to publish |
 
 ### How It Works
 
 1. **Downloads repogen** from GitHub releases
 2. **Syncs existing metadata** from R2 (only metadata files, not packages)
 3. **Runs repogen** in incremental mode to add new packages
-4. **Uploads** the updated repository back to R2
+4. **Checks skipped identities** still have their payloads in the bucket (only
+   with `skip-published-identities`)
+5. **Uploads** the updated repository back to R2, or uploads nothing when
+   every sysext identity was already published
 
 The action uses incremental mode, which means:
 
@@ -1009,6 +1050,18 @@ The action uses incremental mode, which means:
   coexist
 - A same-identity sysext is skipped only when its SHA-256 is unchanged;
   changed or unverifiable bytes fail
+
+With `skip-published-identities: true` (sysext only, needs `gpg-private-key`)
+a rebuilt sysext is
+skipped when its identity is already in the signature-verified `SHA256SUMS`,
+whatever its bytes. Before any upload the action checks, with one `HEAD`
+request per skipped identity, that each such payload object still exists, and
+it refuses a `./repo` that already holds a payload from an earlier step. A run
+that
+skipped every built sysext uploads nothing, purges nothing, and reports
+`published=false`, while an empty `packages-dir` stays an error. Known gap: a
+content change without a version or revision bump is not republished
+([ADR-0018](docs/adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
 
 The action is not a Debian publisher. Debian uses the separate protected
 writer. A sysext caller must serialize the full restore/generate/upload cycle

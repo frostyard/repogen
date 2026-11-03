@@ -106,6 +106,10 @@ inputs:
     description: 'Skip packages that already exist in the repository instead of failing (useful for nightly builds)'
     required: false
     default: 'false'
+  skip-published-identities:
+    description: 'sysext only: skip each built sysext whose identity (name, version, OSVersion, arch) the signature-verified SHA256SUMS already lists, whatever its bytes; when nothing is left the action publishes nothing and succeeds. Requires gpg-private-key and a ./repo without payloads. Known gap: a content change without a version or revision bump is not republished'
+    required: false
+    default: 'false'
 
   # HTML index generation
   html-index:
@@ -131,6 +135,9 @@ outputs:
   packages-added:
     description: 'Number of packages added to the repository'
     value: ${{ steps.run-repogen.outputs.packages-added }}
+  published:
+    description: "'true' when the action uploaded to R2; 'false' when skip-published-identities left nothing to publish"
+    value: ${{ steps.run-repogen.outputs.published }}
 
 runs:
   using: 'composite'
@@ -142,6 +149,8 @@ runs:
         CODENAME: ${{ inputs.codename }}
         SUITE: ${{ inputs.suite }}
         PACKAGES_DIR: ${{ inputs.packages-dir }}
+        SKIP_PUBLISHED: ${{ inputs.skip-published-identities }}
+        HAS_GPG_KEY: ${{ inputs.gpg-private-key != '' }}
       run: |
         set -e
         echo "::group::Validating inputs"
@@ -174,6 +183,21 @@ runs:
           exit 1
         fi
         echo "✓ base-url: ${{ inputs.base-url }}"
+
+        # The identity-level skip reads and merges signed sysext manifests, so
+        # no other package type can use it (ADR-0018).
+        if [[ "$SKIP_PUBLISHED" == "true" && "$PACKAGE_TYPE" != "sysext" ]]; then
+          echo "::error::skip-published-identities supports only package-type sysext (got '$PACKAGE_TYPE')"
+          exit 1
+        fi
+
+        # Published identities come only from signature-verified manifests, so
+        # the mode needs a signing key. The key itself is never put in this
+        # step's environment; only its presence is.
+        if [[ "$SKIP_PUBLISHED" == "true" && "$HAS_GPG_KEY" != "true" ]]; then
+          echo "::error::skip-published-identities requires gpg-private-key: published identities are read only from signature-verified SHA256SUMS"
+          exit 1
+        fi
 
         # Validate repo-name is provided for pacman
         if [[ "${{ inputs.package-type }}" == "pacman" && -z "${{ inputs.repo-name }}" ]]; then
@@ -397,6 +421,8 @@ runs:
     - name: Run repogen
       id: run-repogen
       shell: bash
+      env:
+        SKIP_PUBLISHED: ${{ inputs.skip-published-identities }}
       run: |
         set -e
         echo "::group::Running repogen"
@@ -431,7 +457,14 @@ runs:
 
         echo ""
         echo "Total packages found: $PACKAGE_COUNT"
-        echo "packages-added=$PACKAGE_COUNT" >> $GITHUB_OUTPUT
+
+        # packages-added is written exactly once. In default mode it is the
+        # number of input packages. With skip-published-identities it is the
+        # number of payloads repogen actually added, counted after repogen runs.
+        if [[ "$SKIP_PUBLISHED" != "true" ]]; then
+          echo "packages-added=$PACKAGE_COUNT" >> "$GITHUB_OUTPUT"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+        fi
 
         if [[ "$PACKAGE_COUNT" -eq 0 ]]; then
           echo "::error::No packages found in ${{ inputs.packages-dir }}"
@@ -449,6 +482,31 @@ runs:
         # Add skip-duplicates if enabled
         if [[ "${{ inputs.skip-duplicates }}" == "true" ]]; then
           REPOGEN_ARGS+=("--skip-duplicates")
+        fi
+
+        # Add the identity-level skip for already published sysexts (ADR-0018).
+        # The report lists the published payload path of each skipped identity;
+        # a later step checks that those payloads are still in the bucket.
+        SKIPPED_REPORT_PATH="${RUNNER_TEMP:-/tmp}/repogen-skipped.txt"
+        if [[ "$SKIP_PUBLISHED" == "true" ]]; then
+          REPOGEN_ARGS+=("--skip-published-identities")
+          REPOGEN_ARGS+=("--skipped-report" "$SKIPPED_REPORT_PATH")
+          echo "SKIPPED_REPORT=$SKIPPED_REPORT_PATH" >> "$GITHUB_ENV"
+
+          # In this mode packages-added counts the payloads in ./repo, so a
+          # payload left by an earlier action call in the same job would be
+          # counted as added by this run. Refuse that tree.
+          EXISTING_PAYLOADS=$(find ./repo -type f \( \
+            -name "*.raw" -o \
+            -name "*.raw.zst" -o \
+            -name "*.raw.xz" -o \
+            -name "*.raw.gz" \
+          \) 2>/dev/null | wc -l)
+          EXISTING_PAYLOADS=$((EXISTING_PAYLOADS))
+          if [[ "$EXISTING_PAYLOADS" -gt 0 ]]; then
+            echo "::error::skip-published-identities needs a ./repo without payloads; found $EXISTING_PAYLOADS from an earlier step"
+            exit 1
+          fi
         fi
 
         # Add html-index if enabled
@@ -505,11 +563,52 @@ runs:
         echo "Running: /tmp/repogen ${REPOGEN_ARGS[*]}"
         /tmp/repogen "${REPOGEN_ARGS[@]}"
 
+        if [[ "$SKIP_PUBLISHED" == "true" ]]; then
+          # Only new payloads are under ./repo: the metadata sync excludes
+          # payloads, so this counts what repogen added in this run. When every
+          # identity was already published repogen adds none and the action
+          # uploads nothing.
+          ADDED_COUNT=$(find ./repo -type f \( \
+            -name "*.raw" -o \
+            -name "*.raw.zst" -o \
+            -name "*.raw.xz" -o \
+            -name "*.raw.gz" \
+          \) 2>/dev/null | wc -l)
+          ADDED_COUNT=$((ADDED_COUNT))
+          echo "Packages added by this run: $ADDED_COUNT"
+          echo "packages-added=$ADDED_COUNT" >> "$GITHUB_OUTPUT"
+          if [[ "$ADDED_COUNT" -gt 0 ]]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::every built sysext identity is already published; nothing to upload"
+          fi
+        fi
+
         echo ""
         echo "✓ repogen completed successfully"
         echo "::endgroup::"
 
+    - name: Check skipped identities have their payloads
+      if: inputs.skip-published-identities == 'true'
+      shell: bash
+      env:
+        BUCKET: ${{ inputs.r2-bucket }}
+        PREFIX: ${{ inputs.repo-prefix }}
+      run: |
+        set -e
+        echo "::group::Checking skipped identities have their payloads"
+
+        # The skip works from metadata, so a payload that is gone turns into a
+        # manifest that points at nothing; refuse before any upload (ADR-0018).
+        # One HEAD request per skipped identity: the key is a request
+        # parameter, so no response decoding can confuse two keys.
+        "$GITHUB_ACTION_PATH/../../../scripts/check-published-payloads.sh"
+
+        echo "::endgroup::"
+
     - name: Upload repository to R2
+      if: steps.run-repogen.outputs.published == 'true'
       shell: bash
       env:
         BUCKET: ${{ inputs.r2-bucket }}
@@ -546,7 +645,7 @@ runs:
         echo "::endgroup::"
 
     - name: Purge Cloudflare cache
-      if: inputs.purge-cache == 'true'
+      if: inputs.purge-cache == 'true' && steps.run-repogen.outputs.published == 'true'
       shell: bash
       run: |
         set -e

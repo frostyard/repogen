@@ -825,6 +825,35 @@ func (g *Generator) GetSupportedType() scanner.PackageType {
 	return scanner.TypeSysext
 }
 
+// PublishedPackages returns the packages the existing repository already
+// publishes, read from the signature-verified SHA256SUMS manifests.
+//
+// It fails closed: it refuses to run without a signer, every manifest is parsed
+// strictly, every payload that is
+// present must match its digest, every SHA256SUMS.gpg must verify with the
+// configured signer, the transfer files and the index must match the generated
+// contract, and any error is returned. There is no fallback to unsigned or
+// lenient parsing. It returns nil, nil when <output>/ext does not exist yet,
+// which is the first publish.
+func (g *Generator) PublishedPackages(config *models.RepositoryConfig) ([]models.Package, error) {
+	// Defense in depth: without a signer, readCurrentPackages would accept a
+	// manifest that has no SHA256SUMS.gpg, and the identity skip must never act
+	// on unverified metadata.
+	if g.signer == nil {
+		return nil, fmt.Errorf("published sysext identities are read only from signature-verified SHA256SUMS, and no signing key is configured")
+	}
+
+	extDir := filepath.Join(config.OutputDir, "ext")
+	if _, err := os.Stat(extDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("inspect existing sysext repository: %w", err)
+	}
+
+	return g.readCurrentPackages(config, true)
+}
+
 // ParseExistingMetadata reads existing SHA256SUMS files to support incremental mode.
 //
 // It scans <output>/ext/<name>/SHA256SUMS files and reconstructs package metadata
