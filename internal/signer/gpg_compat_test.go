@@ -298,6 +298,14 @@ func TestSignaturesVerifyWithGPGAndGo(t *testing.T) {
 					t.Fatal(err)
 				}
 				runOK(t, "gpg binary-from-file verify", "gpg", "--homedir", gpgHome, "--batch", "--verify", sigPath, dataPath)
+				t.Run("gpgv", func(t *testing.T) {
+					skipIfMissing(t, "gpgv")
+					runOK(t, "gpgv binary-from-file verify", "gpgv", "--keyring", publicBinary, sigPath, dataPath)
+				})
+				t.Run("sqv", func(t *testing.T) {
+					skipIfMissing(t, "sqv")
+					runOK(t, "sqv binary-from-file verify", "sqv", "--keyring", publicKey, "--signature-file", sigPath, dataPath)
+				})
 				if _, err := openpgp.CheckDetachedSignature(keyring, bytes.NewReader(tt.data), bytes.NewReader(sig), nil); err != nil {
 					t.Fatalf("go-crypto binary-from-file verification failed: %v", err)
 				}
