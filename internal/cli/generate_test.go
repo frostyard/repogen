@@ -489,3 +489,46 @@ func TestGenerateSkipPublishedIdentitiesRejectsUndetectedCandidate(t *testing.T)
 		t.Fatalf("skipped report was written although the run failed: %v", statErr)
 	}
 }
+
+func TestGenerateSkipPublishedIdentitiesFailsOnUndetectedSymlinkCandidate(t *testing.T) {
+	cases := map[string]func(t *testing.T, inputDir, link string){
+		"symlink to an empty file": func(t *testing.T, inputDir, link string) {
+			target := filepath.Join(t.TempDir(), "empty-target")
+			if err := os.WriteFile(target, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"dangling symlink": func(t *testing.T, inputDir, link string) {
+			if err := os.Symlink(filepath.Join(inputDir, "does-not-exist"), link); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, makeLink := range cases {
+		t.Run(name, func(t *testing.T) {
+			fixture := newSkipPublishedFixture(t)
+			imagePath := fixture.write("incus_7.3_13_x86-64.raw", "v1")
+			fixture.mustRun()
+			before := snapshotGenerateTree(t, fixture.extDir())
+			reportPath := filepath.Join(t.TempDir(), "skipped.txt")
+
+			// The rebuilt 7.3 alone would be a clean full skip.
+			if err := os.WriteFile(imagePath, []byte("v2"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			makeLink(t, fixture.inputDir, filepath.Join(fixture.inputDir, "incus_7.4_13_x86-64.raw"))
+
+			err := fixture.run("--incremental", "--skip-published-identities", "--skipped-report", reportPath)
+			if err == nil || !strings.Contains(err.Error(), "was not detected as a sysext") {
+				t.Fatalf("undetected symlink candidate error = %v, want a detection refusal", err)
+			}
+			assertGenerateTree(t, fixture.extDir(), before)
+			if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {
+				t.Fatalf("skipped report was written although the run failed: %v", statErr)
+			}
+		})
+	}
+}

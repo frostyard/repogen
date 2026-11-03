@@ -527,8 +527,8 @@ func writeSkippedReport(reportPath string, lines []string) error {
 
 // validateSysextCandidates reports an error when the scanner dropped a sysext
 // candidate. It walks the input directory the same way
-// internal/scanner/filesystem.go does and requires every regular file whose
-// base name ends in .raw, .raw.zst, .raw.xz or .raw.gz to be present in scanned
+// internal/scanner/filesystem.go does and requires every non-directory entry
+// (regular file or symlink) whose base name ends in .raw, .raw.zst, .raw.xz or .raw.gz to be present in scanned
 // as a sysext, so a file that detection could not classify cannot be skipped
 // silently.
 func validateSysextCandidates(inputDir string, scanned []scanner.ScannedPackage) error {
@@ -543,7 +543,11 @@ func validateSysextCandidates(inputDir string, scanned []scanner.ScannedPackage)
 		if walkErr != nil {
 			return fmt.Errorf("walk input directory for sysext candidates: %w", walkErr)
 		}
-		if info.IsDir() || !info.Mode().IsRegular() {
+		// filepath.Walk uses Lstat, so a symlink is not a directory here. The
+		// scanner opens (and so follows) every non-directory entry, so a
+		// symlink is a candidate too: a dangling one, or one to a file that
+		// fails detection, must fail the run like a regular file.
+		if info.IsDir() {
 			return nil
 		}
 		base := filepath.Base(path)
