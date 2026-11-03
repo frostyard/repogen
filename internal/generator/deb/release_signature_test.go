@@ -9,6 +9,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/clearsign"
 	signerpkg "github.com/frostyard/repogen/internal/signer"
 )
 
@@ -111,6 +112,15 @@ func TestVerifyReleaseSignatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	releaseWithoutFinalNewline := []byte("Origin: Test\nSuite: testing")
+	inReleaseWithoutFinalNewline, err := signer.SignCleartext(releaseWithoutFinalNewline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseGPGWithoutFinalNewline, err := signer.SignDetached(releaseWithoutFinalNewline)
+	if err != nil {
+		t.Fatal(err)
+	}
 	otherInRelease, err := signer.SignCleartext([]byte("Origin: Other\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +151,7 @@ func TestVerifyReleaseSignatures(t *testing.T) {
 		{name: "InRelease payload differs", ring: ring, release: release, inRelease: otherInRelease, releaseGPG: releaseGPG, wantErr: "not byte-identical"},
 		{name: "Release.gpg for other data", ring: ring, release: release, inRelease: inRelease, releaseGPG: otherReleaseGPG, wantErr: "detached Release.gpg signature is invalid"},
 		{name: "InRelease not clear-signed", ring: ring, release: release, inRelease: release, releaseGPG: releaseGPG, wantErr: "not one complete clear-signed"},
+		{name: "Release without final newline", ring: ring, release: releaseWithoutFinalNewline, inRelease: inReleaseWithoutFinalNewline, releaseGPG: releaseGPGWithoutFinalNewline, wantErr: "not byte-identical"},
 		{name: "Release.gpg invalid", ring: ring, release: release, inRelease: inRelease, releaseGPG: []byte("bad"), wantErr: "Release.gpg signature is invalid"},
 	}
 	for _, tt := range tests {
@@ -157,6 +168,38 @@ func TestVerifyReleaseSignatures(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestClearsignedPayload(t *testing.T) {
+	signer, err := signerpkg.NewGPGSigner(testPrivateKeyFixture(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = signer.Close() }()
+
+	for _, input := range [][]byte{
+		[]byte("Origin: Test\nSuite: testing\n"),
+		[]byte("-----BEGIN FAKE-----\n- dash\n"),
+	} {
+		t.Run(string(input), func(t *testing.T) {
+			signed, err := signer.SignCleartext(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			block, rest := clearsign.Decode(signed)
+			if block == nil || len(bytes.TrimSpace(rest)) != 0 {
+				t.Fatal("clearsign.Decode did not return one complete message")
+			}
+			plaintextBefore := bytes.Clone(block.Plaintext)
+			got := clearsignedPayload(block)
+			if !bytes.Equal(got, input) {
+				t.Fatalf("clearsignedPayload() = %q, want input %q", got, input)
+			}
+			if !bytes.Equal(block.Plaintext, plaintextBefore) {
+				t.Fatalf("clearsignedPayload changed block.Plaintext: got %q, want %q", block.Plaintext, plaintextBefore)
 			}
 		})
 	}

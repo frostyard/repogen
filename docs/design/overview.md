@@ -135,6 +135,9 @@ map[string]interface{}` for format-specific data (e.g., Pacman's `BuildDate`,
   first use and reused across all signing operations. `GPGSigner` implements
   `io.Closer` to clean up this directory; `runGeneration()` defers `Close()`
   after initializing the signer.
+  `internal/signer/gpg_compat_test.go` proves that each signature kind verifies
+  with gpg, gpgv, sqv and go-crypto, for LF, CRLF, and text with and without
+  a final newline.
 - **RSA (apk)**: `signer.AlpineRSASigner` uses Go stdlib crypto/rsa with
   SHA1/PKCS1v15, matching Alpine's expected signature format.
 - Unsigned repos are supported — deb generates an InRelease with unsigned

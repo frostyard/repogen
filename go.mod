@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
-	github.com/ProtonMail/go-crypto v1.0.0
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/klauspost/compress v1.18.7
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.1
