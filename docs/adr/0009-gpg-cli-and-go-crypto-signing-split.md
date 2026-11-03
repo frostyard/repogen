@@ -76,5 +76,6 @@ run, and removed by `Close()` — which `runGeneration` defers
   `SignDetachedBinaryFromFile`, `ensureGPGHome`, `Close`),
   [internal/cli/generate.go](../../internal/cli/generate.go) (deferred close)
 - Builds on: [core ADR-0014 — one GPG repository key](https://github.com/frostyard/core/blob/main/docs/adr/0014-single-gpg-trust-root.md)
+- Verified by: [internal/signer/gpg_compat_test.go](../../internal/signer/gpg_compat_test.go) (each signature kind against gpg, gpgv, sqv and go-crypto; go-crypto v1.5.2)
 - Related: [ADR-0001 — unsigned InRelease](0001-unsigned-debian-repos-emit-inrelease.md),
   [ADR-0006 — Pacman dual database files](0006-pacman-dual-database-files.md)

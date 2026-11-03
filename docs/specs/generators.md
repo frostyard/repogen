@@ -69,7 +69,12 @@ and are ignored by `generate`.
   `parseTrustedKeyRing` accepts exactly one public key and rejects private key
   material; `verifyReleaseSignatures` requires a complete clear-signed
   InRelease whose payload equals Release, a valid armored `Release.gpg`, and
-  one signing fingerprint for both.
+  one signing fingerprint for both. The payload is the go-crypto `clearsign`
+  `Plaintext` plus one LF: go-crypto v1.2.0 and later exclude the final line
+  ending before the signature armor under RFC 9580 section 7.1, but apt reads
+  the cleartext section and ends each line with LF. Thus a Release without a
+  final LF, or with CRLF, is not reused and gets a new signed generation.
+  Repogen always writes Release with LF line endings and a final LF.
 
 ### Parser
 

@@ -38,6 +38,17 @@ func parseTrustedKeyRing(data []byte) (openpgp.EntityList, error) {
 	return entities, nil
 }
 
+// clearsignedPayload returns the payload that apt reads from a clear-signed
+// message. go-crypto v1.2.0 and later follow RFC 9580 section 7.1, so
+// clearsign.Block.Plaintext excludes the line ending before the signature armor.
+// apt reads the cleartext section line by line and ends each line with LF. Thus
+// the payload is Plaintext plus one LF. This keeps the check the same as with
+// go-crypto v1.0.0.
+func clearsignedPayload(block *clearsign.Block) []byte {
+	plaintext := bytes.Clone(block.Plaintext)
+	return append(plaintext, '\n')
+}
+
 // verifyReleaseSignatures checks that InRelease is one complete clear-signed
 // message whose payload is byte-identical to Release, and that Release.gpg is a
 // valid armored detached signature of Release. Both signatures must come from
@@ -56,7 +67,7 @@ func verifyReleaseSignatures(
 	if err != nil {
 		return "", fmt.Errorf("InRelease signature is invalid: %w", err)
 	}
-	if !bytes.Equal(block.Plaintext, releaseData) {
+	if !bytes.Equal(clearsignedPayload(block), releaseData) {
 		return "", fmt.Errorf("InRelease signed payload is not byte-identical to Release")
 	}
 
