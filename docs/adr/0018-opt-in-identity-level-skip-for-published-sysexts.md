@@ -35,14 +35,15 @@ differs. That rule is deliberate. It is also unusable for a rebuild:
 matching input. Both are off by default; without them nothing changes.
 
 - **CLI.** `--skip-published-identities` (sysext only, requires
-  `--incremental`) skips each incoming sysext whose identity
+  `--incremental` and `--gpg-key`) skips each incoming sysext whose identity
   `name:version:OSVersion:arch` is already listed in the
   signature-verified `SHA256SUMS`, whatever its bytes and whatever its
   compression suffix. `--skipped-report FILE` writes the published payload
   path (`ext/NAME/FILE`) of each skipped sysext, one per line, sorted; an
   empty file when nothing was skipped. `--skipped-report` without
-  `--skip-published-identities`, and `--skip-published-identities` without
-  `--incremental`, are configuration errors. A run whose scan finds any
+  `--skip-published-identities`, `--skip-published-identities` without
+  `--incremental`, and `--skip-published-identities` without `--gpg-key`, are
+  configuration errors. A run whose scan finds any
   non-sysext package is refused when the flag is on, and a sysext that the
   parser rejects fails the run (in default mode it is only a warning), so a
   broken build cannot look like "nothing to publish".
@@ -62,12 +63,28 @@ matching input. Both are off by default; without them nothing changes.
   `$RUNNER_TEMP`. A new `published` output is `'true'` when the action
   uploaded to R2 and `'false'` when the skip left nothing to publish; the
   upload step and the cache purge step are gated on it. `packages-added`
-  counts the payloads under `./repo` in that mode. A new step,
+  counts the payloads under `./repo` in that mode, so the step refuses a
+  `./repo` that already holds a payload from an earlier step in the same job
+  instead of counting it as added. A new step,
   `Check skipped identities have their payloads`, runs
-  `scripts/check-published-payloads.sh` before the upload. It reads the report,
-  makes one `ListObjectsV2` call under `<prefix>ext/`, and fails when any
-  skipped identity's payload object is missing, because such an identity can
-  never be repaired by a rebuild.
+  `scripts/check-published-payloads.sh` before the upload. It reads the report
+  and sends one `head-object` request per skipped identity, because such an
+  identity can never be repaired by a rebuild. A key that is missing or
+  unreadable fails the step; the key is a request parameter, so no response
+  decoding can confuse two keys.
+- **Signing key required.** Published identities come only from
+  signature-verified manifests, so the CLI refuses
+  `--skip-published-identities` without `--gpg-key`, and
+  `sysext.Generator.PublishedPackages` refuses to run without a signer. The
+  action refuses the input when `gpg-private-key` is empty. A repository that
+  was published unsigned therefore cannot use the mode: its manifests have no
+  signature to verify.
+- **Every candidate counts.** A regular input file whose base name ends in
+  `.raw`, `.raw.zst`, `.raw.xz` or `.raw.gz` must reach the scan as a sysext.
+  The scanner logs and drops a file whose detection fails (a zero-byte image
+  gives EOF), so the mode walks the input directory and refuses the run when
+  such a candidate was dropped. Otherwise a rebuilt extension could be skipped
+  silently.
 - **Empty input stays an error.** The action still fails when `packages-dir`
   holds no package at all; only a full skip of *built* sysexts is a clean
   no-op.
@@ -81,16 +98,15 @@ matching input. Both are off by default; without them nothing changes.
   in the action input description, and in `README.md`.
 - The signed-manifest read now gates publication, so a wrong or missing
   signature on a published manifest stops the nightly build instead of being
-  ignored. That is the same fail-closed behavior the merge already has.
+  ignored. That is the same fail-closed behavior the merge already has. An
+  unsigned repository cannot use the mode at all: there is no signature to
+  verify.
 - sysext only. Other formats need no new mode: for them `--skip-duplicates`
   already skips by identity (`utils.DetectConflicts`), and only sysext has the
   digest-conflict check.
-- An unsigned repository has no signature to verify. The strict parse and the
-  payload digest check still run, and the transfer file, signature presence
-  (none) and index must still match, so the read remains strict even though
-  nothing is cryptographically verified.
-- The skipped-payload check makes one extra listing call per run that skips
-  anything, and no call when the report is empty.
+- The skipped-payload check costs one `HEAD` request per skipped identity, and
+  no request when the report is empty. A bucket that returns an error for a
+  present object is reported as missing or unreadable; the run stays red.
 - Adoption order: Brian tags `v0.7.2` after this merges; then a separate snosi
   PR, owned by its maintainer, sets `skip-published-identities: true` on the
   `publish-to-r2` step and deletes `shared/sysext/publish/drop-published.sh`.

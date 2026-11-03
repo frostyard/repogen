@@ -8,39 +8,35 @@ import (
 	"testing"
 )
 
-// fakeAWSListObjects is a minimal stand-in for `aws s3api list-objects-v2` as
+// fakeAWSHeadObject is a minimal stand-in for `aws s3api head-object` as
 // scripts/check-published-payloads.sh calls it. It accepts only that one
-// command with the flags the script passes, prints the keys of
-// FAKE_AWS_KEYS_FILE that start with --prefix (or `None` when none match), and
-// fails on demand through FAKE_AWS_FAIL.
-const fakeAWSListObjects = `#!/usr/bin/env bash
+// command with the flags the script passes, succeeds when --key is in
+// FAKE_AWS_KEYS_FILE, and otherwise fails the way the real CLI fails for a
+// missing object. FAKE_AWS_FAIL makes every call fail.
+const fakeAWSHeadObject = `#!/usr/bin/env bash
 set -uo pipefail
 
 log() {
   printf '%s\n' "$*" >> "$FAKE_AWS_LOG"
 }
 
-if [[ ${1:-} != "s3api" || ${2:-} != "list-objects-v2" ]]; then
+if [[ ${1:-} != "s3api" || ${2:-} != "head-object" ]]; then
   echo "fake aws: unsupported command: ${*:-}" >&2
   exit 99
 fi
 shift 2
 
 bucket=""
-prefix=""
+key=""
 endpoint=""
-query=""
-output=""
 while (( $# > 0 )); do
   case "$1" in
-    --bucket|--prefix|--endpoint-url|--query|--output)
+    --bucket|--key|--endpoint-url)
       [[ $# -ge 2 ]] || { echo "fake aws: $1 needs a value" >&2; exit 99; }
       case "$1" in
         --bucket) bucket="$2" ;;
-        --prefix) prefix="$2" ;;
+        --key) key="$2" ;;
         --endpoint-url) endpoint="$2" ;;
-        --query) query="$2" ;;
-        --output) output="$2" ;;
       esac
       shift 2
       ;;
@@ -51,38 +47,26 @@ while (( $# > 0 )); do
   esac
 done
 
-if [[ -z "$bucket" || -z "$prefix" || -z "$endpoint" ]]; then
-  echo "fake aws: --bucket, --prefix and --endpoint-url are required" >&2
-  exit 99
-fi
-if [[ "$query" != 'Contents[].[Key]' ]]; then
-  echo "fake aws: unsupported query: $query" >&2
-  exit 99
-fi
-if [[ "$output" != "text" ]]; then
-  echo "fake aws: unsupported output: $output" >&2
+if [[ -z "$bucket" || -z "$key" || -z "$endpoint" ]]; then
+  echo "fake aws: --bucket, --key and --endpoint-url are required" >&2
   exit 99
 fi
 
-log "list-objects-v2 $bucket $prefix"
+log "head-object $bucket $key"
 
 if [[ -n ${FAKE_AWS_FAIL:-} ]]; then
-  echo "An error occurred (AccessDenied) when calling the ListObjectsV2 operation" >&2
-  exit 1
+  echo "An error occurred (AccessDenied) when calling the HeadObject operation" >&2
+  exit 254
 fi
 
-found=0
-while IFS= read -r key; do
-  [[ -n "$key" ]] || continue
-  if [[ "$key" == "$prefix"* ]]; then
-    printf '%s\n' "$key"
-    found=1
+while IFS= read -r known; do
+  if [[ "$known" == "$key" ]]; then
+    exit 0
   fi
 done < "${FAKE_AWS_KEYS_FILE:-/dev/null}"
 
-if (( found == 0 )); then
-  printf 'None\n'
-fi
+echo "An error occurred (404) when calling the HeadObject operation: Not Found" >&2
+exit 254
 `
 
 type publishedPayloadsEnv struct {
@@ -105,7 +89,7 @@ func newPublishedPayloadsEnv(t *testing.T, report, keys string) *publishedPayloa
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "aws"), []byte(fakeAWSListObjects), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "aws"), []byte(fakeAWSHeadObject), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,8 +141,8 @@ func (e *publishedPayloadsEnv) run() (string, error) {
 	return string(output), err
 }
 
-// listCalls returns the listing calls the fake aws served.
-func (e *publishedPayloadsEnv) listCalls() []string {
+// headCalls returns the head-object calls the fake aws served.
+func (e *publishedPayloadsEnv) headCalls() []string {
 	e.t.Helper()
 	data, err := os.ReadFile(e.logPath)
 	if err != nil {
@@ -190,8 +174,17 @@ func TestCheckPublishedPayloadsAcceptsPresentPayloads(t *testing.T) {
 	if !strings.Contains(output, "2 skipped identities have their payloads") {
 		t.Fatalf("check did not report both identities: %s", output)
 	}
-	if calls := env.listCalls(); len(calls) != 1 {
-		t.Fatalf("made %d listing calls, want exactly 1: %v", len(calls), calls)
+	calls := env.headCalls()
+	if len(calls) != 2 {
+		t.Fatalf("made %d head-object calls, want 1 per skipped identity: %v", len(calls), calls)
+	}
+	for index, key := range []string{
+		"ext/incus/incus_7.3_13_x86-64.raw",
+		"ext/chatgpt/chatgpt_1.2_13_x86-64.raw.zst",
+	} {
+		if !strings.Contains(calls[index], key) {
+			t.Fatalf("head-object call %d = %q, want key %q", index, calls[index], key)
+		}
 	}
 }
 
@@ -215,7 +208,7 @@ func TestCheckPublishedPayloadsRejectsMissingPayload(t *testing.T) {
 	}
 }
 
-func TestCheckPublishedPayloadsSkipsListingForEmptyReport(t *testing.T) {
+func TestCheckPublishedPayloadsSkipsAwsForEmptyReport(t *testing.T) {
 	env := newPublishedPayloadsEnv(t, "", "")
 
 	output, err := env.run()
@@ -225,37 +218,55 @@ func TestCheckPublishedPayloadsSkipsListingForEmptyReport(t *testing.T) {
 	if !strings.Contains(output, "no skipped identities") {
 		t.Fatalf("empty report output = %q", output)
 	}
-	if calls := env.listCalls(); len(calls) != 0 {
-		t.Fatalf("empty report made listing calls: %v", calls)
+	if calls := env.headCalls(); len(calls) != 0 {
+		t.Fatalf("empty report made head-object calls: %v", calls)
 	}
 }
 
-func TestCheckPublishedPayloadsReadsPlusAsSpace(t *testing.T) {
-	// The AWS CLI decodes keys with unquote_plus, so "1+7.3" comes back as
-	// "1 7.3". The report keeps the real object key.
+func TestCheckPublishedPayloadsRejectsPlusForSpaceKey(t *testing.T) {
+	// The key goes as a request parameter, so the report key "1+7.3" and a
+	// bucket object named "1 7.3" are two different keys. The check must not
+	// treat the space form as the same object.
 	report := "ext/incus/incus_1+7.3_13_x86-64.raw\n"
 	keys := "ext/incus/incus_1 7.3_13_x86-64.raw\n"
 	env := newPublishedPayloadsEnv(t, report, keys)
 
 	output, err := env.run()
-	if err != nil {
-		t.Fatalf("a key with a plus sign was not matched: %v\n%s", err, output)
+	if err == nil {
+		t.Fatalf("a space-form key satisfied a plus-form report line: %s", output)
 	}
-	if !strings.Contains(output, "1 skipped identities have their payloads") {
-		t.Fatalf("check did not report the identity: %s", output)
+	if !strings.Contains(output, "::error::ext/incus/incus_1+7.3_13_x86-64.raw") {
+		t.Fatalf("failure output does not name the plus-form key: %s", output)
+	}
+	if calls := env.headCalls(); len(calls) != 1 || !strings.Contains(calls[0], "incus_1+7.3") {
+		t.Fatalf("head-object calls = %v, want the raw report key", calls)
 	}
 }
 
-func TestCheckPublishedPayloadsFailsOnListingError(t *testing.T) {
+func TestCheckPublishedPayloadsAcceptsPlusKeyThatExists(t *testing.T) {
+	report := "ext/incus/incus_1+7.3_13_x86-64.raw\n"
+	keys := "ext/incus/incus_1+7.3_13_x86-64.raw\n"
+	env := newPublishedPayloadsEnv(t, report, keys)
+
+	output, err := env.run()
+	if err != nil {
+		t.Fatalf("a plus-form key that exists was rejected: %v\n%s", err, output)
+	}
+}
+
+func TestCheckPublishedPayloadsReportsHeadObjectError(t *testing.T) {
 	env := newPublishedPayloadsEnv(t, "ext/incus/incus_7.3_13_x86-64.raw\n", "ext/incus/incus_7.3_13_x86-64.raw\n")
 	env.env = append(env.env, "FAKE_AWS_FAIL=1")
 
 	output, err := env.run()
 	if err == nil {
-		t.Fatalf("listing failure unexpectedly passed: %s", output)
+		t.Fatalf("head-object failure unexpectedly passed: %s", output)
 	}
-	if !strings.Contains(output, "could not list") {
-		t.Fatalf("listing failure output = %q", output)
+	if !strings.Contains(output, "missing or unreadable") {
+		t.Fatalf("head-object failure output = %q", output)
+	}
+	if !strings.Contains(output, "ext/incus/incus_7.3_13_x86-64.raw") {
+		t.Fatalf("head-object failure output does not name the key: %q", output)
 	}
 }
 
@@ -269,9 +280,9 @@ func TestCheckPublishedPayloadsAppliesPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prefixed payload was not matched: %v\n%s", err, output)
 	}
-	calls := env.listCalls()
-	if len(calls) != 1 || !strings.Contains(calls[0], " prefix/ext/") {
-		t.Fatalf("listing was not scoped to the prefixed keys: %v", calls)
+	calls := env.headCalls()
+	if len(calls) != 1 || !strings.Contains(calls[0], " prefix/ext/incus/") {
+		t.Fatalf("head-object call was not scoped to the prefixed key: %v", calls)
 	}
 
 	missing := newPublishedPayloadsEnv(t, report, "prefix/ext/incus/incus_7.4_13_x86-64.raw\n")
@@ -298,8 +309,8 @@ func TestCheckPublishedPayloadsRequiresEnvironment(t *testing.T) {
 			if !strings.Contains(output, "::error::") || !strings.Contains(output, name) {
 				t.Fatalf("missing %s output = %q", name, output)
 			}
-			if calls := env.listCalls(); len(calls) != 0 {
-				t.Fatalf("missing %s still made listing calls: %v", name, calls)
+			if calls := env.headCalls(); len(calls) != 0 {
+				t.Fatalf("missing %s still made head-object calls: %v", name, calls)
 			}
 		})
 	}
@@ -404,4 +415,49 @@ func contractInput(t *testing.T, action, name string) string {
 	}
 
 	return strings.Join(block, "\n")
+}
+
+func TestPublishActionRequiresGPGKeyForSkipPublishedIdentities(t *testing.T) {
+	root := repositoryRoot(t)
+	action := readContractFile(t, filepath.Join(root, ".github", "actions", "publish-to-r2", "action.yml"))
+
+	validate := contractStep(t, action, "Validate inputs")
+	if !strings.Contains(validate, "HAS_GPG_KEY: ${{ inputs.gpg-private-key != '' }}") {
+		t.Fatalf("validate step does not pass the key presence through env:\n%s", validate)
+	}
+	if !strings.Contains(validate, `"$HAS_GPG_KEY" != "true"`) {
+		t.Fatalf("validate step does not refuse the new input without a GPG key:\n%s", validate)
+	}
+	if !strings.Contains(validate, "signature-verified") {
+		t.Fatalf("validate step does not explain why a key is required:\n%s", validate)
+	}
+
+	// The key must never reach the script environment, only its presence.
+	run := validate[strings.Index(validate, "run: |"):]
+	if strings.Contains(run, "${{ inputs.gpg-private-key }}") || strings.Contains(run, "GPG_PRIVATE_KEY") {
+		t.Fatalf("validate step puts the GPG key in its script:\n%s", run)
+	}
+}
+
+func TestPublishActionRefusesRepoWithPayloadsBeforeRepogen(t *testing.T) {
+	root := repositoryRoot(t)
+	action := readContractFile(t, filepath.Join(root, ".github", "actions", "publish-to-r2", "action.yml"))
+
+	run := contractStep(t, action, "Run repogen")
+	preflight := strings.Index(run, "needs a ./repo without payloads")
+	if preflight < 0 {
+		t.Fatalf("run-repogen step has no payload preflight for the new mode:\n%s", run)
+	}
+	repogenCall := strings.Index(run, "/tmp/repogen")
+	if repogenCall < 0 || preflight > repogenCall {
+		t.Fatalf("payload preflight (index %d) does not come before the repogen call (index %d)", preflight, repogenCall)
+	}
+	if !strings.Contains(run, `if [[ "$SKIP_PUBLISHED" == "true" ]]`) {
+		t.Fatalf("payload preflight is not limited to the new mode:\n%s", run)
+	}
+	for _, wanted := range []string{"*.raw", "*.raw.zst", "*.raw.xz", "*.raw.gz"} {
+		if !strings.Contains(run, `-name "`+wanted+`"`) {
+			t.Fatalf("payload preflight does not count %s:\n%s", wanted, run)
+		}
+	}
 }

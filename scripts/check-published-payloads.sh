@@ -18,7 +18,8 @@
 #   PREFIX             optional, the key prefix (repo-prefix)
 #   R2_ENDPOINT        required, e.g. https://<account>.r2.cloudflarestorage.com
 #
-# It makes exactly one listing call and no request per object.
+# It makes one HEAD request per skipped identity and no listing call: the key is
+# a request parameter, so no response decoding can confuse two keys.
 
 set -euo pipefail
 
@@ -50,34 +51,6 @@ if [[ ! -s "$SKIPPED_REPORT" ]]; then
   exit 0
 fi
 
-# Payload keys live under <prefix>ext/.
-KEY_PREFIX="${PREFIX:+$PREFIX/}ext/"
-
-# One listing call for the whole report. `--output text` prints one key per
-# line; an empty result prints `None`.
-listing=$(aws s3api list-objects-v2 \
-  --bucket "$BUCKET" \
-  --prefix "$KEY_PREFIX" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --query 'Contents[].[Key]' \
-  --output text) || {
-  echo "::error::could not list s3://$BUCKET/$KEY_PREFIX with $R2_ENDPOINT"
-  exit 1
-}
-
-# The AWS CLI decodes keys with unquote_plus, so a `+` in an object key comes
-# back as a space. Compare both sides with every `+` read as a space; payload
-# names never contain spaces.
-listing_with_spaces="${listing//+/ }"
-declare -A present=()
-if [[ "$listing_with_spaces" != "None" ]]; then
-  while IFS= read -r key; do
-    key="${key%$'\r'}"
-    [[ -n "$key" ]] || continue
-    present["$key"]=1
-  done <<< "$listing_with_spaces"
-fi
-
 skipped_count=0
 missing_count=0
 while IFS= read -r line; do
@@ -85,14 +58,20 @@ while IFS= read -r line; do
   [[ -n "$line" ]] || continue
   skipped_count=$((skipped_count + 1))
   key="${PREFIX:+$PREFIX/}$line"
-  if [[ -z "${present[${key//+/ }]:-}" ]]; then
-    echo "::error::$key is listed in the signature-verified SHA256SUMS but its payload object is missing; a rebuild cannot republish that identity; bump the version or revision, or repair the bucket"
+  # A non-zero exit means the object is missing or unreadable. Every other key
+  # is still checked, so one run reports every broken identity. stdin is
+  # /dev/null so the command cannot consume the report this loop reads.
+  if ! aws s3api head-object \
+    --bucket "$BUCKET" \
+    --key "$key" \
+    --endpoint-url "$R2_ENDPOINT" </dev/null >/dev/null; then
+    echo "::error::$key is listed in the signature-verified SHA256SUMS but its payload object is missing or unreadable; a rebuild cannot republish that identity; bump the version or revision, or repair the bucket"
     missing_count=$((missing_count + 1))
   fi
 done < "$SKIPPED_REPORT"
 
 if (( missing_count > 0 )); then
-  echo "::error::$missing_count of $skipped_count skipped identities have no payload object in s3://$BUCKET/$KEY_PREFIX"
+  echo "::error::$missing_count of $skipped_count skipped identities have no readable payload object in s3://$BUCKET/${PREFIX:+$PREFIX/}"
   exit 1
 fi
 

@@ -414,3 +414,78 @@ func TestGenerateSkipPublishedIdentitiesFailsOnUnparsableSysext(t *testing.T) {
 		t.Fatalf("skipped report was written although the run failed: %v", statErr)
 	}
 }
+
+func TestGenerateSkipPublishedIdentitiesRequiresSigningKey(t *testing.T) {
+	fixture := newSkipPublishedFixture(t)
+	fixture.write("incus_7.3_13_x86-64.raw", "v1")
+
+	cmd := NewGenerateCmd()
+	cmd.SetArgs([]string{
+		"--input-dir", fixture.inputDir,
+		"--output-dir", fixture.outputDir,
+		"--base-url", "https://example.com/repo",
+		"--incremental",
+		"--skip-published-identities",
+	})
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "requires --gpg-key") {
+		t.Fatalf("missing --gpg-key error = %v, want a signing-key requirement", err)
+	}
+	if _, statErr := os.Stat(fixture.extDir()); !os.IsNotExist(statErr) {
+		t.Fatalf("refused run wrote output: %v", statErr)
+	}
+}
+
+func TestGenerateSkipPublishedIdentitiesRejectsUnsignedPublishedRepo(t *testing.T) {
+	fixture := newSkipPublishedFixture(t)
+	imagePath := fixture.write("incus_7.3_13_x86-64.raw", "v1")
+
+	// The published repository has no signatures: it was generated without a key.
+	unsigned := NewGenerateCmd()
+	unsigned.SetArgs([]string{
+		"--input-dir", fixture.inputDir,
+		"--output-dir", fixture.outputDir,
+		"--base-url", "https://example.com/repo",
+	})
+	if err := unsigned.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("unsigned generation failed: %v", err)
+	}
+	before := snapshotGenerateTree(t, fixture.extDir())
+	reportPath := filepath.Join(t.TempDir(), "skipped.txt")
+
+	if err := os.WriteFile(imagePath, []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := fixture.run("--incremental", "--skip-published-identities", "--skipped-report", reportPath)
+	if err == nil || !strings.Contains(err.Error(), "signature-verified") {
+		t.Fatalf("unsigned published repository error = %v, want a signature-verified read failure", err)
+	}
+	assertGenerateTree(t, fixture.extDir(), before)
+	if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {
+		t.Fatalf("skipped report was written although the run failed: %v", statErr)
+	}
+}
+
+func TestGenerateSkipPublishedIdentitiesRejectsUndetectedCandidate(t *testing.T) {
+	fixture := newSkipPublishedFixture(t)
+	imagePath := fixture.write("incus_7.3_13_x86-64.raw", "v1")
+	fixture.mustRun()
+	before := snapshotGenerateTree(t, fixture.extDir())
+	reportPath := filepath.Join(t.TempDir(), "skipped.txt")
+
+	if err := os.WriteFile(imagePath, []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A zero-byte file ends in .raw, so it is a sysext candidate, but magic byte
+	// detection fails with EOF and the scanner drops it.
+	fixture.write("incus_7.4_13_x86-64.raw", "")
+
+	err := fixture.run("--incremental", "--skip-published-identities", "--skipped-report", reportPath)
+	if err == nil || !strings.Contains(err.Error(), "was not detected as a sysext") {
+		t.Fatalf("undetected candidate error = %v, want a detection refusal", err)
+	}
+	assertGenerateTree(t, fixture.extDir(), before)
+	if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {
+		t.Fatalf("skipped report was written although the run failed: %v", statErr)
+	}
+}

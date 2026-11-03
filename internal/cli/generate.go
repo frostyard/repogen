@@ -108,6 +108,15 @@ func validateConfig(config *models.RepositoryConfig) error {
 		}
 	}
 
+	// Published identities are read only from signature-verified manifests, so
+	// the mode cannot work without a key to verify them.
+	if config.SkipPublishedIdentities && config.GPGKeyPath == "" {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--skip-published-identities requires --gpg-key: published identities are read only from signature-verified SHA256SUMS"),
+		}
+	}
+
 	if config.SkippedReportPath != "" && !config.SkipPublishedIdentities {
 		return &models.RepoGenError{
 			Type: models.ErrInvalidConfig,
@@ -174,6 +183,19 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		return &models.RepoGenError{
 			Type: models.ErrFileOp,
 			Err:  fmt.Errorf("failed to scan directory: %w", err),
+		}
+	}
+
+	// Scan logs and drops a file whose type detection fails (a zero-byte .raw
+	// gives EOF), which would make the identity skip silently miss a rebuilt
+	// extension. Checked before the empty-input return, because such a file is
+	// the only input here.
+	if config.SkipPublishedIdentities {
+		if err := validateSysextCandidates(config.InputDir, scannedPackages); err != nil {
+			return &models.RepoGenError{
+				Type: models.ErrInvalidConfig,
+				Err:  err,
+			}
 		}
 	}
 
@@ -501,6 +523,41 @@ func writeSkippedReport(reportPath string, lines []string) error {
 	}
 
 	return nil
+}
+
+// validateSysextCandidates reports an error when the scanner dropped a sysext
+// candidate. It walks the input directory the same way
+// internal/scanner/filesystem.go does and requires every regular file whose
+// base name ends in .raw, .raw.zst, .raw.xz or .raw.gz to be present in scanned
+// as a sysext, so a file that detection could not classify cannot be skipped
+// silently.
+func validateSysextCandidates(inputDir string, scanned []scanner.ScannedPackage) error {
+	detected := make(map[string]struct{}, len(scanned))
+	for _, pkg := range scanned {
+		if pkg.Type == scanner.TypeSysext {
+			detected[filepath.Clean(pkg.Path)] = struct{}{}
+		}
+	}
+
+	return filepath.Walk(inputDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk input directory for sysext candidates: %w", walkErr)
+		}
+		if info.IsDir() || !info.Mode().IsRegular() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if !strings.HasSuffix(base, ".raw") &&
+			!strings.HasSuffix(base, ".raw.zst") &&
+			!strings.HasSuffix(base, ".raw.xz") &&
+			!strings.HasSuffix(base, ".raw.gz") {
+			return nil
+		}
+		if _, ok := detected[filepath.Clean(path)]; !ok {
+			return fmt.Errorf("--skip-published-identities: sysext candidate %s was not detected as a sysext", path)
+		}
+		return nil
+	})
 }
 
 // hasPacmanPackages checks if input directory contains Pacman packages

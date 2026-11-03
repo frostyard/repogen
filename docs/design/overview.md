@@ -158,12 +158,15 @@ removing old ones. The workflow:
 For sysext, `--skip-published-identities` runs before the conflict checks. It
 reads the published identities with the same strict, signature-verified read
 the merge uses (`PublishedPackages`: no `<output>/ext` means a first publish;
-any read error fails the run), drops each incoming package whose identity
+any read error fails the run, and it refuses to run without a signer), drops
+each incoming package whose identity
 `name:version:OSVersion:arch` is already published, and writes the published
 payload path of each skipped package to `--skipped-report`. The conflict
 checks then see only the kept packages, so a rebuilt image with other bytes is
 not a digest conflict. When nothing is left, the run succeeds without writing
-output or an HTML index. **Known gap:** a content change without a version or
+output or an HTML index. A regular input file with a sysext suffix that the
+scanner could not detect fails the run, so a rebuilt extension is never skipped
+silently. **Known gap:** a content change without a version or
 revision bump keeps its identity and is not republished
 ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
 
@@ -208,7 +211,7 @@ All configuration is passed via CLI flags to `models.RepositoryConfig`:
 | `--base-url` | | Base URL for Homebrew bottles and sysext transfers (required for sysext) |
 | `--incremental` | `false` | Merge with existing repository |
 | `--skip-duplicates` | `false` | Skip conflicting packages in incremental mode |
-| `--skip-published-identities` | `false` | sysext only, requires `--incremental`: skip each package whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes or compression suffix |
+| `--skip-published-identities` | `false` | sysext only, requires `--incremental` and `--gpg-key`: skip each package whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes or compression suffix |
 | `--skipped-report` | | With `--skip-published-identities`: write the published payload path (`ext/NAME/FILE`) of each skipped package, one per line |
 | `--html-index` | `false` | Generate HTML directory index pages |
 | `-v` / `--verbose` | `false` | Debug-level logging |

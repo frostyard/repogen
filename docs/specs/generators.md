@@ -239,8 +239,8 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   coexist even when every other field matches. `--skip-duplicates` skips only
   an exact logical identity with the same SHA-256; changed or missing digest
   evidence fails closed.
-- **`--skip-published-identities`** (sysext only, requires `--incremental`,
-  default off) skips each incoming sysext whose identity
+- **`--skip-published-identities`** (sysext only, requires `--incremental`
+  and `--gpg-key`, default off) skips each incoming sysext whose identity
   `name:version:OSVersion:architecture` is already listed in the
   signature-verified `SHA256SUMS`, whatever its bytes and whatever its
   compression suffix. Published identities come from the same strict read the
@@ -248,7 +248,9 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   exist (first publish); otherwise every manifest is parsed strictly, every
   present payload is checked against its digest, every `SHA256SUMS.gpg` is
   verified with the configured signer, and the transfer files and index are
-  checked. **Any error fails the run**; there is no lenient fallback. The
+  checked. **Any error fails the run**; there is no lenient fallback, and
+  `PublishedPackages` refuses to run without a signer. A repository published
+  without a signature therefore cannot use the mode. The
   conflict checks run on the kept packages only. When every identity was
   skipped, the run writes the report, logs that nothing is published, and
   succeeds without writing output or an HTML index.
@@ -256,11 +258,13 @@ reconstructs package metadata from bottle URLs and SHA256 values.
   the published payload path of each skipped sysext, `ext/NAME/FILE` with
   forward slashes, sorted, one per line, each line ending in a newline. The
   file is empty when nothing was skipped, and it is not written at all when the
-  run fails. `--skip-published-identities` without `--incremental`, and
-  `--skipped-report` without `--skip-published-identities`, are configuration
-  errors, as is any non-sysext package in the input while the flag is on. A
+  run fails. `--skip-published-identities` without `--incremental`, without
+  `--gpg-key`, or with any non-sysext package in the input, is a configuration
+  error, as is `--skipped-report` without `--skip-published-identities`. A
   scanned sysext that fails to parse fails the run in this mode (default mode
-  only warns and drops it).
+  only warns and drops it), and so does a regular input file whose base name
+  ends in `.raw`, `.raw.zst`, `.raw.xz` or `.raw.gz` that the scanner did not
+  return as a sysext (detection failed, for example on a zero-byte image).
   **Known gap:** a content change without a version or revision bump keeps its
   identity and is therefore not republished
   ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
@@ -307,9 +311,12 @@ lists a payload that is not in the bucket
 
 With `skip-published-identities: true` the action passes
 `--skip-published-identities` and a `--skipped-report` file, then runs
-`scripts/check-published-payloads.sh` before any upload: it reads the report,
-lists `<prefix>ext/` once, and fails when any skipped identity's payload object
-is missing, because a rebuild cannot republish that identity. When the skip
+`scripts/check-published-payloads.sh` before any upload: it reads the report
+and sends one `head-object` request per skipped identity to `<prefix>ext/`, and
+fails when any such payload object is missing or unreadable, because a rebuild
+cannot republish that identity. The action also refuses the input without
+`gpg-private-key`, and refuses a `./repo` that still holds a payload from an
+earlier step. When the skip
 left no payload, the action uploads nothing, purges nothing, and reports
 `published=false`
 ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).

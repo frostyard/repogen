@@ -107,7 +107,7 @@ inputs:
     required: false
     default: 'false'
   skip-published-identities:
-    description: 'sysext only: skip each built sysext whose identity (name, version, OSVersion, arch) the signature-verified SHA256SUMS already lists, whatever its bytes; when nothing is left the action publishes nothing and succeeds. Known gap: a content change without a version or revision bump is not republished'
+    description: 'sysext only: skip each built sysext whose identity (name, version, OSVersion, arch) the signature-verified SHA256SUMS already lists, whatever its bytes; when nothing is left the action publishes nothing and succeeds. Requires gpg-private-key and a ./repo without payloads. Known gap: a content change without a version or revision bump is not republished'
     required: false
     default: 'false'
 
@@ -150,6 +150,7 @@ runs:
         SUITE: ${{ inputs.suite }}
         PACKAGES_DIR: ${{ inputs.packages-dir }}
         SKIP_PUBLISHED: ${{ inputs.skip-published-identities }}
+        HAS_GPG_KEY: ${{ inputs.gpg-private-key != '' }}
       run: |
         set -e
         echo "::group::Validating inputs"
@@ -187,6 +188,14 @@ runs:
         # no other package type can use it (ADR-0018).
         if [[ "$SKIP_PUBLISHED" == "true" && "$PACKAGE_TYPE" != "sysext" ]]; then
           echo "::error::skip-published-identities supports only package-type sysext (got '$PACKAGE_TYPE')"
+          exit 1
+        fi
+
+        # Published identities come only from signature-verified manifests, so
+        # the mode needs a signing key. The key itself is never put in this
+        # step's environment; only its presence is.
+        if [[ "$SKIP_PUBLISHED" == "true" && "$HAS_GPG_KEY" != "true" ]]; then
+          echo "::error::skip-published-identities requires gpg-private-key: published identities are read only from signature-verified SHA256SUMS"
           exit 1
         fi
 
@@ -483,6 +492,21 @@ runs:
           REPOGEN_ARGS+=("--skip-published-identities")
           REPOGEN_ARGS+=("--skipped-report" "$SKIPPED_REPORT_PATH")
           echo "SKIPPED_REPORT=$SKIPPED_REPORT_PATH" >> "$GITHUB_ENV"
+
+          # In this mode packages-added counts the payloads in ./repo, so a
+          # payload left by an earlier action call in the same job would be
+          # counted as added by this run. Refuse that tree.
+          EXISTING_PAYLOADS=$(find ./repo -type f \( \
+            -name "*.raw" -o \
+            -name "*.raw.zst" -o \
+            -name "*.raw.xz" -o \
+            -name "*.raw.gz" \
+          \) 2>/dev/null | wc -l)
+          EXISTING_PAYLOADS=$((EXISTING_PAYLOADS))
+          if [[ "$EXISTING_PAYLOADS" -gt 0 ]]; then
+            echo "::error::skip-published-identities needs a ./repo without payloads; found $EXISTING_PAYLOADS from an earlier step"
+            exit 1
+          fi
         fi
 
         # Add html-index if enabled
@@ -577,6 +601,8 @@ runs:
 
         # The skip works from metadata, so a payload that is gone turns into a
         # manifest that points at nothing; refuse before any upload (ADR-0018).
+        # One HEAD request per skipped identity: the key is a request
+        # parameter, so no response decoding can confuse two keys.
         "$GITHUB_ACTION_PATH/../../../scripts/check-published-payloads.sh"
 
         echo "::endgroup::"

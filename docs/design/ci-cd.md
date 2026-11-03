@@ -94,7 +94,10 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    whatever the declared type (repogen generates every detected type), and
    requires `codename` for `deb` (there is no default). It then checks package type, required flags (base-url for
    sysext, repo-name for pacman), directory existence, and refuses
-   `skip-published-identities: true` unless `package-type` is `sysext`.
+   `skip-published-identities: true` unless `package-type` is `sysext` and
+   `gpg-private-key` is set (published identities are read only from
+   signature-verified manifests; the step sees the key's presence, never the
+   key).
    `rpm` is not a valid
    package type ([ADR-0016](../adr/0016-remove-rpm-generation.md)).
 2. **Install repogen** — requires an exact tag and commit, uses a fixed GitHub
@@ -115,17 +118,22 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    configuration. With `skip-published-identities: true` it also passes
    `--skip-published-identities` and `--skipped-report
    "$RUNNER_TEMP/repogen-skipped.txt"`, and exports `SKIPPED_REPORT`. An
-   empty `packages-dir` stays an error. `packages-added` counts the payloads
-   `repogen` added under `./repo` (the metadata sync brings no payloads), so a
+   empty `packages-dir` stays an error. Before repogen runs, the step counts
+   the payloads (`*.raw`, `*.raw.zst`, `*.raw.xz`, `*.raw.gz`) that are
+   already under `./repo` and refuses the run when there are any, because
+   `packages-added` below counts the payloads in `./repo` and a payload left by
+   an earlier step in the same job would be counted as added. After repogen
+   runs, `packages-added` is that payload count, so a
    run that skipped every built identity writes `packages-added=0` and
    `published=false` with a `::notice::`.
 7. **Check skipped identities have their payloads** — runs
    `scripts/check-published-payloads.sh` when `skip-published-identities` is
-   `true`. It makes one `ListObjectsV2` call under `<prefix>ext/` and fails
-   when a payload named in the report is not in the bucket, because the
+   `true`. It sends one `head-object` request per skipped identity and fails
+   when a payload named in the report is missing or unreadable, because the
    rebuild cannot repair that identity
    ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
-   An empty report makes no call.
+   The key is a request parameter, so no response decoding can confuse two
+   keys. An empty report makes no request.
 8. **Upload to R2** — gated on `steps.run-repogen.outputs.published == 'true'`,
    so a fully skipped run uploads nothing. It runs `scripts/upload-to-r2.sh`,
    which never uses
@@ -184,7 +192,7 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 | `suite` | | Defaults to codename; `stable` refused |
 | `repo-prefix` | | Path prefix in R2 bucket |
 | `skip-duplicates` | `false` | Useful for nightly builds |
-| `skip-published-identities` | `false` | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Known gap: a content change without a version or revision bump is not republished ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)) |
+| `skip-published-identities` | `false` | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Requires `gpg-private-key` and a `./repo` without payloads. Known gap: a content change without a version or revision bump is not republished ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)) |
 | `html-index` | `true` | Generates browsable directory pages |
 | `purge-cache` | `false` | Requires `cloudflare-zone` and `cloudflare-api-token` |
 
