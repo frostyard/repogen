@@ -28,7 +28,9 @@
 package baseline
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -919,28 +921,9 @@ func TestRepositoryBaselineB8BumpStopsOnFailure(t *testing.T) {
 		t.Skip("git is not on PATH")
 	}
 	root := repoRoot(t)
-	baseEnv := baselineEnv(t.TempDir())
+	home := t.TempDir()
 	svuPin := svuPinFromMise(t, root)
-
-	fakeSVU := filepath.Join(t.TempDir(), "svu")
-	const script = `#!/bin/sh
-case "$1" in
---version)
-	echo "GitVersion:    $FAKE_SVU_VERSION"
-	;;
-next)
-	if [ "$FAKE_SVU_FAIL" = 1 ]; then
-		echo "svu: the tag list is unreadable" >&2
-		exit 1
-	fi
-	echo "$FAKE_SVU_NEXT"
-	;;
-esac
-exit 0
-`
-	if err := os.WriteFile(fakeSVU, []byte(script), 0o755); err != nil {
-		t.Fatalf("write the fake svu: %v", err)
-	}
+	fakeSVU := newFakeSVU(t)
 
 	cases := []struct {
 		name      string
@@ -958,11 +941,11 @@ exit 0
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := newBumpFixture(t, root, baseEnv)
+			dir, dirEnv := newBumpFixture(t, root, home)
 			if tc.preTag != "" {
-				mustRun(t, dir, baseEnv, "git", "tag", "-a", tc.preTag, "-m", "pre-existing tag")
+				mustRun(t, dir, dirEnv, "git", "tag", "-a", tc.preTag, "-m", "pre-existing tag")
 			}
-			env := append(append([]string{}, baseEnv...),
+			env := append(append([]string{}, dirEnv...),
 				"FAKE_SVU_VERSION="+svuPin,
 				"FAKE_SVU_NEXT="+tc.next,
 				"FAKE_SVU_FAIL="+tc.fail,
@@ -975,7 +958,7 @@ exit 0
 				if !strings.Contains(out, "tagged "+tc.wantTag) {
 					t.Errorf("the run must report tagged %s:\n%s", tc.wantTag, out)
 				}
-				if !tagExists(t, dir, baseEnv, tc.wantTag) {
+				if !tagExists(t, dir, dirEnv, tc.wantTag) {
 					t.Errorf("tag %s was not created", tc.wantTag)
 				}
 				return
@@ -986,20 +969,167 @@ exit 0
 			if err == nil {
 				t.Fatalf("make bump must fail here:\n%s", out)
 			}
-			if tc.absentTag != "" && tagExists(t, dir, baseEnv, tc.absentTag) {
+			if tc.absentTag != "" && tagExists(t, dir, dirEnv, tc.absentTag) {
 				t.Errorf("tag %s must not exist", tc.absentTag)
 			}
 		})
 	}
 }
 
-// baselineEnv returns the environment a bump fixture runs with: a private
-// HOME and no system git configuration.
-func baselineEnv(home string) []string {
-	return append(os.Environ(),
+// TestBumpFixtureIgnoresInheritedGitEnvironment proves a bump fixture cannot be
+// redirected: with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE pointing at a
+// decoy repository, the fixture still commits and tags in its own directory,
+// and the decoy's configuration, HEAD, tags and index stay byte-identical.
+func TestBumpFixtureIgnoresInheritedGitEnvironment(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("make is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	root := repoRoot(t)
+	home := t.TempDir()
+	svuPin := svuPinFromMise(t, root)
+
+	// The decoy: the repository an inherited environment would reach.
+	decoy := t.TempDir()
+	decoyEnv := baselineEnv(t, home, filepath.Dir(decoy))
+	mustRun(t, decoy, decoyEnv, "git", "init", "-q")
+	mustRun(t, decoy, decoyEnv, "git", "config", "core.hooksPath", "/dev/null")
+	mustRun(t, decoy, decoyEnv, "git", "config", "user.name", "Repogen Decoy")
+	mustRun(t, decoy, decoyEnv, "git", "config", "user.email", "decoy@example.invalid")
+	mustRun(t, decoy, decoyEnv, "git", "config", "commit.gpgsign", "false")
+	mustRun(t, decoy, decoyEnv, "git", "config", "tag.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(decoy, "decoy.txt"), []byte("decoy\n"), 0o644); err != nil {
+		t.Fatalf("write the decoy file: %v", err)
+	}
+	mustRun(t, decoy, decoyEnv, "git", "add", "decoy.txt")
+	mustRun(t, decoy, decoyEnv, "git", "commit", "-q", "-m", "decoy")
+
+	before := decoyState(t, decoy, decoyEnv)
+
+	// Poison this process for the rest of the test.
+	t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+	t.Setenv("GIT_WORK_TREE", decoy)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(decoy, ".git", "index"))
+
+	dir, dirEnv := newBumpFixture(t, root, home)
+	env := append(append([]string{}, dirEnv...),
+		"FAKE_SVU_VERSION="+svuPin,
+		"FAKE_SVU_NEXT=v0.0.1",
+		"FAKE_SVU_FAIL=",
+	)
+	out, err := runMakeBump(t, dir, env, newFakeSVU(t))
+	if err != nil {
+		t.Fatalf("make bump failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "tagged v0.0.1") {
+		t.Errorf("the fixture must tag v0.0.1:\n%s", out)
+	}
+	if !tagExists(t, dir, dirEnv, "v0.0.1") {
+		t.Error("the fixture repository holds no v0.0.1 tag")
+	}
+
+	after := decoyState(t, decoy, baselineEnv(t, home, filepath.Dir(decoy)))
+	if before != after {
+		t.Errorf("the decoy repository changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// decoyState summarises a repository: its local configuration, its HEAD, its
+// tags and a digest of its index.
+func decoyState(t *testing.T, dir string, env []string) string {
+	t.Helper()
+	config := mustCapture(t, dir, env, "git", "config", "--local", "--list")
+	head := mustCapture(t, dir, env, "git", "rev-parse", "HEAD")
+	tags := mustCapture(t, dir, env, "git", "tag", "-l")
+	index, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
+	if err != nil {
+		t.Fatalf("read the decoy index: %v", err)
+	}
+	return fmt.Sprintf("config:\n%s\nHEAD: %s\ntags:\n%s\nindex: %x", config, head, tags, sha256.Sum256(index))
+}
+
+// mustCapture runs one command and returns its trimmed output.
+func mustCapture(t *testing.T, dir string, env []string, name string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// newFakeSVU writes an svu stand-in that reports the pinned version and, for
+// `next`, the version in FAKE_SVU_NEXT, or fails when FAKE_SVU_FAIL is 1.
+func newFakeSVU(t *testing.T) string {
+	t.Helper()
+	const script = `#!/bin/sh
+case "$1" in
+--version)
+	echo "GitVersion:    $FAKE_SVU_VERSION"
+	;;
+next)
+	if [ "$FAKE_SVU_FAIL" = 1 ]; then
+		echo "svu: the tag list is unreadable" >&2
+		exit 1
+	fi
+	echo "$FAKE_SVU_NEXT"
+	;;
+esac
+exit 0
+`
+	fake := filepath.Join(t.TempDir(), "svu")
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatalf("write the fake svu: %v", err)
+	}
+	return fake
+}
+
+// baselineEnv returns the environment a bump fixture runs with.
+//
+// It copies os.Environ() without every GIT_* variable and without MAKEFLAGS,
+// MFLAGS and MAKELEVEL. An inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
+// GIT_OBJECT_DIRECTORY, GIT_COMMON_DIR or GIT_CONFIG* would otherwise send the
+// fixture's git commands to another repository. It then adds a private HOME
+// with an empty global git configuration, no system configuration, no terminal
+// prompt, and a ceiling directory above the fixture, so git cannot walk up out
+// of the fixture either.
+func baselineEnv(t *testing.T, home, ceiling string) []string {
+	t.Helper()
+
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("create the fixture home: %v", err)
+	}
+	globalConfig := filepath.Join(home, ".gitconfig")
+	if err := os.WriteFile(globalConfig, nil, 0o644); err != nil {
+		t.Fatalf("create the empty global git config: %v", err)
+	}
+
+	env := make([]string, 0, len(os.Environ())+6)
+	for _, entry := range os.Environ() {
+		name, _, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(name, "GIT_"):
+			continue
+		case name == "MAKEFLAGS", name == "MFLAGS", name == "MAKELEVEL":
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env,
 		"HOME="+home,
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL="+globalConfig,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CEILING_DIRECTORIES="+ceiling,
 	)
 }
 
@@ -1019,9 +1149,10 @@ func svuPinFromMise(t *testing.T, root string) string {
 
 // newBumpFixture makes a git repository that holds a copy of the real Makefile
 // and mise.toml, committed, with a clean working tree.
-func newBumpFixture(t *testing.T, root string, env []string) string {
+func newBumpFixture(t *testing.T, root, home string) (string, []string) {
 	t.Helper()
 	dir := t.TempDir()
+	env := baselineEnv(t, home, filepath.Dir(dir))
 	for _, name := range []string{"Makefile", "mise.toml"} {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
@@ -1032,13 +1163,14 @@ func newBumpFixture(t *testing.T, root string, env []string) string {
 		}
 	}
 	mustRun(t, dir, env, "git", "init", "-q")
+	mustRun(t, dir, env, "git", "config", "core.hooksPath", "/dev/null")
 	mustRun(t, dir, env, "git", "config", "user.name", "Repogen Baseline Fixture")
 	mustRun(t, dir, env, "git", "config", "user.email", "baseline@example.invalid")
 	mustRun(t, dir, env, "git", "config", "commit.gpgsign", "false")
 	mustRun(t, dir, env, "git", "config", "tag.gpgsign", "false")
 	mustRun(t, dir, env, "git", "add", "Makefile", "mise.toml")
 	mustRun(t, dir, env, "git", "commit", "-q", "-m", "bump fixture")
-	return dir
+	return dir, env
 }
 
 // mustRun runs one command and fails the test when it fails.
