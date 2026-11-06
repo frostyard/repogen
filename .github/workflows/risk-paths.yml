@@ -1,0 +1,19 @@
+# Risk paths (frostyard/core ADR-0068, docs/specs/risk-paths.md): this caller
+# runs on pull_request_target, so the base branch's risk list and caller run.
+# It does not run a pull-request branch and checks out nothing. A pull request
+# that touches a glob in .github/risk-paths.json gets the label risk:high.
+# It is not a required check. The label risk:high must exist, or the job fails.
+name: Risk paths caller
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+jobs:
+  risk-paths:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: frostyard/core/.github/workflows/risk-paths.yml@1b02a129026329cef2b46d1fbd0465a863c1cd81 # frostyard/core main, 2026-11-04 (core has no release tags)

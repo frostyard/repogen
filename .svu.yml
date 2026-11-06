@@ -1,0 +1,10 @@
+# svu configuration (core ADR-0012, ADR-0053). `svu next` picks the next
+# release version from the Conventional Commits since the last tag.
+#
+# tag.pattern keeps svu on the v0.x series. The tags v1.0.0 to v1.0.4 come
+# from the upstream fork ralt/repogen and are not releases: without the
+# pattern, `svu next` answers v2.0.0. internal/baseline guards this line.
+tag.prefix: "v"
+tag.pattern: "v0.*"
+v0: true
+always: true

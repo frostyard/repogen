@@ -4,45 +4,65 @@
 
 ## Workflows
 
-### Test (`.github/workflows/test.yml`)
+### CI (`.github/workflows/ci.yml`)
 
-Runs on PRs and pushes to main/master, two jobs. The workflow sets
-top-level `permissions: contents: read` (least privilege). Every external
-action is pinned to a full 40-character commit SHA with a trailing
-`# vX.Y.Z` comment: `actions/checkout` v4.4.0, `actions/setup-go` v5.6.0,
-`actions/cache` v4.3.0, `codecov/codecov-action` v4.6.0
+Runs on pull requests and pushes to `main`, as one job (`ci`, named
+`make ci`, timeout 45 minutes). The workflow sets top-level
+`permissions: contents: read` (least privilege). Every external action is
+pinned to a full 40-character commit SHA with a trailing `# vX.Y.Z` comment:
+`actions/checkout` v4.4.0, `actions/setup-go` v5.6.0, `jdx/mise-action`
+v5.2.6, `codecov/codecov-action` v4.6.0
 ([core ADR-0021](https://github.com/frostyard/core/blob/main/docs/adr/0021-sha-pinned-actions-and-least-privilege-ci.md)).
-`release.yml` follows the same rule.
+`release.yml` follows the same rule. The job runs these steps in order:
 
-`test`:
-1. Sets up Go from `go.mod` with module caching: the module minimum is
-   1.26.0, and the `toolchain go1.26.10` line makes the go command use Go
-   1.26.10 for the linter build, the unit tests, and the integration tests.
-2. Runs the required golangci-lint v2 gate through `make lint`. The linter
-   install step sets `GOTOOLCHAIN: go1.26.10`; keep it equal to the `go.mod`
-   `toolchain` line.
-3. Runs `govulncheck` (`go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`).
-   The version is pinned, and the Go checksum database verifies the module. A
-   vulnerability that the code reaches fails the job
-   ([ADR-0016](../adr/0016-remove-rpm-generation.md)).
-4. Runs unit tests with race detection and coverage (`go test -v -short -race`).
-5. Builds test packages in Docker (`make test-packages-docker`).
-6. Runs integration tests (`make test-integration`).
-7. Uploads coverage to Codecov.
+1. Checkout with `persist-credentials: false`, so the job cannot push with
+   the workflow token.
+2. Set up Go from `go.mod`: the module minimum is 1.26.0, and the
+   `toolchain go1.26.10` line makes the go command use Go 1.26.10.
+3. `jdx/mise-action` installs `golangci-lint` and `node` at the `mise.toml`
+   pins, verified against `mise.lock` (Go still comes from step 2).
+4. `make ci`, the one gate. It runs, in order:
+   - `make verify`: `make verify-static` (tidy, vet, gofmt check, `make lint`
+     at the mise pin, `node scripts/check-docs.mjs`) then `make test-unit`;
+   - `make vuln` — `govulncheck` v1.9.0; a vulnerability that the code
+     reaches fails the job ([ADR-0016](../adr/0016-remove-rpm-generation.md));
+   - `make test-race` — unit tests with race detection and
+     `coverage.txt`;
+   - `make test-packages-docker` — builds the test packages in Docker;
+   - `make test-integration`; and
+   - `make build-cross` — the linux amd64 and arm64 release builds.
 
-`docs-gate`:
-1. Runs `node scripts/check-docs.mjs` — docs-index coverage, relative-link
-   integrity, and conformance-alias symlink resolution against
-   `.coverage-thresholds.json`
-   ([ADR-0012](../adr/0012-acmm-conformance-via-canonical-aliases.md); part
-   of the [quality loop](quality-loop.md)).
+   `make docs-check` keeps the docs gate of
+   [ADR-0012](../adr/0012-acmm-conformance-via-canonical-aliases.md) inside
+   the same job: docs-index coverage, relative-link integrity, and
+   symlink resolution against `.coverage-thresholds.json` (part of the
+   [quality loop](quality-loop.md)).
+5. Uploads `coverage.txt` to Codecov.
+
+[Core ADR-0073](https://github.com/frostyard/core/blob/main/docs/adr/0073-let-ci-run-the-make-ci-targets-as-separate-jobs.md)
+allows CI to run the `make ci` targets as separate jobs; this repo keeps 1
+job, so the Makefile stays the only place that names the order.
+
+### Risk paths (`.github/workflows/risk-paths.yml`)
+
+Runs on `pull_request_target` (opened, synchronize, reopened, edited). It
+checks out nothing and runs no pull-request code: it calls
+`frostyard/core/.github/workflows/risk-paths.yml` at a pinned commit, so the
+base branch's risk list and caller apply. A pull request that touches a glob
+in [`.github/risk-paths.json`](../../.github/risk-paths.json) gets the label
+`risk:high`
+([core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)).
+It is not a required check, and its job holds `pull-requests: write` only.
 
 ### Release (`.github/workflows/release.yml`)
 
-Triggered by `v*.*.*` tags:
-1. Uses commit-pinned checkout, Go setup, and GoReleaser actions; Go setup
-   reads the same `go.mod`, so release binaries build with the `toolchain`
-   version (go1.26.10) that test CI uses.
+Triggered by `v*.*.*` tags. The workflow has `permissions: {}` at the top and
+`contents: write` on its `goreleaser` job, so no other job inherits write
+access:
+1. Checks out the tag with full history and `persist-credentials: false`,
+   and sets up Go, all with commit-pinned actions; Go setup reads the same
+   `go.mod`, so release binaries build with the `toolchain` version
+   (go1.26.10) that CI uses.
 2. Runs exact GoReleaser version `v2.18.1`.
 3. Builds raw linux amd64/arm64 binaries with the exact tag version and full
    source commit embedded.
@@ -218,7 +238,7 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
   with commit prefix `ci:` and the `dependencies` label.
 
 Dependabot respects the `go` directive in `go.mod` and will not propose updates
-requiring a newer Go version. Dependabot PRs trigger the `Test` workflow
+requiring a newer Go version. Dependabot PRs trigger the `CI` workflow
 automatically, providing CI validation before merge.
 
 ## Makefile Targets
@@ -229,9 +249,24 @@ automatically, providing CI validation before merge.
 | `make test` | Run unit + integration tests |
 | `make test-unit` | Unit tests only (`go test -short`) |
 | `make test-integration` | Build test packages, then run integration tests |
+| `make test-integration-quick` | Integration tests in short mode, skipped when unavailable |
 | `make test-packages` | Build test packages locally |
 | `make test-packages-docker` | Build test fixtures in Docker containers |
-| `make lint` | Run golangci-lint |
+| `make test-race` | Unit tests with the race detector and `coverage.txt` |
+| `make lint` | Run golangci-lint at the `mise.toml` pin (checks the pin first) |
+| `make lint-version-check` | Fail unless golangci-lint matches the pin and its Go is new enough |
+| `make tidy-check` | `go mod tidy -diff` (no write) |
+| `make vet` | `go vet ./...` |
+| `make fmt-check` | Every tracked Go file is gofmt-clean (no write) |
+| `make docs-check` | `node scripts/check-docs.mjs` |
+| `make verify-static` | tidy, vet, fmt-check, lint, docs-check |
+| `make verify` | `verify-static` plus the unit tests; writes no file |
+| `make check` | `make fmt`, then `make verify` — the developer gate |
+| `make vuln` | `govulncheck` at the pinned version |
+| `make build-cross` | The linux amd64 and arm64 release builds |
+| `make ci` | What CI runs: verify, vuln, test-race, test-packages-docker, test-integration, build-cross |
+| `make svu-version-check` | Fail unless `svu` matches the `mise.toml` pin |
+| `make bump` | Create the next annotated release tag with `svu`; a maintainer pushes it |
 | `make fmt` | Format code |
 | `make install` | Install to `/usr/local/bin` |
 | `make uninstall` | Remove from `/usr/local/bin` |

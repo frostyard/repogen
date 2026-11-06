@@ -31,6 +31,7 @@ Edit only the canonical paths; keep content tool-agnostic.
 ```
 cmd/repogen/          # CLI entry point
 internal/
+  baseline/           # Repository baseline contract tests (test-only)
   cli/                # Command-line interface (Cobra commands)
   generator/          # Repository generators for each package type
     apk/              # Alpine APK repository generator
@@ -39,6 +40,7 @@ internal/
     pacman/           # Arch Linux Pacman repository generator
     sysext/           # systemd-sysext repository generator
   models/             # Data models (Package, RepositoryConfig, errors)
+  releaseasset/       # Release contract tests
   scanner/            # Package detection and file scanning
   signer/             # GPG and RSA signing utilities
   utils/              # Shared utilities (checksums, compression, file ops)
@@ -66,6 +68,13 @@ frostyard/core — edit there, not here.
   covers.
 - The org **squash-merges PRs**: branch every PR off `main`, never stack a
   branch on another PR's branch.
+- A PR that touches a path in `.github/risk-paths.json` gets the label
+  `risk:high` from the risk-paths caller
+  ([core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)).
+  Never remove that label to make a PR ready: the author removes it only when
+  the risky change leaves the PR, with the reason in the PR.
+- Report a vulnerability privately, as [SECURITY.md](SECURITY.md) says; never
+  in a public issue.
 
 ## Repo gotchas
 
@@ -82,7 +91,7 @@ release process is in [RELEASING.md](RELEASING.md).
   to `v1.0.4` come from the upstream fork `ralt/repogen` (2026-01-06 to
   2026-01-22) and have no GitHub release; `v1.0.4` is not on `main`. The real
   series is `v0.x`, from `v0.1.0` (2026-01-14); the latest release when this
-  was written is `v0.7.0` (2026-10-24). So `git tag --sort=-v:refname | head -1`
+  was written is `v0.7.2` (2026-11-03). So `git tag --sort=-v:refname | head -1`
   and the skill's "highest stable semver tag" fallback give a wrong answer here. Find the latest
   release with `gh release list --repo frostyard/repogen`, never from the tags,
   and count unreleased commits from that tag.
@@ -91,14 +100,17 @@ release process is in [RELEASING.md](RELEASING.md).
 - How a release starts: the tag push runs `.github/workflows/release.yml`
   (GoReleaser `v2.18.1`), which publishes `repogen-linux-amd64`,
   `repogen-linux-arm64` and `SHA256SUMS`.
-- Who tags: Brian. Agents never tag, push tags or release.
-- Version rule: no tool (no svu config). Pick the version by semver from the
-  Conventional Commit subjects since the latest release; on `v0.x` a breaking
-  change gives a minor.
+- Who tags: Brian. Agents never tag, push tags, run `make bump` or release.
+- Version rule: `.svu.yml` sets `tag.prefix: "v"` and
+  `tag.pattern: "v0.*"`, and `svu next` reads the Conventional Commit
+  subjects since the latest release (core ADR-0012, ADR-0053). Without the
+  pattern `svu next` answers `v2.0.0`, because the upstream fork's `v1.x`
+  tags exist. On `v0.x` a breaking change gives a minor. `make bump` creates
+  the annotated tag locally; a maintainer pushes it.
 - Internal dependencies: none (`go.mod` has no frostyard or bketelsen module).
 - Who uses this repository: `frostyard/snosi` `.github/workflows/build.yml`
   publishes sysexts with `frostyard/repogen/.github/actions/publish-to-r2`,
-  pinned by SHA `c3c9f63` (`v0.7.0`), with `repogen-version: v0.7.0` and
+  pinned by SHA `b5dccc7` (`v0.7.2`), with `repogen-version: v0.7.2` and
   `repogen-commit` naming that same commit. A newer repogen release is not a
   bump to open in snosi on your own; ask its owner (Murbella) first. `frostyard/chairlift` and
   `frostyard/pilothouse` only name the action in pin-check test fixtures, not
@@ -124,13 +136,16 @@ release process is in [RELEASING.md](RELEASING.md).
 - Conformance alias symlinks are listed in
   [ADR-0012](docs/adr/0012-acmm-conformance-via-canonical-aliases.md) —
   edit their canonical targets, never the aliases.
-- CI gate: [.github/workflows/test.yml](.github/workflows/test.yml) runs the
-  Go tests, a pinned `govulncheck` (a reachable vulnerability fails CI,
-  [ADR-0016](docs/adr/0016-remove-rpm-generation.md)), the integration
-  suite, and `node scripts/check-docs.mjs` (every
-  doc indexed, every relative link resolving, every symlink intact —
-  thresholds in `.coverage-thresholds.json`, `never_relax`). Run the gates
-  locally before pushing.
+- CI gate: [.github/workflows/ci.yml](.github/workflows/ci.yml) runs
+  `make ci` — `make verify` (tidy, vet, gofmt, lint at the mise pin, docs
+  integrity, unit tests), a pinned `govulncheck` (a reachable vulnerability
+  fails CI,
+  [ADR-0016](docs/adr/0016-remove-rpm-generation.md)), the race tests, the
+  packages built in Docker, the integration suite and the release builds.
+  `node scripts/check-docs.mjs` checks that every doc is indexed, every
+  relative link resolves and every symlink is intact — thresholds in
+  `.coverage-thresholds.json`, `never_relax`. Run `make check` locally before
+  pushing.
 - Corrections go to `.memory/corrections.jsonl` (append-only five-field
   schema — see [.memory/README.md](.memory/README.md)); promote into this
   file, docs, or skills — never duplicate without setting `promoted_to`.
@@ -143,9 +158,11 @@ After making any code changes, you MUST run:
 
 ```bash
 make build   # code compiles
-make fmt     # format the code
-make lint    # golangci-lint (config in .golangci.yml)
+make check   # formats, then runs the verify gate: tidy, vet, gofmt, lint
+             # at the mise pin, docs integrity, unit tests
 ```
+
+`make ci` runs the full CI gate when Docker is available.
 
 Fix any linting errors before considering the task complete. Common issues:
 unused imports or variables, missing error checks, ineffective assignments,
@@ -168,13 +185,25 @@ formatting.
 
 ## Common make targets
 
+`mise install` provisions Go (from `go.mod`) and the pinned `golangci-lint`,
+`node` and `svu` (`mise.toml` plus `mise.lock`, core ADR-0043).
+
 - `make build` — build the repogen binary
 - `make test-unit` — run unit tests (fast)
 - `make test` — run all tests including integration
 - `make test-integration` — build test packages, then run the e2e suite in
   `test/` (see [test/e2e/README.md](test/e2e/README.md))
 - `make fmt` — format code with go fmt
-- `make lint` — run golangci-lint
+- `make lint` — run golangci-lint at the `mise.toml` pin
+- `make verify` — the non-mutating gate: tidy, vet, gofmt check, lint, docs
+  integrity, unit tests
+- `make check` — `make fmt`, then `make verify` (the developer gate)
+- `make ci` — what CI runs; it needs Docker
+- `make vuln` — `govulncheck` at the pinned version
+- `make test-race` — unit tests with the race detector and `coverage.txt`
+- `make build-cross` — the linux amd64 and arm64 release builds
+- `make bump` — create the annotated release tag locally (maintainers only;
+  agents never run it and never push a tag)
 - `make install` — install to /usr/local/bin
 - `make clean` — clean build artifacts
 
@@ -193,8 +222,14 @@ table, index, and conventions. Write these docs to be maximally useful to an
 AI agent understanding the codebase — detailed architecture, patterns, and
 decision rationale rather than user-facing guides.
 
-- **README.md**: update for new package types, CLI flags or commands,
-  features or workflows, repository structure changes.
+- **README.md**: the root README follows core's README spec
+  ([core ADR-0072](https://github.com/frostyard/core/blob/main/docs/adr/0072-write-every-readme-to-one-standard.md)):
+  kind `tool`, at most 1000 words, a link out to the docs. Update it for new
+  package types, CLI flags or commands, features or workflows, repository
+  structure changes.
+- **docs/guides/**: user guides live there until the docs site lands (core
+  ADR-0070). They take no `TEMPLATE.md`, but each one is indexed in
+  `docs/README.md`.
 - **docs/**: update `docs/design/overview.md` and the relevant
   `docs/design/` or `docs/specs/` docs when architecture, data flow,
   generator output formats, or CI/CD change; index new docs in
@@ -211,8 +246,6 @@ decision rationale rather than user-facing guides.
 ## Checklist before completing a task
 
 - [ ] Code compiles (`make build`)
-- [ ] Code is formatted (`make fmt`)
-- [ ] Linter passes (`make lint`)
-- [ ] Tests pass (`make test-unit`)
+- [ ] `make check` passes (format, then the verify gate)
 - [ ] Documentation updated if needed
 - [ ] New features have tests

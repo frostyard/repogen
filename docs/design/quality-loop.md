@@ -13,7 +13,7 @@ repo. One loop, five stations:
 
 ```
 PR template ──► review rubric ──► CI gates ──► corrections ──► promotion
-(checklist)     (spec)            (test.yml)   (.memory/)      (AGENTS.md,
+(checklist)     (spec)            (ci.yml)     (.memory/)      (AGENTS.md,
      ▲                                                          docs, skills)
      └────────────── acceptance metric (spec) observes the stream ─────────┘
 ```
@@ -26,16 +26,17 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   contract a review applies; the
   [review runbook](../../.github/prompts/review.prompt.md) is its
   task-shaped form for agents.
-- **Gate** — [.github/workflows/test.yml](../../.github/workflows/test.yml)
-  runs two jobs on every PR (see [design/ci-cd.md](ci-cd.md)):
-  - *test*: unit tests with race detection and coverage, then the e2e suite
-    — real packages built for every supported type and the published
-    repository output asserted on (entry point:
-    [test/e2e/README.md](../../test/e2e/README.md)).
-  - *docs-gate*: `node scripts/check-docs.mjs` checks docs-index coverage,
-    relative-link integrity, and symlink resolution against
-    [.coverage-thresholds.json](../../.coverage-thresholds.json) — all 1.0,
-    `never_relax: true` (the loop may tighten, never loosen).
+- **Gate** — [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
+  runs one job on every PR (see [design/ci-cd.md](ci-cd.md)): `make ci`, which
+  is verify, govulncheck, the unit tests with race detection and coverage,
+  the packages built in Docker and the e2e suite — real packages built for
+  every supported type and the published repository output asserted on
+  (entry point: [test/e2e/README.md](../../test/e2e/README.md)) — then the
+  release builds. Docs integrity (`node scripts/check-docs.mjs`) is part of
+  `make verify`: docs-index coverage, relative-link integrity, and symlink
+  resolution against
+  [.coverage-thresholds.json](../../.coverage-thresholds.json) — all 1.0,
+  `never_relax: true` (the loop may tighten, never loosen).
 - **Learn** — corrections land in
   [.memory/corrections.jsonl](../../.memory/README.md) (append-only,
   five-field schema) and are promoted into `AGENTS.md`, docs, or skills;
@@ -53,10 +54,12 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
 Re-run every gate locally before pushing:
 
 ```
-make build && make fmt && make lint && make test-unit
-node scripts/check-docs.mjs
+make check               # format, then the verify gate
 make test-integration    # for generator/scanner/signer changes
 ```
+
+`make check` is credential-free and writes no file beyond the formatting.
+`make ci` runs the whole CI gate when Docker is available.
 
 Failure modes: a broken alias or missing index line fails docs-gate (fix the
 canonical target or the index, never the alias); integration failures mean a

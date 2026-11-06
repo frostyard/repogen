@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "paths": [
+    { "glob": ".github/risk-paths.json", "why": "governance: the high-risk path list that adds the risk:high label" },
+    { "glob": ".github/workflows/risk-paths.yml", "why": "governance: the caller of core's risk-paths workflow" },
+    { "glob": ".github/workflows/release.yml", "why": "publication: the tag release with contents: write that publishes the repogen binaries and SHA256SUMS" },
+    { "glob": ".github/workflows/**", "why": "secrets and credentials: CI jobs, GITHUB_TOKEN permissions and repository secrets" },
+    { "glob": "{.goreleaser.yml,.svu.yml}", "why": "publication: the release build, the asset names, the embedded version and the version rule" },
+    { "glob": "{Makefile,mise.toml,mise.lock}", "why": "publication: make bump tags releases with the pinned svu; the pins of the gate tools" },
+    { "glob": ".github/actions/publish-to-r2/**", "why": "publication: the action that consumers run with R2 credentials and the repository signing key" },
+    { "glob": "scripts/{upload-to-r2,validate-publish-target,check-published-payloads}.sh", "why": "publication: the ordered R2 upload, the refusal of stable and Debian, the published-payload check" },
+    { "glob": "scripts/install-release.sh", "why": "update verification: the SHA-256 and embedded-identity check of a release binary before install" },
+    { "glob": "internal/signer/**", "why": "signing and keys: GPG and RSA signing of repository metadata" },
+    { "glob": "internal/generator/deb/{release,release_signature}.go", "why": "signing and keys: Release and InRelease signing, and the verification of existing signatures" },
+    { "glob": "internal/generator/sysext/**", "why": "update verification: SHA256SUMS.gpg, Verify= in transfers, and the retained signed extension state" },
+    { "glob": "internal/cli/generate.go", "why": "update verification: the digest-conflict gate and the signature-verified skip of published sysexts" },
+    { "glob": "internal/releaseasset/**", "why": "governance: the contract tests that pin the release workflow, the installer and the action" },
+    { "glob": ".claude/settings.json", "why": "governance: the tool-layer deny of merge, approve and release" }
+  ]
+}

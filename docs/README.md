@@ -11,6 +11,7 @@ this tree replaced the former `yeti/` AI-docs directory):
 | [design/](design/) | **How** does it fit together? | Living documents describing the current architecture |
 | [specs/](specs/) | **What exactly** is the contract? | Precise, testable interface/format definitions, changed only alongside code |
 | [plans/](plans/) | **When/in what order** do we build? | Roadmaps and phase plans; updated as work lands |
+| [guides/](guides/) | **How do I use it?** | User and developer guides; they move to the docs site later |
 
 ## Index
 
@@ -108,6 +109,16 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   review applies; `docs/review-rubric.md` is its conformance alias
 - [R10 release acceptance](specs/r10-release-acceptance.md) — exact local,
   merge, and published-release evidence for the hardened Repogen artifact
+
+### Guides
+
+- [Usage](guides/usage.md) — installation, the `generate` flags, incremental
+  mode, signing, examples, troubleshooting
+- [Client setup](guides/client-setup.md) — the generated layout for each of the
+  5 formats and the commands a client uses to read it
+- [The publish-to-r2 GitHub Action](guides/publish-to-r2.md) — inputs,
+  outputs, how the action works, R2 and cache-purge setup
+- [Development](guides/development.md) — the gate targets and the test suite
 
 ### Plans
 

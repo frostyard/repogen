@@ -17,9 +17,9 @@ if (thresholds.never_relax !== true) {
 const failures = [];
 const rate = (pass, total) => (total === 0 ? 1 : pass / total);
 
-// ---- 1. Index coverage: every doc in the four categories is indexed. ----
+// ---- 1. Index coverage: every doc in each category (and guides/) is indexed. ----
 const indexText = readFileSync(join(root, "docs/README.md"), "utf8");
-const categories = ["adr", "design", "specs", "plans"];
+const categories = ["adr", "design", "specs", "plans", "guides"];
 let docsTotal = 0;
 let docsIndexed = 0;
 for (const cat of categories) {
@@ -32,7 +32,14 @@ for (const cat of categories) {
 }
 
 // ---- 2. Link integrity: relative md links resolve. ----
-const mdFiles = [join(root, "AGENTS.md"), join(root, "README.md"), join(root, "docs/README.md")];
+const mdFiles = [
+  join(root, "AGENTS.md"),
+  join(root, "README.md"),
+  join(root, "RELEASING.md"),
+  join(root, "SECURITY.md"),
+  join(root, "docs/README.md"),
+  join(root, "docs/org-adrs.md"),
+];
 for (const cat of categories) {
   for (const name of readdirSync(join(root, "docs", cat))) {
     if (name.endsWith(".md") && name !== "TEMPLATE.md") mdFiles.push(join(root, "docs", cat, name));

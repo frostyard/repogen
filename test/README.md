@@ -278,7 +278,7 @@ The test suite is designed for CI/CD:
 - Detailed error messages
 - Automatic cleanup
 
-See `.github/workflows/test.yml` for GitHub Actions example.
+See `.github/workflows/ci.yml` for GitHub Actions example.
 
 ## Performance
 
