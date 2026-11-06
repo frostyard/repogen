@@ -230,6 +230,10 @@ decision rationale rather than user-facing guides.
 - **docs/guides/**: user guides live there until the docs site lands (core
   ADR-0070). They take no `TEMPLATE.md`, but each one is indexed in
   `docs/README.md`.
+- **Command examples must run as written.** Every `repogen generate` example
+  in `README.md` and `docs/guides/` carries the flags its input type requires:
+  Debian input passes `--codename`, sysext input passes `--base-url`, pacman
+  input passes `--repo-name` (see `repogen generate --help`).
 - **docs/**: update `docs/design/overview.md` and the relevant
   `docs/design/` or `docs/specs/` docs when architecture, data flow,
   generator output formats, or CI/CD change; index new docs in

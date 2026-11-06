@@ -12,7 +12,7 @@
 //	    checkout credentials
 //	B6  risk paths: the spec, the caller, and a glob matcher
 //	B7  the pull request template asks for a risk tier
-//	B8  .svu.yml names the tag pattern and `make bump` reads it
+//	B8  .svu.yml names the tag pattern, and the bump recipe stops on a failure
 //	B10 the LICENSE is present and holds the MIT text
 //	B12 CI runs `make ci` on pull requests
 //	B13 Dependabot covers every ecosystem in the tree
@@ -257,7 +257,10 @@ var pinnedActionRef = regexp.MustCompile(`^[^@\s]+@[0-9a-f]{40}$`)
 func TestRepositoryBaselineB5WorkflowHardening(t *testing.T) {
 	workflows := 0
 	for _, name := range trackedFiles(t) {
-		if !strings.HasSuffix(name, ".yml") || !strings.HasPrefix(name, ".github/workflows/") {
+		if !strings.HasPrefix(name, ".github/workflows/") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
 			continue
 		}
 		workflows++
@@ -295,7 +298,8 @@ func workflowIssues(text string) []string {
 		}
 	}
 
-	// Top-level permissions must be empty or read-only.
+	// Top-level permissions must be present, empty or read-only.
+	permissionsFound := false
 	for i, line := range lines {
 		if line.indent != 0 {
 			continue
@@ -304,6 +308,7 @@ func workflowIssues(text string) []string {
 		if !ok {
 			continue
 		}
+		permissionsFound = true
 		switch {
 		case value == "{}":
 			continue
@@ -321,6 +326,9 @@ func workflowIssues(text string) []string {
 				issues = append(issues, "top-level permissions grant "+lines[j].text)
 			}
 		}
+	}
+	if !permissionsFound {
+		issues = append(issues, "the workflow has no top-level permissions: key; use permissions: {} or a read-only block")
 	}
 
 	issues = append(issues, checkoutStepsWithoutPersistCredentials(text)...)
@@ -444,6 +452,135 @@ func checkoutStepsWithoutPersistCredentials(text string) []string {
 		}
 	}
 	return problems
+}
+
+func TestWorkflowIssues(t *testing.T) {
+	cases := []struct {
+		name        string
+		text        string
+		wantProblem int
+		wantText    string
+	}{
+		{
+			name: "no top-level permissions key",
+			text: `name: CI
+on:
+  push:
+    branches: [main]
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+`,
+			wantProblem: 1,
+			wantText:    "permissions",
+		},
+		{
+			name: "permissions: {}",
+			text: `name: CI
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+`,
+		},
+		{
+			name: "permissions: write-all",
+			text: `name: CI
+on:
+  push:
+    branches: [main]
+permissions: write-all
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+`,
+			wantProblem: 1,
+			wantText:    "permissions",
+		},
+		{
+			name: "a permissions block that writes",
+			text: `name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+`,
+			wantProblem: 1,
+			wantText:    "permissions",
+		},
+		{
+			name: "a read-only permissions block",
+			text: `name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+`,
+		},
+		{
+			name: "an unpinned action",
+			text: `name: CI
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # v4.4.0
+        with:
+          persist-credentials: false
+`,
+			wantProblem: 1,
+			wantText:    "commit SHA",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := workflowIssues(tc.text)
+			if len(issues) != tc.wantProblem {
+				t.Fatalf("got %d issue(s) %q, want %d", len(issues), issues, tc.wantProblem)
+			}
+			if tc.wantText == "" {
+				return
+			}
+			if !strings.Contains(issues[0], tc.wantText) {
+				t.Errorf("issue %q must mention %q", issues[0], tc.wantText)
+			}
+		})
+	}
 }
 
 func TestCheckoutPersistCredentials(t *testing.T) {
@@ -620,6 +757,8 @@ func TestRepositoryBaselineB6RiskPaths(t *testing.T) {
 		"scripts/install-release.sh",
 		"scripts/upload-to-r2.sh",
 		"internal/signer/gpg.go",
+		"internal/generator/apk/generator.go",
+		"internal/generator/pacman/generator.go",
 		"internal/generator/sysext/generator.go",
 		"internal/generator/deb/release_signature.go",
 	} {
@@ -767,6 +906,173 @@ func TestRepositoryBaselineB8SvuConfig(t *testing.T) {
 	if !recipe {
 		t.Error("the bump recipe must call $(SVU) next")
 	}
+}
+
+// TestRepositoryBaselineB8BumpStopsOnFailure runs the real bump recipe in a
+// throwaway git repository: a failed `svu next` or `git tag` must stop it
+// before it reports a tag. It never touches the real repository.
+func TestRepositoryBaselineB8BumpStopsOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("make is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	root := repoRoot(t)
+	baseEnv := baselineEnv(t.TempDir())
+	svuPin := svuPinFromMise(t, root)
+
+	fakeSVU := filepath.Join(t.TempDir(), "svu")
+	const script = `#!/bin/sh
+case "$1" in
+--version)
+	echo "GitVersion:    $FAKE_SVU_VERSION"
+	;;
+next)
+	if [ "$FAKE_SVU_FAIL" = 1 ]; then
+		echo "svu: the tag list is unreadable" >&2
+		exit 1
+	fi
+	echo "$FAKE_SVU_NEXT"
+	;;
+esac
+exit 0
+`
+	if err := os.WriteFile(fakeSVU, []byte(script), 0o755); err != nil {
+		t.Fatalf("write the fake svu: %v", err)
+	}
+
+	cases := []struct {
+		name      string
+		next      string
+		fail      string
+		preTag    string
+		wantOK    bool
+		wantTag   string
+		absentTag string
+	}{
+		{name: "the tag already exists", next: "v0.0.1", preTag: "v0.0.1"},
+		{name: "svu next is off the v0 series", next: "v2.0.0", absentTag: "v2.0.0"},
+		{name: "svu next fails", fail: "1"},
+		{name: "a free version is tagged", next: "v0.0.1", wantOK: true, wantTag: "v0.0.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newBumpFixture(t, root, baseEnv)
+			if tc.preTag != "" {
+				mustRun(t, dir, baseEnv, "git", "tag", "-a", tc.preTag, "-m", "pre-existing tag")
+			}
+			env := append(append([]string{}, baseEnv...),
+				"FAKE_SVU_VERSION="+svuPin,
+				"FAKE_SVU_NEXT="+tc.next,
+				"FAKE_SVU_FAIL="+tc.fail,
+			)
+			out, err := runMakeBump(t, dir, env, fakeSVU)
+			if tc.wantOK {
+				if err != nil {
+					t.Fatalf("make bump failed: %v\n%s", err, out)
+				}
+				if !strings.Contains(out, "tagged "+tc.wantTag) {
+					t.Errorf("the run must report tagged %s:\n%s", tc.wantTag, out)
+				}
+				if !tagExists(t, dir, baseEnv, tc.wantTag) {
+					t.Errorf("tag %s was not created", tc.wantTag)
+				}
+				return
+			}
+			if strings.Contains(out, "tagged") {
+				t.Errorf("a failed bump must not report a tag:\n%s", out)
+			}
+			if err == nil {
+				t.Fatalf("make bump must fail here:\n%s", out)
+			}
+			if tc.absentTag != "" && tagExists(t, dir, baseEnv, tc.absentTag) {
+				t.Errorf("tag %s must not exist", tc.absentTag)
+			}
+		})
+	}
+}
+
+// baselineEnv returns the environment a bump fixture runs with: a private
+// HOME and no system git configuration.
+func baselineEnv(home string) []string {
+	return append(os.Environ(),
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+}
+
+// svuPinFromMise reads the svu version `make svu-version-check` demands.
+func svuPinFromMise(t *testing.T, root string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "mise.toml"))
+	if err != nil {
+		t.Fatalf("read mise.toml: %v", err)
+	}
+	match := regexp.MustCompile(`(?m)^svu = "([^"]+)"`).FindStringSubmatch(string(data))
+	if match == nil {
+		t.Fatal("mise.toml pins no svu")
+	}
+	return match[1]
+}
+
+// newBumpFixture makes a git repository that holds a copy of the real Makefile
+// and mise.toml, committed, with a clean working tree.
+func newBumpFixture(t *testing.T, root string, env []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"Makefile", "mise.toml"} {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	mustRun(t, dir, env, "git", "init", "-q")
+	mustRun(t, dir, env, "git", "config", "user.name", "Repogen Baseline Fixture")
+	mustRun(t, dir, env, "git", "config", "user.email", "baseline@example.invalid")
+	mustRun(t, dir, env, "git", "config", "commit.gpgsign", "false")
+	mustRun(t, dir, env, "git", "config", "tag.gpgsign", "false")
+	mustRun(t, dir, env, "git", "add", "Makefile", "mise.toml")
+	mustRun(t, dir, env, "git", "commit", "-q", "-m", "bump fixture")
+	return dir
+}
+
+// mustRun runs one command and fails the test when it fails.
+func mustRun(t *testing.T, dir string, env []string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
+	}
+}
+
+// runMakeBump runs `make -C dir bump` against the fake svu.
+func runMakeBump(t *testing.T, dir string, env []string, svu string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("make", "-C", dir, "bump", "SVU="+svu)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// tagExists reports whether the fixture repository holds the tag.
+func tagExists(t *testing.T, dir string, env []string, tag string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "-C", dir, "tag", "-l", tag)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git tag -l %s: %v", tag, err)
+	}
+	return strings.TrimSpace(string(out)) == tag
 }
 
 // ---- B10: the license. ----

@@ -146,9 +146,10 @@ svu-version-check:
 
 # bump: create the next annotated release tag with svu (.svu.yml); a maintainer pushes it
 bump: svu-version-check
-	@test -z "$$(git status --porcelain)" || { echo "the working tree is not clean"; exit 1; }
-	@version="$$($(SVU) next)"; \
-	case "$$version" in v0.*) ;; *) echo "svu next gave $$version, not v0.x: check tag.pattern in .svu.yml"; exit 1;; esac; \
+	@set -e; \
+	test -z "$$(git status --porcelain)" || { echo "the working tree is not clean"; exit 1; }; \
+	version="$$($(SVU) next)"; \
+	case "$$version" in v0.*) ;; *) echo "svu next gave '$$version', not v0.x: check tag.pattern in .svu.yml"; exit 1;; esac; \
 	git tag -a "$$version" -m "Release version $${version#v}"; \
 	echo "tagged $$version; push it with: git push origin $$version"
 

@@ -127,7 +127,7 @@ You can manually test repositories:
 
 ```bash
 # Generate a test repository
-./repogen generate --input-dir test/fixtures/debs --output-dir /tmp/test-repo
+./repogen generate --input-dir test/fixtures/debs --output-dir /tmp/test-repo --codename stable
 
 # Serve with Python
 cd /tmp/test-repo

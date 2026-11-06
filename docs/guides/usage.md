@@ -100,6 +100,7 @@ sudo cp repogen /usr/local/bin/
 repogen generate
 
 # Scan specific directory
+# Debian input in the directory also needs --codename
 repogen generate --input-dir /path/to/packages --output-dir /path/to/repo
 
 # Debian packages need an explicit codename (there is no default)
@@ -167,12 +168,14 @@ Incremental mode allows you to add new packages to an existing repository withou
 repogen generate \
   --input-dir ./new-packages \
   --output-dir ./repo \
+  --codename trixie \
   --incremental
 
 # Skip duplicates instead of failing (useful for nightly builds)
 repogen generate \
   --input-dir ./new-packages \
   --output-dir ./repo \
+  --codename trixie \
   --incremental \
   --skip-duplicates
 
@@ -180,6 +183,7 @@ repogen generate \
 repogen generate \
   --input-dir ./built-extensions \
   --output-dir ./repo \
+  --base-url https://example.org/repo \
   --incremental \
   --gpg-key /path/to/private.asc \
   --skip-published-identities \
@@ -283,7 +287,7 @@ aws s3 sync s3://my-bucket/repo/ext ./repo/ext \
   --exclude "*.raw.gz"
 
 # Add new extensions
-repogen generate --input-dir ./new-extensions --output-dir ./repo --incremental
+repogen generate --input-dir ./new-extensions --output-dir ./repo --base-url https://example.org/repo --incremental
 
 # Sync back (without --delete to preserve existing extensions)
 aws s3 sync ./repo s3://my-bucket/repo
@@ -423,7 +427,7 @@ mkdir -p packages
 cp *.deb packages/
 
 # Generate repository
-repogen generate --input-dir packages --output-dir /var/www/repo
+repogen generate --input-dir packages --output-dir /var/www/repo --codename stable
 
 # Serve with nginx
 sudo ln -s /var/www/repo /usr/share/nginx/html/repo
