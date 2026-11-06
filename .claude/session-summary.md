@@ -7,15 +7,15 @@ GitHub issues (`gh --repo frostyard/repogen`).
 
 ## Current state
 
-- ACMM conformance landed (2026-08-12): closes repogen#37–#55 via
-  [ADR-0012](../docs/adr/0012-acmm-conformance-via-canonical-aliases.md)'s
-  alias lattice plus new templates, prompts, and the docs-integrity gate.
+- The repository baseline PR (core ADR-0071) is open: `mise.toml`, `.svu.yml`,
+  the gate triad, `ci.yml`, the risk-paths caller, `SECURITY.md` and the new
+  README with `docs/guides/`.
 
 ## Last landed
 
-- Repo-local architecture decisions recorded as ADRs 0001–0011 (#30).
+- #88 (klauspost/compress v1.20.3).
 
 ## Next
 
-- repogen#34 (release-pipeline consolidation onto GoReleaser per core
-  ADR-0012) — on `hold`, separate effort.
+- the docs site (core ADR-0070, B9) and the Go 1.27 bump (B11), each its own
+  PR.

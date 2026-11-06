@@ -7,7 +7,8 @@ repository's normal human authorization and review.
 ## Prerequisites
 
 - A clean, reviewed commit on the release branch.
-- Go and the repository-required lint/test tools.
+- Go and the repository-required lint/test tools: `mise install` provisions
+  Go from `go.mod` and the pinned `golangci-lint`, `node` and `svu`.
 - Permission to create and push the exact release tag.
 - Confirmation that the intended semantic version and source commit are the
   ones being released.
@@ -18,15 +19,13 @@ Candidate acceptance, merge, and release are separate milestones. Follow the
 repository gate before the candidate is reviewed:
 
 ```bash
-make build
-make fmt
-git diff --exit-code
-make lint
-go test -v -short -race ./...
-make test-packages-docker
-make test-integration
-node scripts/check-docs.mjs
+make ci
 ```
+
+`make ci` needs Docker. It runs `make verify` (tidy, vet, gofmt, lint at the
+mise pin, `node scripts/check-docs.mjs`, the unit tests), `make vuln`,
+`make test-race`, `make test-packages-docker`, `make test-integration` and
+`make build-cross`.
 
 Also retain a GoReleaser `v2.18.1` snapshot proving the candidate emits the
 three authoritative names below. Snapshot evidence does not satisfy the
@@ -66,7 +65,14 @@ archives are not part of this release contract.
 
 ## Creating a release
 
-Use an annotated semantic-version tag:
+`svu` picks the next version from the Conventional Commits since the last
+tag. `.svu.yml` sets `tag.prefix: "v"` and `tag.pattern: "v0.*"`, so
+`svu next` stays on the `v0.x` series (the tags `v1.0.0` to `v1.0.4` come
+from the upstream fork and are not releases; without the pattern `svu next`
+answers `v2.0.0`).
+
+`make bump` checks the `svu` pin, requires a clean working tree, and creates
+the annotated tag locally. A maintainer pushes it; agents never tag:
 
 ```bash
 git tag -a v1.2.3 -m "Release version 1.2.3"

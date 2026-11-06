@@ -1,0 +1,49 @@
+# CI (core ADR-0071 row B12): 1 job runs `make ci`, the gate that the
+# Makefile defines (verify, govulncheck, race tests with coverage, the
+# Docker-built test packages, the integration suite, the release builds).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: make ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      # golangci-lint and node at the mise.toml pins, verified against
+      # mise.lock. Go still comes from actions/setup-go (go.mod).
+      - name: Install pinned tools
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          install: true
+          install_args: golangci-lint node
+          cache: true
+
+      - name: make ci
+        run: make ci
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        if: success()
+        with:
+          files: ./coverage.txt
+          fail_ci_if_error: false
