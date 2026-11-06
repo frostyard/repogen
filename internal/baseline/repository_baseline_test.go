@@ -1118,7 +1118,10 @@ func baselineEnv(t *testing.T, home, ceiling string) []string {
 		switch {
 		case strings.HasPrefix(name, "GIT_"):
 			continue
-		case name == "MAKEFLAGS", name == "MFLAGS", name == "MAKELEVEL":
+		case name == "MAKEFLAGS", name == "MFLAGS", name == "MAKELEVEL",
+			name == "GNUMAKEFLAGS", name == "MAKEFILES":
+			// MAKEFILES names extra makefiles that make reads before the
+			// fixture's own; they could add a prerequisite to bump.
 			continue
 		}
 		env = append(env, entry)
@@ -1131,6 +1134,49 @@ func baselineEnv(t *testing.T, home, ceiling string) []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CEILING_DIRECTORIES="+ceiling,
 	)
+}
+
+// TestBumpFixtureIgnoresInheritedMakefiles proves that an inherited MAKEFILES
+// cannot add work to the fixture's make bump: the injected makefile would
+// write a marker outside the fixture, and the marker must not appear.
+func TestBumpFixtureIgnoresInheritedMakefiles(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("make is not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	root := repoRoot(t)
+	home := t.TempDir()
+	svuPin := svuPinFromMise(t, root)
+
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "marker")
+	injected := filepath.Join(outside, "injected.mk")
+	rule := "bump: injected-step\ninjected-step:\n\ttouch " + marker + "\n"
+	if err := os.WriteFile(injected, []byte(rule), 0o644); err != nil {
+		t.Fatalf("write the injected makefile: %v", err)
+	}
+	t.Setenv("MAKEFILES", injected)
+
+	dir, dirEnv := newBumpFixture(t, root, home)
+	env := append(append([]string{}, dirEnv...),
+		"FAKE_SVU_VERSION="+svuPin,
+		"FAKE_SVU_NEXT=v0.0.1",
+		"FAKE_SVU_FAIL=",
+	)
+	out, err := runMakeBump(t, dir, env, newFakeSVU(t))
+	if err != nil {
+		t.Fatalf("make bump failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("an inherited MAKEFILES ran a step outside the fixture:\n%s", out)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat the marker: %v", err)
+	}
+	if !tagExists(t, dir, dirEnv, "v0.0.1") {
+		t.Error("the fixture repository holds no v0.0.1 tag")
+	}
 }
 
 // svuPinFromMise reads the svu version `make svu-version-check` demands.
