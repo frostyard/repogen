@@ -8,6 +8,9 @@ updates:
       prefix: "deps"
     labels:
       - "dependencies"
+    groups:
+      gomod:
+        patterns: ["*"]
   - package-ecosystem: "github-actions"
     directories:
       - "/"
@@ -18,3 +21,6 @@ updates:
       prefix: "ci"
     labels:
       - "dependencies"
+    groups:
+      actions:
+        patterns: ["*"]
