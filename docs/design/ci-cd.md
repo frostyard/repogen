@@ -228,6 +228,11 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 `.github/dependabot.yml` configures automated dependency updates:
 
 - **Ecosystem**: `gomod` — monitors `go.mod` for dependency updates.
+- **Groups**: each entry has 1 group with `patterns: ["*"]` (`gomod` for
+  `go.mod`, `actions` for the workflows and composite actions), so Dependabot
+  opens at most 1 version-update PR for each entry and run. The group has no
+  `applies-to`, so security updates stay 1 PR each
+  ([core ADR-0075](https://github.com/frostyard/core/blob/main/docs/adr/0075-batch-routine-pull-requests.md)).
 - **Schedule**: Weekly checks.
 - **Commit prefix**: `deps:` — follows the conventional-commit style used in
   this repo (e.g., `perf:`, `fix:`, `docs:`).
