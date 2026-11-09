@@ -1015,6 +1015,11 @@ jobs:
 			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
 			{"glob": "**/.github/risk-paths.json", "level": "L3", "why": "governance: the list"}
 		]}`, 1},
+		{"list glob with a brace group at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+			{"glob": ".github/{risk-paths.jso?,unused}", "level": "L3", "why": "governance: the list"}
+		]}`, 1},
 	}
 	for _, tc := range listCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1119,6 +1124,16 @@ func TestGlobMatch(t *testing.T) {
 		{"**/.github/risk-paths.json", ".github/risk-paths.json", true},
 		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yml", true},
 		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yaml", false},
+		{"a**b", "a/x/b", false},
+		{"a**b", "axxb", true},
+		{"**/x", "/x", true},
+		{"**", "", false},
+		{"{a?,b}", "ax", true},
+		{"{a?,b}", "a", false},
+		{"{a?,b}", "b", true},
+		{".github/{risk-paths.jso?,unused}", ".github/risk-paths.json", true},
+		{".github/{risk-paths.jso?,unused}", ".github/unused", true},
+		{".github/{risk-paths.jso?,unused}", ".github/other.json", false},
 		{"**/index.html", "index.html", true},
 		{"**/index.html", "a/b/index.html", true},
 		{"**/index.html", "a/b/index.htm", false},
@@ -1142,67 +1157,116 @@ func TestGlobMatch(t *testing.T) {
 	}
 }
 
-// globMatch reports whether a risk glob matches a whole repository path.
-// The supported subset is `*` (within one segment), `**` (any segments),
-// `**/` (zero or more directories), `?` (one character) and one level of
-// `{a,b}` alternation.
+// globMatch reports whether a risk glob matches a whole repository path, as
+// core's matchGlob does (core scripts/lib/risk-paths.mjs): the brace groups are
+// expanded first, then each expansion matches whole segments, where `**` as a
+// whole segment matches 0 or more segments. An empty path matches nothing.
 func globMatch(glob, name string) bool {
-	pattern, err := globRegexp(glob)
-	if err != nil {
+	if name == "" {
 		return false
 	}
-	return pattern.MatchString(name)
+	pathSegments := strings.Split(name, "/")
+	for _, expansion := range expandBraces(glob) {
+		if matchSegments(strings.Split(expansion, "/"), pathSegments) {
+			return true
+		}
+	}
+	return false
 }
 
-func globRegexp(glob string) (*regexp.Regexp, error) {
-	// A trailing `/**` matches the prefix itself and everything under it: core's
-	// `**` matches 0 or more segments (core docs/specs/risk-paths.md, rule A).
-	if strings.HasSuffix(glob, "/**") {
-		head, err := globRegexp(strings.TrimSuffix(glob, "/**"))
-		if err != nil {
-			return nil, err
+// expandBraces expands the `{a,b}` groups of a glob, as core's expandBraces
+// does: left to right, no nesting, at least 2 alternatives, none empty, and at
+// most 256 globs. A malformed group gives no expansion, so the glob matches
+// nothing.
+func expandBraces(glob string) []string {
+	const maxBraceExpansions = 256
+	var parts [][]string
+	literal := ""
+	for i := 0; i < len(glob); i++ {
+		switch glob[i] {
+		case '}':
+			return nil
+		case '{':
+			end := strings.IndexByte(glob[i+1:], '}')
+			if end < 0 {
+				return nil
+			}
+			end += i + 1
+			if open := strings.IndexByte(glob[i+1:], '{'); open >= 0 && i+1+open < end {
+				return nil
+			}
+			group := strings.Split(glob[i+1:end], ",")
+			if len(group) < 2 {
+				return nil
+			}
+			for _, alternative := range group {
+				if alternative == "" {
+					return nil
+				}
+			}
+			parts = append(parts, []string{literal}, group)
+			literal = ""
+			i = end
+		default:
+			literal += string(glob[i])
 		}
-		return regexp.Compile(`(?:` + strings.TrimSuffix(head.String(), "$") + `(?:/.*)?)$`)
 	}
+	parts = append(parts, []string{literal})
+	expansions := []string{""}
+	for _, part := range parts {
+		var next []string
+		for _, prefix := range expansions {
+			for _, alternative := range part {
+				next = append(next, prefix+alternative)
+			}
+		}
+		if len(next) > maxBraceExpansions {
+			return nil
+		}
+		expansions = next
+	}
+	return expansions
+}
+
+// matchSegments matches whole segments, as core's matchSegments does: `**`
+// matches 0 or more segments, and every other glob segment matches exactly 1
+// path segment.
+func matchSegments(globSegments, pathSegments []string) bool {
+	if len(globSegments) == 0 {
+		return len(pathSegments) == 0
+	}
+	if globSegments[0] == "**" {
+		return matchSegments(globSegments[1:], pathSegments) ||
+			(len(pathSegments) > 0 && matchSegments(globSegments, pathSegments[1:]))
+	}
+	if len(pathSegments) == 0 {
+		return false
+	}
+	return segmentMatch(globSegments[0], pathSegments[0]) &&
+		matchSegments(globSegments[1:], pathSegments[1:])
+}
+
+// segmentMatch matches 1 glob segment, as core's segmentPattern does: `*` is
+// any run of characters in the segment and `?` is 1 character of the segment.
+func segmentMatch(pattern, segment string) bool {
 	var b strings.Builder
 	b.WriteString("^")
-	for i := 0; i < len(glob); i++ {
-		switch c := glob[i]; c {
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
 		case '*':
-			if i+1 < len(glob) && glob[i+1] == '*' {
-				i++
-				if i+1 < len(glob) && glob[i+1] == '/' {
-					i++
-					b.WriteString(`(?:[^/]+/)*`)
-				} else {
-					b.WriteString(`.*`)
-				}
-			} else {
-				b.WriteString(`[^/]*`)
-			}
+			b.WriteString(`[^/]*`)
 		case '?':
 			b.WriteString(`[^/]`)
-		case '{':
-			end := strings.IndexByte(glob[i:], '}')
-			if end < 0 {
-				return nil, os.ErrInvalid
-			}
-			alternatives := strings.Split(glob[i+1:i+end], ",")
-			b.WriteString("(?:")
-			for j, alternative := range alternatives {
-				if j > 0 {
-					b.WriteString("|")
-				}
-				b.WriteString(regexp.QuoteMeta(alternative))
-			}
-			b.WriteString(")")
-			i += end
 		default:
 			b.WriteString(regexp.QuoteMeta(string(c)))
 		}
 	}
 	b.WriteString("$")
-	return regexp.Compile(b.String())
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		return false
+	}
+	return re.MatchString(segment)
 }
 
 // ---- B7: the pull request template asks for a risk tier. ----
