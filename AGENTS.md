@@ -68,10 +68,14 @@ frostyard/core — edit there, not here.
   covers.
 - The org **squash-merges PRs**: branch every PR off `main`, never stack a
   branch on another PR's branch.
-- A PR that touches a path in `.github/risk-paths.json` gets the label
-  `risk:high` from the risk-paths caller
+- A PR that touches a path in `.github/risk-paths.json` gets a level label
+  `level:L1` to `level:L4` from the `pr-triage` caller
+  ([core ADR-0078](https://github.com/frostyard/core/blob/main/docs/adr/0078-sort-pull-requests-by-levels-l1-to-l4.md));
+  L1 (read every line) and L2 (read the diff) also get `risk:high`
   ([core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)).
-  Never remove that label to make a PR ready: the author removes it only when
+  The caller removes `ready-for-human` when the head moves after the label
+  ([core ADR-0077](https://github.com/frostyard/core/blob/main/docs/adr/0077-bind-ready-for-human-to-the-head-commit.md)).
+  Never remove `risk:high` to make a PR ready: the author removes it only when
   the risky change leaves the PR, with the reason in the PR.
 - Report a vulnerability privately, as [SECURITY.md](SECURITY.md) says; never
   in a public issue.

@@ -6,12 +6,12 @@
 
 ### CI (`.github/workflows/ci.yml`)
 
-Runs on pull requests and pushes to `main`, as one job (`ci`, named
-`make ci`, timeout 45 minutes). The workflow sets top-level
-`permissions: contents: read` (least privilege). Every external action is
-pinned to a full 40-character commit SHA with a trailing `# vX.Y.Z` comment:
-`actions/checkout` v4.4.0, `actions/setup-go` v5.6.0, `jdx/mise-action`
-v5.2.6, `codecov/codecov-action` v4.6.0
+Runs on pull requests, pushes to `main` and merge-queue entries
+(`merge_group`), as one job (`ci`, named `make ci`, timeout 45 minutes). The
+workflow sets top-level `permissions: contents: read` (least privilege). Every
+external action is pinned to a full 40-character commit SHA with a trailing
+`# vX.Y.Z` comment: `actions/checkout` v4.4.0, `actions/setup-go` v5.6.0,
+`jdx/mise-action` v5.2.6, `codecov/codecov-action` v4.6.0
 ([core ADR-0021](https://github.com/frostyard/core/blob/main/docs/adr/0021-sha-pinned-actions-and-least-privilege-ci.md)).
 `release.yml` follows the same rule. The job runs these steps in order:
 
@@ -45,13 +45,17 @@ job, so the Makefile stays the only place that names the order.
 
 ### Risk paths (`.github/workflows/risk-paths.yml`)
 
-Runs on `pull_request_target` (opened, synchronize, reopened, edited). It
-checks out nothing and runs no pull-request code: it calls
-`frostyard/core/.github/workflows/risk-paths.yml` at a pinned commit, so the
-base branch's risk list and caller apply. A pull request that touches a glob
-in [`.github/risk-paths.json`](../../.github/risk-paths.json) gets the label
-`risk:high`
-([core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)).
+Runs on `pull_request_target` (opened, synchronize, reopened, edited,
+labeled). It checks out nothing and runs no pull-request code: it calls
+`frostyard/core/.github/workflows/pr-triage.yml` at a pinned commit, so the
+base branch's risk list and workflow apply. A pull request that touches a glob
+in [`.github/risk-paths.json`](../../.github/risk-paths.json) gets 1 level
+label, `level:L1` (read every line), `level:L2` (read the diff), `level:L3`
+(skim) or `level:L4` (title and CI), and `risk:high` at L1 and L2
+([core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md),
+[core ADR-0078](https://github.com/frostyard/core/blob/main/docs/adr/0078-sort-pull-requests-by-levels-l1-to-l4.md)).
+It removes `ready-for-human` when the head moves after the label
+([core ADR-0077](https://github.com/frostyard/core/blob/main/docs/adr/0077-bind-ready-for-human-to-the-head-commit.md)).
 It is not a required check, and its job holds `pull-requests: write` only.
 
 ### Release (`.github/workflows/release.yml`)

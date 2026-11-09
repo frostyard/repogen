@@ -14,7 +14,7 @@
 //	B7  the pull request template asks for a risk tier
 //	B8  .svu.yml names the tag pattern, and the bump recipe stops on a failure
 //	B10 the LICENSE is present and holds the MIT text
-//	B12 CI runs `make ci` on pull requests
+//	B12 CI runs `make ci` on pull requests and merge-queue entries
 //	B13 Dependabot covers every ecosystem in the tree
 //	B14 SECURITY.md names the private reporting channel
 //	B15 no CODEOWNERS file
@@ -695,13 +695,29 @@ func TestCheckoutPersistCredentials(t *testing.T) {
 
 // ---- B6: risk paths. ----
 
+// riskLevels are the 4 levels of a version 2 risk-path list (core ADR-0078).
+var riskLevels = map[string]bool{"L1": true, "L2": true, "L3": true, "L4": true}
+
+var (
+	// pinnedPrTriageRef is the value of the caller's `uses:` key (core ADR-0021).
+	pinnedPrTriageRef = regexp.MustCompile(`^frostyard/core/\.github/workflows/pr-triage\.yml@[0-9a-f]{40}$`)
+	oldCallerRef      = regexp.MustCompile(`uses: frostyard/core/\.github/workflows/risk-paths\.yml@[0-9a-f]{40}`)
+	// callsKey matches a `key: value` line whose value opens a block scalar.
+	callsBlockScalar = regexp.MustCompile(`^\s*(?:-\s+)?[A-Za-z0-9_.-]+:[ \t]+[|>][-+0-9]*([ \t]+#.*)?$`)
+	usesKey          = regexp.MustCompile(`^uses:[ \t]*(.*)$`)
+	usesComment      = regexp.MustCompile(`[ \t]+#.*$`)
+	trailingComment  = regexp.MustCompile(`[ \t]+#.*$`)
+)
+
 type riskPath struct {
-	Glob string `json:"glob"`
-	Why  string `json:"why"`
+	Glob  string `json:"glob"`
+	Level string `json:"level"`
+	Why   string `json:"why"`
 }
 
 type riskPathsFile struct {
 	SchemaVersion int        `json:"schema_version"`
+	DefaultLevel  string     `json:"default_level"`
 	Paths         []riskPath `json:"paths"`
 }
 
@@ -709,45 +725,18 @@ func TestRepositoryBaselineB6RiskPaths(t *testing.T) {
 	if !trackedSet(t)[".github/risk-paths.json"] {
 		t.Fatal(".github/risk-paths.json must be tracked")
 	}
+	list := readRepoFile(t, ".github/risk-paths.json")
+	for _, problem := range riskPathsListProblems(list) {
+		t.Errorf(".github/risk-paths.json: %s", problem)
+	}
+	for _, problem := range riskPathsCallerProblems(readRepoFile(t, ".github/workflows/risk-paths.yml")) {
+		t.Errorf(".github/workflows/risk-paths.yml: %s", problem)
+	}
+
 	var spec riskPathsFile
-	if err := json.Unmarshal([]byte(readRepoFile(t, ".github/risk-paths.json")), &spec); err != nil {
+	if err := json.Unmarshal([]byte(list), &spec); err != nil {
 		t.Fatalf("parse .github/risk-paths.json: %v", err)
 	}
-	if spec.SchemaVersion != 1 {
-		t.Errorf("schema_version must be 1, got %d", spec.SchemaVersion)
-	}
-	if len(spec.Paths) == 0 {
-		t.Fatal("paths must not be empty")
-	}
-	seen := make(map[string]bool)
-	for _, entry := range spec.Paths {
-		if strings.TrimSpace(entry.Glob) == "" {
-			t.Error("every path needs a non-empty glob")
-			continue
-		}
-		if seen[entry.Glob] {
-			t.Errorf("duplicate glob %q", entry.Glob)
-		}
-		seen[entry.Glob] = true
-		if strings.TrimSpace(entry.Why) == "" {
-			t.Errorf("glob %q needs a why", entry.Glob)
-		}
-		if len(entry.Why) > 200 {
-			t.Errorf("glob %q has a why of %d characters, the limit is 200", entry.Glob, len(entry.Why))
-		}
-	}
-	for _, required := range []string{".github/risk-paths.json", ".github/workflows/risk-paths.yml"} {
-		if !seen[required] {
-			t.Errorf("risk-paths.json must list %q", required)
-		}
-	}
-
-	caller := readRepoFile(t, ".github/workflows/risk-paths.yml")
-	callerRef := regexp.MustCompile(`uses: frostyard/core/\.github/workflows/risk-paths\.yml@[0-9a-f]{40}`)
-	if !callerRef.MatchString(caller) {
-		t.Error(".github/workflows/risk-paths.yml must call frostyard/core's workflow at a 40-character SHA")
-	}
-
 	for _, mustMatch := range []string{
 		".github/workflows/release.yml",
 		".goreleaser.yml",
@@ -777,6 +766,349 @@ func TestRepositoryBaselineB6RiskPaths(t *testing.T) {
 	}
 }
 
+// riskPathsListProblems validates a version 2 risk-path list against core
+// docs/specs/risk-paths.md: schema_version 2, a default_level and a level on
+// each entry in L1 to L4, no unknown key, no duplicate glob, and rule C with
+// levels. A version 1 list fails.
+func riskPathsListProblems(list string) []string {
+	var problems []string
+	var spec riskPathsFile
+	dec := json.NewDecoder(strings.NewReader(list))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&spec); err != nil {
+		return []string{"parse: " + err.Error()}
+	}
+	if spec.SchemaVersion != 2 {
+		problems = append(problems, fmt.Sprintf("schema_version must be 2, got %d", spec.SchemaVersion))
+	}
+	if !riskLevels[spec.DefaultLevel] {
+		problems = append(problems, fmt.Sprintf("default_level must be 1 of L1 to L4, got %q", spec.DefaultLevel))
+	}
+	if len(spec.Paths) == 0 {
+		problems = append(problems, "paths must not be empty")
+	}
+	seen := make(map[string]bool)
+	for _, entry := range spec.Paths {
+		if strings.TrimSpace(entry.Glob) == "" {
+			problems = append(problems, "every path needs a non-empty glob")
+			continue
+		}
+		if seen[entry.Glob] {
+			problems = append(problems, fmt.Sprintf("duplicate glob %q", entry.Glob))
+		}
+		seen[entry.Glob] = true
+		if !riskLevels[entry.Level] {
+			problems = append(problems, fmt.Sprintf("glob %q needs a level in L1 to L4, got %q", entry.Glob, entry.Level))
+		}
+		if strings.TrimSpace(entry.Why) == "" {
+			problems = append(problems, fmt.Sprintf("glob %q needs a why", entry.Glob))
+		}
+		if len(entry.Why) > 200 {
+			problems = append(problems, fmt.Sprintf("glob %q has a why of %d characters, the limit is 200", entry.Glob, len(entry.Why)))
+		}
+		// Rule C: a glob that matches the list or the caller is at L1 or L2.
+		for _, required := range []string{".github/risk-paths.json", ".github/workflows/risk-paths.yml"} {
+			if globMatch(entry.Glob, required) && entry.Level != "L1" && entry.Level != "L2" {
+				problems = append(problems, fmt.Sprintf("glob %q matches %q, so it must be L1 or L2", entry.Glob, required))
+			}
+		}
+	}
+	for _, required := range []string{".github/risk-paths.json", ".github/workflows/risk-paths.yml"} {
+		if !seen[required] {
+			problems = append(problems, fmt.Sprintf("risk-paths.json must list %q", required))
+		}
+	}
+	return problems
+}
+
+// yamlStructureLines drops what is not YAML structure: a comment-only line,
+// and every line of a block scalar (a line under `key: |` or `key: >`), which
+// is script text and never a key. Blank lines are gone already.
+func yamlStructureLines(lines []yamlLine) []yamlLine {
+	var out []yamlLine
+	blockIndent := -1
+	for _, line := range lines {
+		if strings.HasPrefix(line.text, "#") {
+			continue
+		}
+		if blockIndent >= 0 && line.indent > blockIndent {
+			continue
+		}
+		blockIndent = -1
+		// A trailing comment is not part of a key or its value.
+		line.text = strings.TrimSpace(trailingComment.ReplaceAllString(line.text, ""))
+		out = append(out, line)
+		if callsBlockScalar.MatchString(line.raw) {
+			blockIndent = line.indent
+		}
+	}
+	return out
+}
+
+// topLevelSection returns the lines under the first top-level `key:` of a
+// workflow, up to the next top-level key.
+func topLevelSection(lines []yamlLine, key string) ([]yamlLine, bool) {
+	for i, line := range lines {
+		if line.indent != 0 || line.text != key+":" {
+			continue
+		}
+		var section []yamlLine
+		for _, child := range lines[i+1:] {
+			if child.indent == 0 {
+				break
+			}
+			section = append(section, child)
+		}
+		return section, true
+	}
+	return nil, false
+}
+
+// childBlock returns the lines under the `name:` key of a section, and whether
+// the section holds that key. The keys of a section are its least indented
+// lines, so a nested key of another block is not the one found.
+func childBlock(section []yamlLine, name string) ([]yamlLine, bool) {
+	indent := keyIndent(section)
+	for i, line := range section {
+		if line.indent != indent || line.text != name+":" {
+			continue
+		}
+		var block []yamlLine
+		for _, child := range section[i+1:] {
+			if child.indent <= indent {
+				break
+			}
+			block = append(block, child)
+		}
+		return block, true
+	}
+	return nil, false
+}
+
+// keyIndent is the indent of the keys of a block: its least indented line.
+func keyIndent(block []yamlLine) int {
+	indent := -1
+	for _, line := range block {
+		if indent < 0 || line.indent < indent {
+			indent = line.indent
+		}
+	}
+	return indent
+}
+
+// blockPinsPrTriage reports whether a job calls core's pr-triage workflow at a
+// full SHA from its own `uses:` key: a deeper `uses:` is not the job's.
+func blockPinsPrTriage(job []yamlLine) bool {
+	indent := keyIndent(job)
+	for _, line := range job {
+		if line.indent != indent {
+			continue
+		}
+		m := usesKey.FindStringSubmatch(line.text)
+		if m == nil {
+			continue
+		}
+		value := strings.TrimSpace(usesComment.ReplaceAllString(m[1], ""))
+		return pinnedPrTriageRef.MatchString(value)
+	}
+	return false
+}
+
+// blockListsLabeledType reports whether a trigger lists the type labeled.
+func blockListsLabeledType(trigger []yamlLine) bool {
+	indent := keyIndent(trigger)
+	for _, line := range trigger {
+		if line.indent != indent || !strings.HasPrefix(line.text, "types:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line.text, "types:"))
+		if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+			continue
+		}
+		for _, name := range strings.Split(strings.Trim(value, "[]"), ",") {
+			if strings.TrimSpace(name) == "labeled" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// riskPathsCallerProblems checks the pr-triage caller (core ADR-0068, ADR-0077,
+// ADR-0078): it runs on pull_request_target, and its job pr-triage, inside the
+// top-level `jobs:` mapping, calls core's pr-triage workflow at a full SHA with
+// the labeled event under `on: pull_request_target:`. A `uses:` line of another
+// job, or the same text inside a `run:` block, is not the caller. A caller that
+// still calls the retired risk-paths workflow fails.
+func riskPathsCallerProblems(caller string) []string {
+	var problems []string
+	if oldCallerRef.MatchString(caller) {
+		problems = append(problems, "the caller must not call frostyard/core's retired risk-paths workflow")
+	}
+	lines := yamlStructureLines(yamlLines(caller))
+	onSection, _ := topLevelSection(lines, "on")
+	trigger, hasTrigger := childBlock(onSection, "pull_request_target")
+	if !hasTrigger {
+		problems = append(problems, "the caller must run on pull_request_target")
+	} else if !blockListsLabeledType(trigger) {
+		problems = append(problems, "the caller must run on the labeled event")
+	}
+	jobsSection, _ := topLevelSection(lines, "jobs")
+	job, hasJob := childBlock(jobsSection, "pr-triage")
+	if !hasJob {
+		problems = append(problems, "the caller must use the job id pr-triage")
+	} else if !blockPinsPrTriage(job) {
+		problems = append(problems, "the caller must call frostyard/core's pr-triage workflow at a 40-character SHA from the job pr-triage")
+	}
+	return problems
+}
+
+func TestRiskPathsProblems(t *testing.T) {
+	const validList = `{"schema_version": 2, "default_level": "L3", "paths": [
+		{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+		{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+		{"glob": "signing/**", "level": "L1", "why": "signing and keys"}
+	]}`
+	const callerPin = "frostyard/core/.github/workflows/pr-triage.yml@c996ea3fb54bcf1a3c621113522213702a7673e2"
+	const validCaller = `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+  pr-triage:
+    uses: ` + callerPin + ` # pinned
+`
+	listCases := []struct {
+		name    string
+		list    string
+		wantBad int
+	}{
+		{"version 2 list", validList, 0},
+		{"version 1 list", `{"schema_version": 1, "paths": [
+			{"glob": ".github/risk-paths.json", "why": "governance"},
+			{"glob": ".github/workflows/risk-paths.yml", "why": "governance"}
+		]}`, 6},
+		{"missing level", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance"},
+			{"glob": "signing/**", "why": "signing and keys"}
+		]}`, 1},
+		{"bad default_level", `{"schema_version": 2, "default_level": "L9", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance"}
+		]}`, 1},
+		{"unknown key", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance", "owner": "x"}
+		]}`, 1},
+		{"caller glob at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
+			{"glob": ".github/workflows/*.yml", "level": "L3", "why": "workflows"}
+		]}`, 2},
+		{"caller glob with a question mark at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+			{"glob": ".github/workflows/risk-paths.ym?", "level": "L3", "why": "governance: the caller"}
+		]}`, 1},
+		{"list glob with a leading double star at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+			{"glob": "**/.github/risk-paths.json", "level": "L3", "why": "governance: the list"}
+		]}`, 1},
+		{"list glob with a brace group at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+			{"glob": ".github/{risk-paths.jso?,unused}", "level": "L3", "why": "governance: the list"}
+		]}`, 1},
+	}
+	for _, tc := range listCases {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := riskPathsListProblems(tc.list)
+			if len(problems) != tc.wantBad {
+				t.Fatalf("got %d problem(s) %q, want %d", len(problems), problems, tc.wantBad)
+			}
+		})
+	}
+	callerCases := []struct {
+		name    string
+		caller  string
+		wantBad int
+	}{
+		{"pr-triage caller", validCaller, 0},
+		{"inline comments on the trigger and the job", strings.NewReplacer("on:\n", "on: # events\n", "  pull_request_target:\n", "  pull_request_target: # base branch\n", "labeled]\n", "labeled] # readiness [L1]\n", "  pr-triage:\n", "  pr-triage: # core\n").Replace(validCaller), 0},
+		{"caller pins risk-paths.yml", strings.Replace(validCaller, "pr-triage.yml@", "risk-paths.yml@", 1), 2},
+		{"caller without the labeled event", strings.Replace(validCaller, ", labeled", "", 1), 1},
+		{"caller with another job id", strings.Replace(validCaller, "  pr-triage:", "  risk-paths:", 1), 1},
+		{"pinned uses under another job", `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+  pr-triage:
+    permissions:
+      contents: read
+    steps:
+      - run: echo triage
+  triage:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ` + callerPin + `
+`, 1},
+		{"uses text in a run block", `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+  pr-triage:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          uses: ` + callerPin + `
+`, 1},
+		{"job header inside a run-name block", strings.Replace(validCaller, "  pr-triage:", "  other:", 1) + `run-name: |
+  pr-triage:
+    uses: ` + callerPin + `
+`, 1},
+		{"labeled type of another trigger", `name: PR triage
+on:
+  pull_request:
+    types: [labeled]
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+permissions: {}
+jobs:
+  pr-triage:
+    uses: ` + callerPin + `
+`, 1},
+		{"caller with comments before its uses", `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+# a note at indent 0
+  pr-triage:
+    permissions:
+      contents: read
+# a note at indent 0 inside the job
+  # a note at indent 2 inside the job
+    # a note at indent 4, before uses
+    uses: ` + callerPin + `
+`, 0},
+	}
+	for _, tc := range callerCases {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := riskPathsCallerProblems(tc.caller)
+			if len(problems) != tc.wantBad {
+				t.Fatalf("got %d problem(s) %q, want %d", len(problems), problems, tc.wantBad)
+			}
+		})
+	}
+}
+
 func TestGlobMatch(t *testing.T) {
 	cases := []struct {
 		glob  string
@@ -788,6 +1120,28 @@ func TestGlobMatch(t *testing.T) {
 		{"internal/signer/**", "internal/signer/gpg.go", true},
 		{"internal/signer/**", "internal/signer/nested/deep/gpg.go", true},
 		{"internal/signer/**", "internal/other/gpg.go", false},
+		{"internal/signer/**", "internal/signer", true},
+		// Unicode literals, outside and inside a brace group, and an astral
+		// character: `?` is 1 code point, as in core's "u" pattern.
+		{"café/**", "café/file.go", true},
+		{"{café,thé}/x.go", "thé/x.go", true},
+		{"caf?/x", "café/x", true},
+		{"a?b", "a😀b", true},
+		{"a??b", "a😀b", false},
+		{"{😀,x}/*", "😀/f", true},
+		{"**/.github/risk-paths.json", ".github/risk-paths.json", true},
+		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yml", true},
+		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yaml", false},
+		{"a**b", "a/x/b", false},
+		{"a**b", "axxb", true},
+		{"**/x", "/x", true},
+		{"**", "", false},
+		{"{a?,b}", "ax", true},
+		{"{a?,b}", "a", false},
+		{"{a?,b}", "b", true},
+		{".github/{risk-paths.jso?,unused}", ".github/risk-paths.json", true},
+		{".github/{risk-paths.jso?,unused}", ".github/unused", true},
+		{".github/{risk-paths.jso?,unused}", ".github/other.json", false},
 		{"**/index.html", "index.html", true},
 		{"**/index.html", "a/b/index.html", true},
 		{"**/index.html", "a/b/index.htm", false},
@@ -811,58 +1165,119 @@ func TestGlobMatch(t *testing.T) {
 	}
 }
 
-// globMatch reports whether a risk glob matches a whole repository path.
-// The supported subset is `*` (within one segment), `**` (any segments),
-// `**/` (zero or more directories), `?` (one character) and one level of
-// `{a,b}` alternation.
+// globMatch reports whether a risk glob matches a whole repository path, as
+// core's matchGlob does (core scripts/lib/risk-paths.mjs): the brace groups are
+// expanded first, then each expansion matches whole segments, where `**` as a
+// whole segment matches 0 or more segments. An empty path matches nothing.
 func globMatch(glob, name string) bool {
-	pattern, err := globRegexp(glob)
-	if err != nil {
+	if name == "" {
 		return false
 	}
-	return pattern.MatchString(name)
+	pathSegments := strings.Split(name, "/")
+	for _, expansion := range expandBraces(glob) {
+		if matchSegments(strings.Split(expansion, "/"), pathSegments) {
+			return true
+		}
+	}
+	return false
 }
 
-func globRegexp(glob string) (*regexp.Regexp, error) {
+// expandBraces expands the `{a,b}` groups of a glob, as core's expandBraces
+// does: left to right, no nesting, at least 2 alternatives, none empty, and at
+// most 256 globs. A malformed group gives no expansion, so the glob matches
+// nothing.
+func expandBraces(glob string) []string {
+	const maxBraceExpansions = 256
+	var parts [][]string
+	literal := ""
+	for i := 0; i < len(glob); i++ {
+		switch glob[i] {
+		case '}':
+			return nil
+		case '{':
+			end := strings.IndexByte(glob[i+1:], '}')
+			if end < 0 {
+				return nil
+			}
+			end += i + 1
+			if open := strings.IndexByte(glob[i+1:], '{'); open >= 0 && i+1+open < end {
+				return nil
+			}
+			group := strings.Split(glob[i+1:end], ",")
+			if len(group) < 2 {
+				return nil
+			}
+			for _, alternative := range group {
+				if alternative == "" {
+					return nil
+				}
+			}
+			parts = append(parts, []string{literal}, group)
+			literal = ""
+			i = end
+		default:
+			// A byte slice keeps a multi-byte UTF-8 character intact.
+			literal += glob[i : i+1]
+		}
+	}
+	parts = append(parts, []string{literal})
+	expansions := []string{""}
+	for _, part := range parts {
+		var next []string
+		for _, prefix := range expansions {
+			for _, alternative := range part {
+				next = append(next, prefix+alternative)
+			}
+		}
+		if len(next) > maxBraceExpansions {
+			return nil
+		}
+		expansions = next
+	}
+	return expansions
+}
+
+// matchSegments matches whole segments, as core's matchSegments does: `**`
+// matches 0 or more segments, and every other glob segment matches exactly 1
+// path segment.
+func matchSegments(globSegments, pathSegments []string) bool {
+	if len(globSegments) == 0 {
+		return len(pathSegments) == 0
+	}
+	if globSegments[0] == "**" {
+		return matchSegments(globSegments[1:], pathSegments) ||
+			(len(pathSegments) > 0 && matchSegments(globSegments, pathSegments[1:]))
+	}
+	if len(pathSegments) == 0 {
+		return false
+	}
+	return segmentMatch(globSegments[0], pathSegments[0]) &&
+		matchSegments(globSegments[1:], pathSegments[1:])
+}
+
+// segmentMatch matches 1 glob segment, as core's segmentPattern does: `*` is
+// any run of characters in the segment and `?` is 1 character of the segment.
+func segmentMatch(pattern, segment string) bool {
 	var b strings.Builder
 	b.WriteString("^")
-	for i := 0; i < len(glob); i++ {
-		switch c := glob[i]; c {
+	// Range over runes, as core's pattern (a "u" regular expression) reads
+	// code points: `?` is 1 character, not 1 byte.
+	for _, c := range pattern {
+		switch c {
 		case '*':
-			if i+1 < len(glob) && glob[i+1] == '*' {
-				i++
-				if i+1 < len(glob) && glob[i+1] == '/' {
-					i++
-					b.WriteString(`(?:[^/]+/)*`)
-				} else {
-					b.WriteString(`.*`)
-				}
-			} else {
-				b.WriteString(`[^/]*`)
-			}
+			b.WriteString(`[^/]*`)
 		case '?':
 			b.WriteString(`[^/]`)
-		case '{':
-			end := strings.IndexByte(glob[i:], '}')
-			if end < 0 {
-				return nil, os.ErrInvalid
-			}
-			alternatives := strings.Split(glob[i+1:i+end], ",")
-			b.WriteString("(?:")
-			for j, alternative := range alternatives {
-				if j > 0 {
-					b.WriteString("|")
-				}
-				b.WriteString(regexp.QuoteMeta(alternative))
-			}
-			b.WriteString(")")
-			i += end
 		default:
 			b.WriteString(regexp.QuoteMeta(string(c)))
 		}
 	}
 	b.WriteString("$")
-	return regexp.Compile(b.String())
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		return false
+	}
+	return re.MatchString(segment)
 }
 
 // ---- B7: the pull request template asks for a risk tier. ----
@@ -1280,6 +1695,7 @@ func TestRepositoryBaselineB12CIRunsMakeCI(t *testing.T) {
 	lines := yamlLines(readRepoFile(t, ".github/workflows/ci.yml"))
 
 	triggers := false
+	mergeGroup := false
 	for i, line := range lines {
 		if line.indent != 0 || line.text != "on:" {
 			continue
@@ -1288,10 +1704,18 @@ func TestRepositoryBaselineB12CIRunsMakeCI(t *testing.T) {
 			if strings.HasPrefix(lines[j].text, "pull_request:") {
 				triggers = true
 			}
+			if strings.HasPrefix(lines[j].text, "merge_group:") {
+				mergeGroup = true
+			}
 		}
 	}
 	if !triggers {
 		t.Error("ci.yml must run on pull_request")
+	}
+	// The merge queue only reports the required `make ci` check when the
+	// workflow also runs on merge_group (core issue #222, rule N3).
+	if !mergeGroup {
+		t.Error("ci.yml must run on merge_group")
 	}
 
 	gate := false
