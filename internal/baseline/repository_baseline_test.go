@@ -1876,7 +1876,7 @@ func TestRepositoryBaselineB17Readme(t *testing.T) {
 	if words := len(strings.Fields(readme)); words > 1000 {
 		t.Errorf("README.md has %d words, the limit is 1000", words)
 	}
-	for _, drawing := range []string{"âââ", "âââ"} {
+	for _, drawing := range []string{"├──", "└──"} {
 		if strings.Contains(readme, drawing) {
 			t.Errorf("README.md must not hold a tree drawing (%q)", drawing)
 		}
