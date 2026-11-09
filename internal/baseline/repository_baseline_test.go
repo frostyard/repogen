@@ -14,7 +14,7 @@
 //	B7  the pull request template asks for a risk tier
 //	B8  .svu.yml names the tag pattern, and the bump recipe stops on a failure
 //	B10 the LICENSE is present and holds the MIT text
-//	B12 CI runs `make ci` on pull requests
+//	B12 CI runs `make ci` on pull requests and merge-queue entries
 //	B13 Dependabot covers every ecosystem in the tree
 //	B14 SECURITY.md names the private reporting channel
 //	B15 no CODEOWNERS file
@@ -695,13 +695,23 @@ func TestCheckoutPersistCredentials(t *testing.T) {
 
 // ---- B6: risk paths. ----
 
+// riskLevels are the 4 levels of a version 2 risk-path list (core ADR-0078).
+var riskLevels = map[string]bool{"L1": true, "L2": true, "L3": true, "L4": true}
+
+var (
+	prTriageCallerRef = regexp.MustCompile(`uses: frostyard/core/\.github/workflows/pr-triage\.yml@[0-9a-f]{40}`)
+	oldCallerRef      = regexp.MustCompile(`uses: frostyard/core/\.github/workflows/risk-paths\.yml@[0-9a-f]{40}`)
+)
+
 type riskPath struct {
-	Glob string `json:"glob"`
-	Why  string `json:"why"`
+	Glob  string `json:"glob"`
+	Level string `json:"level"`
+	Why   string `json:"why"`
 }
 
 type riskPathsFile struct {
 	SchemaVersion int        `json:"schema_version"`
+	DefaultLevel  string     `json:"default_level"`
 	Paths         []riskPath `json:"paths"`
 }
 
@@ -709,45 +719,18 @@ func TestRepositoryBaselineB6RiskPaths(t *testing.T) {
 	if !trackedSet(t)[".github/risk-paths.json"] {
 		t.Fatal(".github/risk-paths.json must be tracked")
 	}
+	list := readRepoFile(t, ".github/risk-paths.json")
+	for _, problem := range riskPathsListProblems(list) {
+		t.Errorf(".github/risk-paths.json: %s", problem)
+	}
+	for _, problem := range riskPathsCallerProblems(readRepoFile(t, ".github/workflows/risk-paths.yml")) {
+		t.Errorf(".github/workflows/risk-paths.yml: %s", problem)
+	}
+
 	var spec riskPathsFile
-	if err := json.Unmarshal([]byte(readRepoFile(t, ".github/risk-paths.json")), &spec); err != nil {
+	if err := json.Unmarshal([]byte(list), &spec); err != nil {
 		t.Fatalf("parse .github/risk-paths.json: %v", err)
 	}
-	if spec.SchemaVersion != 1 {
-		t.Errorf("schema_version must be 1, got %d", spec.SchemaVersion)
-	}
-	if len(spec.Paths) == 0 {
-		t.Fatal("paths must not be empty")
-	}
-	seen := make(map[string]bool)
-	for _, entry := range spec.Paths {
-		if strings.TrimSpace(entry.Glob) == "" {
-			t.Error("every path needs a non-empty glob")
-			continue
-		}
-		if seen[entry.Glob] {
-			t.Errorf("duplicate glob %q", entry.Glob)
-		}
-		seen[entry.Glob] = true
-		if strings.TrimSpace(entry.Why) == "" {
-			t.Errorf("glob %q needs a why", entry.Glob)
-		}
-		if len(entry.Why) > 200 {
-			t.Errorf("glob %q has a why of %d characters, the limit is 200", entry.Glob, len(entry.Why))
-		}
-	}
-	for _, required := range []string{".github/risk-paths.json", ".github/workflows/risk-paths.yml"} {
-		if !seen[required] {
-			t.Errorf("risk-paths.json must list %q", required)
-		}
-	}
-
-	caller := readRepoFile(t, ".github/workflows/risk-paths.yml")
-	callerRef := regexp.MustCompile(`uses: frostyard/core/\.github/workflows/risk-paths\.yml@[0-9a-f]{40}`)
-	if !callerRef.MatchString(caller) {
-		t.Error(".github/workflows/risk-paths.yml must call frostyard/core's workflow at a 40-character SHA")
-	}
-
 	for _, mustMatch := range []string{
 		".github/workflows/release.yml",
 		".goreleaser.yml",
@@ -774,6 +757,172 @@ func TestRepositoryBaselineB6RiskPaths(t *testing.T) {
 		if !matched {
 			t.Errorf("%s matches no risk glob", mustMatch)
 		}
+	}
+}
+
+// riskPathsListProblems validates a version 2 risk-path list against core
+// docs/specs/risk-paths.md: schema_version 2, a default_level and a level on
+// each entry in L1 to L4, no unknown key, no duplicate glob, and rule C with
+// levels. A version 1 list fails.
+func riskPathsListProblems(list string) []string {
+	var problems []string
+	var spec riskPathsFile
+	dec := json.NewDecoder(strings.NewReader(list))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&spec); err != nil {
+		return []string{"parse: " + err.Error()}
+	}
+	if spec.SchemaVersion != 2 {
+		problems = append(problems, fmt.Sprintf("schema_version must be 2, got %d", spec.SchemaVersion))
+	}
+	if !riskLevels[spec.DefaultLevel] {
+		problems = append(problems, fmt.Sprintf("default_level must be 1 of L1 to L4, got %q", spec.DefaultLevel))
+	}
+	if len(spec.Paths) == 0 {
+		problems = append(problems, "paths must not be empty")
+	}
+	seen := make(map[string]bool)
+	for _, entry := range spec.Paths {
+		if strings.TrimSpace(entry.Glob) == "" {
+			problems = append(problems, "every path needs a non-empty glob")
+			continue
+		}
+		if seen[entry.Glob] {
+			problems = append(problems, fmt.Sprintf("duplicate glob %q", entry.Glob))
+		}
+		seen[entry.Glob] = true
+		if !riskLevels[entry.Level] {
+			problems = append(problems, fmt.Sprintf("glob %q needs a level in L1 to L4, got %q", entry.Glob, entry.Level))
+		}
+		if strings.TrimSpace(entry.Why) == "" {
+			problems = append(problems, fmt.Sprintf("glob %q needs a why", entry.Glob))
+		}
+		if len(entry.Why) > 200 {
+			problems = append(problems, fmt.Sprintf("glob %q has a why of %d characters, the limit is 200", entry.Glob, len(entry.Why)))
+		}
+		// Rule C: a glob that matches the list or the caller is at L1 or L2.
+		for _, required := range []string{".github/risk-paths.json", ".github/workflows/risk-paths.yml"} {
+			if globMatch(entry.Glob, required) && entry.Level != "L1" && entry.Level != "L2" {
+				problems = append(problems, fmt.Sprintf("glob %q matches %q, so it must be L1 or L2", entry.Glob, required))
+			}
+		}
+	}
+	for _, required := range []string{".github/risk-paths.json", ".github/workflows/risk-paths.yml"} {
+		if !seen[required] {
+			problems = append(problems, fmt.Sprintf("risk-paths.json must list %q", required))
+		}
+	}
+	return problems
+}
+
+// riskPathsCallerProblems checks the pr-triage caller (core ADR-0068, ADR-0077,
+// ADR-0078): it runs on pull_request_target and calls core's pr-triage
+// workflow at a full SHA with the job id pr-triage and the labeled event. A
+// caller that still calls the retired risk-paths workflow fails.
+func riskPathsCallerProblems(caller string) []string {
+	var problems []string
+	if !prTriageCallerRef.MatchString(caller) {
+		problems = append(problems, "the caller must call frostyard/core's pr-triage workflow at a 40-character SHA")
+	}
+	if oldCallerRef.MatchString(caller) {
+		problems = append(problems, "the caller must not call frostyard/core's retired risk-paths workflow")
+	}
+	onPullRequestTarget := false
+	job := false
+	labeled := false
+	for _, line := range yamlLines(caller) {
+		if strings.HasPrefix(line.text, "#") {
+			continue
+		}
+		if line.text == "pull_request_target:" {
+			onPullRequestTarget = true
+		}
+		if line.indent == 2 && line.text == "pr-triage:" {
+			job = true
+		}
+		if strings.HasPrefix(line.text, "types:") && strings.Contains(line.text, "labeled") {
+			labeled = true
+		}
+	}
+	if !onPullRequestTarget {
+		problems = append(problems, "the caller must run on pull_request_target")
+	}
+	if !job {
+		problems = append(problems, "the caller must use the job id pr-triage")
+	}
+	if !labeled {
+		problems = append(problems, "the caller must run on the labeled event")
+	}
+	return problems
+}
+
+func TestRiskPathsProblems(t *testing.T) {
+	const validList = `{"schema_version": 2, "default_level": "L3", "paths": [
+		{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+		{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+		{"glob": "signing/**", "level": "L1", "why": "signing and keys"}
+	]}`
+	const validCaller = `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+  pr-triage:
+    uses: frostyard/core/.github/workflows/pr-triage.yml@c996ea3fb54bcf1a3c621113522213702a7673e2 # pinned
+`
+	listCases := []struct {
+		name    string
+		list    string
+		wantBad int
+	}{
+		{"version 2 list", validList, 0},
+		{"version 1 list", `{"schema_version": 1, "paths": [
+			{"glob": ".github/risk-paths.json", "why": "governance"},
+			{"glob": ".github/workflows/risk-paths.yml", "why": "governance"}
+		]}`, 6},
+		{"missing level", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance"},
+			{"glob": "signing/**", "why": "signing and keys"}
+		]}`, 1},
+		{"bad default_level", `{"schema_version": 2, "default_level": "L9", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance"}
+		]}`, 1},
+		{"unknown key", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance", "owner": "x"}
+		]}`, 1},
+		{"caller glob at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
+			{"glob": ".github/workflows/*.yml", "level": "L3", "why": "workflows"}
+		]}`, 2},
+	}
+	for _, tc := range listCases {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := riskPathsListProblems(tc.list)
+			if len(problems) != tc.wantBad {
+				t.Fatalf("got %d problem(s) %q, want %d", len(problems), problems, tc.wantBad)
+			}
+		})
+	}
+	callerCases := []struct {
+		name    string
+		caller  string
+		wantBad int
+	}{
+		{"pr-triage caller", validCaller, 0},
+		{"caller pins risk-paths.yml", strings.Replace(validCaller, "pr-triage.yml@", "risk-paths.yml@", 1), 2},
+		{"caller without the labeled event", strings.Replace(validCaller, ", labeled", "", 1), 1},
+		{"caller with another job id", strings.Replace(validCaller, "  pr-triage:", "  risk-paths:", 1), 1},
+	}
+	for _, tc := range callerCases {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := riskPathsCallerProblems(tc.caller)
+			if len(problems) != tc.wantBad {
+				t.Fatalf("got %d problem(s) %q, want %d", len(problems), problems, tc.wantBad)
+			}
+		})
 	}
 }
 
@@ -1280,6 +1429,7 @@ func TestRepositoryBaselineB12CIRunsMakeCI(t *testing.T) {
 	lines := yamlLines(readRepoFile(t, ".github/workflows/ci.yml"))
 
 	triggers := false
+	mergeGroup := false
 	for i, line := range lines {
 		if line.indent != 0 || line.text != "on:" {
 			continue
@@ -1288,10 +1438,18 @@ func TestRepositoryBaselineB12CIRunsMakeCI(t *testing.T) {
 			if strings.HasPrefix(lines[j].text, "pull_request:") {
 				triggers = true
 			}
+			if strings.HasPrefix(lines[j].text, "merge_group:") {
+				mergeGroup = true
+			}
 		}
 	}
 	if !triggers {
 		t.Error("ci.yml must run on pull_request")
+	}
+	// The merge queue only reports the required `make ci` check when the
+	// workflow also runs on merge_group (core issue #222, rule N3).
+	if !mergeGroup {
+		t.Error("ci.yml must run on merge_group")
 	}
 
 	gate := false
