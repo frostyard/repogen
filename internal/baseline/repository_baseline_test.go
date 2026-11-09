@@ -1121,6 +1121,14 @@ func TestGlobMatch(t *testing.T) {
 		{"internal/signer/**", "internal/signer/nested/deep/gpg.go", true},
 		{"internal/signer/**", "internal/other/gpg.go", false},
 		{"internal/signer/**", "internal/signer", true},
+		// Unicode literals, outside and inside a brace group, and an astral
+		// character: `?` is 1 code point, as in core's "u" pattern.
+		{"café/**", "café/file.go", true},
+		{"{café,thé}/x.go", "thé/x.go", true},
+		{"caf?/x", "café/x", true},
+		{"a?b", "a😀b", true},
+		{"a??b", "a😀b", false},
+		{"{😀,x}/*", "😀/f", true},
 		{"**/.github/risk-paths.json", ".github/risk-paths.json", true},
 		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yml", true},
 		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yaml", false},
@@ -1208,7 +1216,8 @@ func expandBraces(glob string) []string {
 			literal = ""
 			i = end
 		default:
-			literal += string(glob[i])
+			// A byte slice keeps a multi-byte UTF-8 character intact.
+			literal += glob[i : i+1]
 		}
 	}
 	parts = append(parts, []string{literal})
@@ -1251,8 +1260,10 @@ func matchSegments(globSegments, pathSegments []string) bool {
 func segmentMatch(pattern, segment string) bool {
 	var b strings.Builder
 	b.WriteString("^")
-	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; c {
+	// Range over runes, as core's pattern (a "u" regular expression) reads
+	// code points: `?` is 1 character, not 1 byte.
+	for _, c := range pattern {
+		switch c {
 		case '*':
 			b.WriteString(`[^/]*`)
 		case '?':
@@ -1865,7 +1876,7 @@ func TestRepositoryBaselineB17Readme(t *testing.T) {
 	if words := len(strings.Fields(readme)); words > 1000 {
 		t.Errorf("README.md has %d words, the limit is 1000", words)
 	}
-	for _, drawing := range []string{"├──", "└──"} {
+	for _, drawing := range []string{"âââ", "âââ"} {
 		if strings.Contains(readme, drawing) {
 			t.Errorf("README.md must not hold a tree drawing (%q)", drawing)
 		}
