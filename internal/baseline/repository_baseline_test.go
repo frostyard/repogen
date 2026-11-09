@@ -699,8 +699,14 @@ func TestCheckoutPersistCredentials(t *testing.T) {
 var riskLevels = map[string]bool{"L1": true, "L2": true, "L3": true, "L4": true}
 
 var (
-	prTriageCallerRef = regexp.MustCompile(`uses: frostyard/core/\.github/workflows/pr-triage\.yml@[0-9a-f]{40}`)
+	// pinnedPrTriageRef is the value of the caller's `uses:` key (core ADR-0021).
+	pinnedPrTriageRef = regexp.MustCompile(`^frostyard/core/\.github/workflows/pr-triage\.yml@[0-9a-f]{40}$`)
 	oldCallerRef      = regexp.MustCompile(`uses: frostyard/core/\.github/workflows/risk-paths\.yml@[0-9a-f]{40}`)
+	// callsKey matches a `key: value` line whose value opens a block scalar.
+	callsBlockScalar = regexp.MustCompile(`^\s*(?:-\s+)?[A-Za-z0-9_.-]+:[ \t]+[|>][-+0-9]*([ \t]+#.*)?$`)
+	usesKey          = regexp.MustCompile(`^uses:[ \t]*(.*)$`)
+	usesComment      = regexp.MustCompile(`[ \t]+#.*$`)
+	trailingComment  = regexp.MustCompile(`[ \t]+#.*$`)
 )
 
 type riskPath struct {
@@ -815,43 +821,144 @@ func riskPathsListProblems(list string) []string {
 	return problems
 }
 
-// riskPathsCallerProblems checks the pr-triage caller (core ADR-0068, ADR-0077,
-// ADR-0078): it runs on pull_request_target and calls core's pr-triage
-// workflow at a full SHA with the job id pr-triage and the labeled event. A
-// caller that still calls the retired risk-paths workflow fails.
-func riskPathsCallerProblems(caller string) []string {
-	var problems []string
-	if !prTriageCallerRef.MatchString(caller) {
-		problems = append(problems, "the caller must call frostyard/core's pr-triage workflow at a 40-character SHA")
-	}
-	if oldCallerRef.MatchString(caller) {
-		problems = append(problems, "the caller must not call frostyard/core's retired risk-paths workflow")
-	}
-	onPullRequestTarget := false
-	job := false
-	labeled := false
-	for _, line := range yamlLines(caller) {
+// yamlStructureLines drops what is not YAML structure: a comment-only line,
+// and every line of a block scalar (a line under `key: |` or `key: >`), which
+// is script text and never a key. Blank lines are gone already.
+func yamlStructureLines(lines []yamlLine) []yamlLine {
+	var out []yamlLine
+	blockIndent := -1
+	for _, line := range lines {
 		if strings.HasPrefix(line.text, "#") {
 			continue
 		}
-		if line.text == "pull_request_target:" {
-			onPullRequestTarget = true
+		if blockIndent >= 0 && line.indent > blockIndent {
+			continue
 		}
-		if line.indent == 2 && line.text == "pr-triage:" {
-			job = true
-		}
-		if strings.HasPrefix(line.text, "types:") && strings.Contains(line.text, "labeled") {
-			labeled = true
+		blockIndent = -1
+		// A trailing comment is not part of a key or its value.
+		line.text = strings.TrimSpace(trailingComment.ReplaceAllString(line.text, ""))
+		out = append(out, line)
+		if callsBlockScalar.MatchString(line.raw) {
+			blockIndent = line.indent
 		}
 	}
-	if !onPullRequestTarget {
+	return out
+}
+
+// topLevelSection returns the lines under the first top-level `key:` of a
+// workflow, up to the next top-level key.
+func topLevelSection(lines []yamlLine, key string) ([]yamlLine, bool) {
+	for i, line := range lines {
+		if line.indent != 0 || line.text != key+":" {
+			continue
+		}
+		var section []yamlLine
+		for _, child := range lines[i+1:] {
+			if child.indent == 0 {
+				break
+			}
+			section = append(section, child)
+		}
+		return section, true
+	}
+	return nil, false
+}
+
+// childBlock returns the lines under the `name:` key of a section, and whether
+// the section holds that key. The keys of a section are its least indented
+// lines, so a nested key of another block is not the one found.
+func childBlock(section []yamlLine, name string) ([]yamlLine, bool) {
+	indent := keyIndent(section)
+	for i, line := range section {
+		if line.indent != indent || line.text != name+":" {
+			continue
+		}
+		var block []yamlLine
+		for _, child := range section[i+1:] {
+			if child.indent <= indent {
+				break
+			}
+			block = append(block, child)
+		}
+		return block, true
+	}
+	return nil, false
+}
+
+// keyIndent is the indent of the keys of a block: its least indented line.
+func keyIndent(block []yamlLine) int {
+	indent := -1
+	for _, line := range block {
+		if indent < 0 || line.indent < indent {
+			indent = line.indent
+		}
+	}
+	return indent
+}
+
+// blockPinsPrTriage reports whether a job calls core's pr-triage workflow at a
+// full SHA from its own `uses:` key: a deeper `uses:` is not the job's.
+func blockPinsPrTriage(job []yamlLine) bool {
+	indent := keyIndent(job)
+	for _, line := range job {
+		if line.indent != indent {
+			continue
+		}
+		m := usesKey.FindStringSubmatch(line.text)
+		if m == nil {
+			continue
+		}
+		value := strings.TrimSpace(usesComment.ReplaceAllString(m[1], ""))
+		return pinnedPrTriageRef.MatchString(value)
+	}
+	return false
+}
+
+// blockListsLabeledType reports whether a trigger lists the type labeled.
+func blockListsLabeledType(trigger []yamlLine) bool {
+	indent := keyIndent(trigger)
+	for _, line := range trigger {
+		if line.indent != indent || !strings.HasPrefix(line.text, "types:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line.text, "types:"))
+		if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+			continue
+		}
+		for _, name := range strings.Split(strings.Trim(value, "[]"), ",") {
+			if strings.TrimSpace(name) == "labeled" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// riskPathsCallerProblems checks the pr-triage caller (core ADR-0068, ADR-0077,
+// ADR-0078): it runs on pull_request_target, and its job pr-triage, inside the
+// top-level `jobs:` mapping, calls core's pr-triage workflow at a full SHA with
+// the labeled event under `on: pull_request_target:`. A `uses:` line of another
+// job, or the same text inside a `run:` block, is not the caller. A caller that
+// still calls the retired risk-paths workflow fails.
+func riskPathsCallerProblems(caller string) []string {
+	var problems []string
+	if oldCallerRef.MatchString(caller) {
+		problems = append(problems, "the caller must not call frostyard/core's retired risk-paths workflow")
+	}
+	lines := yamlStructureLines(yamlLines(caller))
+	onSection, _ := topLevelSection(lines, "on")
+	trigger, hasTrigger := childBlock(onSection, "pull_request_target")
+	if !hasTrigger {
 		problems = append(problems, "the caller must run on pull_request_target")
-	}
-	if !job {
-		problems = append(problems, "the caller must use the job id pr-triage")
-	}
-	if !labeled {
+	} else if !blockListsLabeledType(trigger) {
 		problems = append(problems, "the caller must run on the labeled event")
+	}
+	jobsSection, _ := topLevelSection(lines, "jobs")
+	job, hasJob := childBlock(jobsSection, "pr-triage")
+	if !hasJob {
+		problems = append(problems, "the caller must use the job id pr-triage")
+	} else if !blockPinsPrTriage(job) {
+		problems = append(problems, "the caller must call frostyard/core's pr-triage workflow at a 40-character SHA from the job pr-triage")
 	}
 	return problems
 }
@@ -862,6 +969,7 @@ func TestRiskPathsProblems(t *testing.T) {
 		{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
 		{"glob": "signing/**", "level": "L1", "why": "signing and keys"}
 	]}`
+	const callerPin = "frostyard/core/.github/workflows/pr-triage.yml@c996ea3fb54bcf1a3c621113522213702a7673e2"
 	const validCaller = `name: PR triage
 on:
   pull_request_target:
@@ -869,7 +977,7 @@ on:
 permissions: {}
 jobs:
   pr-triage:
-    uses: frostyard/core/.github/workflows/pr-triage.yml@c996ea3fb54bcf1a3c621113522213702a7673e2 # pinned
+    uses: ` + callerPin + ` # pinned
 `
 	listCases := []struct {
 		name    string
@@ -897,6 +1005,16 @@ jobs:
 			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance"},
 			{"glob": ".github/workflows/*.yml", "level": "L3", "why": "workflows"}
 		]}`, 2},
+		{"caller glob with a question mark at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+			{"glob": ".github/workflows/risk-paths.ym?", "level": "L3", "why": "governance: the caller"}
+		]}`, 1},
+		{"list glob with a leading double star at L3", `{"schema_version": 2, "default_level": "L3", "paths": [
+			{"glob": ".github/risk-paths.json", "level": "L2", "why": "governance: the list"},
+			{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
+			{"glob": "**/.github/risk-paths.json", "level": "L3", "why": "governance: the list"}
+		]}`, 1},
 	}
 	for _, tc := range listCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -912,9 +1030,69 @@ jobs:
 		wantBad int
 	}{
 		{"pr-triage caller", validCaller, 0},
+		{"inline comments on the trigger and the job", strings.NewReplacer("on:\n", "on: # events\n", "  pull_request_target:\n", "  pull_request_target: # base branch\n", "labeled]\n", "labeled] # readiness [L1]\n", "  pr-triage:\n", "  pr-triage: # core\n").Replace(validCaller), 0},
 		{"caller pins risk-paths.yml", strings.Replace(validCaller, "pr-triage.yml@", "risk-paths.yml@", 1), 2},
 		{"caller without the labeled event", strings.Replace(validCaller, ", labeled", "", 1), 1},
 		{"caller with another job id", strings.Replace(validCaller, "  pr-triage:", "  risk-paths:", 1), 1},
+		{"pinned uses under another job", `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+  pr-triage:
+    permissions:
+      contents: read
+    steps:
+      - run: echo triage
+  triage:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ` + callerPin + `
+`, 1},
+		{"uses text in a run block", `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+  pr-triage:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          uses: ` + callerPin + `
+`, 1},
+		{"job header inside a run-name block", strings.Replace(validCaller, "  pr-triage:", "  other:", 1) + `run-name: |
+  pr-triage:
+    uses: ` + callerPin + `
+`, 1},
+		{"labeled type of another trigger", `name: PR triage
+on:
+  pull_request:
+    types: [labeled]
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+permissions: {}
+jobs:
+  pr-triage:
+    uses: ` + callerPin + `
+`, 1},
+		{"caller with comments before its uses", `name: PR triage
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions: {}
+jobs:
+# a note at indent 0
+  pr-triage:
+    permissions:
+      contents: read
+# a note at indent 0 inside the job
+  # a note at indent 2 inside the job
+    # a note at indent 4, before uses
+    uses: ` + callerPin + `
+`, 0},
 	}
 	for _, tc := range callerCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -937,6 +1115,10 @@ func TestGlobMatch(t *testing.T) {
 		{"internal/signer/**", "internal/signer/gpg.go", true},
 		{"internal/signer/**", "internal/signer/nested/deep/gpg.go", true},
 		{"internal/signer/**", "internal/other/gpg.go", false},
+		{"internal/signer/**", "internal/signer", true},
+		{"**/.github/risk-paths.json", ".github/risk-paths.json", true},
+		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yml", true},
+		{".github/workflows/risk-paths.ym?", ".github/workflows/risk-paths.yaml", false},
 		{"**/index.html", "index.html", true},
 		{"**/index.html", "a/b/index.html", true},
 		{"**/index.html", "a/b/index.htm", false},
@@ -973,6 +1155,15 @@ func globMatch(glob, name string) bool {
 }
 
 func globRegexp(glob string) (*regexp.Regexp, error) {
+	// A trailing `/**` matches the prefix itself and everything under it: core's
+	// `**` matches 0 or more segments (core docs/specs/risk-paths.md, rule A).
+	if strings.HasSuffix(glob, "/**") {
+		head, err := globRegexp(strings.TrimSuffix(glob, "/**"))
+		if err != nil {
+			return nil, err
+		}
+		return regexp.Compile(`(?:` + strings.TrimSuffix(head.String(), "$") + `(?:/.*)?)$`)
+	}
 	var b strings.Builder
 	b.WriteString("^")
 	for i := 0; i < len(glob); i++ {
