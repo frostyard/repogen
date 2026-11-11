@@ -142,21 +142,15 @@ func extractControlFromTar(data []byte, filename string) ([]byte, error) {
 	}
 
 	// Find and read control file
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if header.Name == "./control" || header.Name == "control" {
-			return io.ReadAll(tarReader)
-		}
+	control, found, err := utils.ReadTarEntry(tarReader, "./control", "control")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("control file not found in control.tar")
 	}
 
-	return nil, fmt.Errorf("control file not found in control.tar")
+	return control, nil
 }
 
 // parseControl parses the Debian control file format

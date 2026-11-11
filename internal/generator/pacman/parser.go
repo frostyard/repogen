@@ -86,21 +86,15 @@ func extractPKGINFO(path string) ([]byte, error) {
 	}
 
 	// Find .PKGINFO
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if header.Name == ".PKGINFO" {
-			return io.ReadAll(tarReader)
-		}
+	data, found, err := utils.ReadTarEntry(tarReader, ".PKGINFO")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf(".PKGINFO not found in package")
 	}
 
-	return nil, fmt.Errorf(".PKGINFO not found in package")
+	return data, nil
 }
 
 // parsePKGINFO parses the .PKGINFO file content
@@ -174,26 +168,18 @@ func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]mo
 	for _, arch := range config.Arches {
 		archDir := filepath.Join(config.OutputDir, arch)
 
-		// Find database files (pattern: *.db.tar.zst or *.db)
-		pattern := filepath.Join(archDir, "*.db.tar.zst")
-		dbFiles, err := filepath.Glob(pattern)
-		if err != nil || len(dbFiles) == 0 {
-			// Try .db.tar.xz extension
-			pattern = filepath.Join(archDir, "*.db.tar.xz")
-			dbFiles, err = filepath.Glob(pattern)
-			if err != nil || len(dbFiles) == 0 {
-				// Try .db.tar.gz extension
-				pattern = filepath.Join(archDir, "*.db.tar.gz")
-				dbFiles, err = filepath.Glob(pattern)
-				if err != nil || len(dbFiles) == 0 {
-					// Try .db extension (might be symlink or uncompressed)
-					pattern = filepath.Join(archDir, "*.db")
-					dbFiles, err = filepath.Glob(pattern)
-					if err != nil || len(dbFiles) == 0 {
-						continue
-					}
-				}
+		// Take the first database pattern that matches.
+		var dbFiles []string
+		for _, pattern := range []string{"*.db.tar.zst", "*.db.tar.xz", "*.db.tar.gz", "*.db"} {
+			matches, err := filepath.Glob(filepath.Join(archDir, pattern))
+			if err != nil || len(matches) == 0 {
+				continue
 			}
+			dbFiles = matches
+			break
+		}
+		if len(dbFiles) == 0 {
+			continue
 		}
 
 		// Parse first database file found
