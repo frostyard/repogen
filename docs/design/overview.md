@@ -47,6 +47,7 @@ internal/
     compression.go            Gzip compression helper
     fileops.go                CopyFile, WriteFile, EnsureDir, ShouldCopyPackage
     package_identity.go       Conflict detection for incremental mode
+    tar.go                    ReadTarEntry: the named-entry lookup the deb, apk and pacman parsers share
   dirindex/
     dirindex.go               HTML directory index generator (Apache-style)
 ```

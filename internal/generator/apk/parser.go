@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,21 +66,15 @@ func extractPKGINFO(path string) ([]byte, error) {
 	tr := tar.NewReader(gr)
 
 	// Find .PKGINFO file
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if header.Name == ".PKGINFO" {
-			return io.ReadAll(tr)
-		}
+	data, found, err := utils.ReadTarEntry(tr, ".PKGINFO")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf(".PKGINFO not found in APK")
 	}
 
-	return nil, fmt.Errorf(".PKGINFO not found in APK")
+	return data, nil
 }
 
 // parsePKGINFO parses the Alpine PKGINFO format
@@ -173,23 +166,9 @@ func parseAPKINDEX(path string) ([]models.Package, error) {
 	tr := tar.NewReader(gz)
 
 	// Find APKINDEX file in tar
-	var apkindexData []byte
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if header.Name == "APKINDEX" {
-			apkindexData, err = io.ReadAll(tr)
-			if err != nil {
-				return nil, err
-			}
-			break
-		}
+	apkindexData, _, err := utils.ReadTarEntry(tr, "APKINDEX")
+	if err != nil {
+		return nil, err
 	}
 
 	if len(apkindexData) == 0 {
