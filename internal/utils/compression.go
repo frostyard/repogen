@@ -2,7 +2,6 @@ package utils
 
 import (
 	"bytes"
-	"io"
 	"time"
 
 	"github.com/klauspost/compress/gzip"
@@ -23,15 +22,4 @@ func GzipCompress(data []byte) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-// GzipDecompress decompresses gzip data
-func GzipDecompress(data []byte) ([]byte, error) {
-	r, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = r.Close() }()
-
-	return io.ReadAll(r)
 }

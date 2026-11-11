@@ -44,7 +44,7 @@ internal/
     rsa.go                    RSA PKCS1v15 signing for Alpine APK
   utils/
     checksum.go               Multi-hash checksum calculation (MD5/SHA1/SHA256/SHA512)
-    compression.go            Gzip compress/decompress helpers
+    compression.go            Gzip compression helper
     fileops.go                CopyFile, WriteFile, EnsureDir, ShouldCopyPackage
     package_identity.go       Conflict detection for incremental mode
   dirindex/

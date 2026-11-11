@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
-	"hash"
 	"io"
 	"os"
 )
@@ -55,25 +54,4 @@ func CalculateChecksums(path string) (*Checksum, error) {
 		SHA512: hex.EncodeToString(sha512Hash.Sum(nil)),
 		Size:   info.Size(),
 	}, nil
-}
-
-// CalculateChecksum calculates a specific checksum for data
-func CalculateChecksum(data []byte, hashType string) (string, error) {
-	var h hash.Hash
-
-	switch hashType {
-	case "md5":
-		h = md5.New()
-	case "sha1":
-		h = sha1.New()
-	case "sha256":
-		h = sha256.New()
-	case "sha512":
-		h = sha512.New()
-	default:
-		h = sha256.New()
-	}
-
-	h.Write(data)
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
