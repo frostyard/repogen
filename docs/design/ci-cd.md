@@ -105,8 +105,11 @@ metadata, then directory indexes
 structurally: `frostyard/apt-publisher` is the only Frostyard Debian writer
 ([ADR-0015](../adr/0015-remove-the-superseded-production-path.md)).
 For sysext, a restore error is fatal and the calling workflow must serialize
-the complete cycle globally because `ext/index` is shared. The action does not
-make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
+the complete cycle globally because `ext/index` is shared. The action writes
+each `SHA256SUMS` and `SHA256SUMS.gpg` conditionally on the ETag it restored,
+so an unserialized second publisher fails instead of dropping entries; it does
+not make the pair atomic
+([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
 
 ### How It Works
 
@@ -132,7 +135,12 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 4. **Sync existing metadata** — downloads only metadata files (not package
    binaries) from R2 for incremental mode. Sync strategy varies by format:
    - deb: `dists/` directory
-   - sysext: `ext/` excluding `.raw*` files; any restore error aborts
+   - sysext: `scripts/sync-sysext-metadata.sh`: `ext/` excluding `.raw*`
+     files and the guarded `ext/<name>/SHA256SUMS{,.gpg}` by `aws s3 sync`,
+     then each guarded key from `list-objects-v2` by `aws s3api get-object`,
+     which returns the ETag of the bytes it wrote; it records
+     `path<TAB>ETag<TAB>SHA-256` in `$RUNNER_TEMP/repogen-sysext-etags.tsv`;
+     any restore error aborts
    - apk: everything except `.apk` files
    - pacman: everything except `.pkg.tar.*` and `.sig` files
    - homebrew: `Formula/` directory
@@ -149,7 +157,10 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
    an earlier step in the same job would be counted as added. After repogen
    runs, `packages-added` is that payload count, so a
    run that skipped every built identity writes `packages-added=0` and
-   `published=false` with a `::notice::`.
+   `published=false` with a `::notice::`. With `sysext-keep-versions` above
+   `0` it passes `--sysext-keep-versions N --pruned-report
+   "$RUNNER_TEMP/repogen-pruned.txt"` (the step first removes an older
+   report).
 7. **Check skipped identities have their payloads** — runs
    `scripts/check-published-payloads.sh` when `skip-published-identities` is
    `true`. It sends one `head-object` request per skipped identity and fails
@@ -173,6 +184,15 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
       fails the step before any metadata is uploaded if a payload is missing
       from the bucket or has another size (it does not compare bytes);
    3. metadata (everything that is not a payload and not a directory index);
+      for sysext (the step sets `METADATA_ETAGS` only then) without
+      `ext/<name>/SHA256SUMS` and `ext/<name>/SHA256SUMS.gpg`;
+   3b. sysext only: each changed `SHA256SUMS`, then its `SHA256SUMS.gpg`,
+      with `aws s3api put-object --if-match <restored ETag>` (or
+      `--if-none-match '*'` for a new one); changed extensions first, new ones
+      last; an unchanged manifest is not written. A 412 stops the run with
+      `::error::` before any other manifest or index; a 412 after a lost
+      response is recognized by comparing the object with the local bytes; an
+      aws CLI without the flags fails the run;
    4. directory indexes (`index`, `*/index`, `index.html`, `*/index.html`)
       last, because an index enumerates the other two groups.
 
@@ -192,7 +212,14 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 9. **Purge Cloudflare cache** (optional) — purges by hostname via
    Cloudflare API. Gated on `purge-cache == 'true'` **and**
    `steps.run-repogen.outputs.published == 'true'`.
-10. **Cleanup** — removes temp key files, clears AWS credentials.
+10. **Delete pruned sysext payloads** — only for sysext with
+    `sysext-keep-versions` above `0` and `published == 'true'`, after the
+    upload and the purge (a failed step before it skips it). It runs
+    `scripts/delete-pruned-payloads.sh`, which validates every report line,
+    downloads the live `ext/<name>/SHA256SUMS`, and deletes a pruned payload
+    only when neither the live nor the local manifest lists it
+    ([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
+11. **Cleanup** — removes temp key files, clears AWS credentials.
 
 ### Required Inputs
 
@@ -217,6 +244,7 @@ make fixed R2 `SHA256SUMS` and `SHA256SUMS.gpg` objects atomic.
 | `repo-prefix` | | Path prefix in R2 bucket |
 | `skip-duplicates` | `false` | Useful for nightly builds |
 | `skip-published-identities` | `false` | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Requires `gpg-private-key` and a `./repo` without payloads. Known gap: a content change without a version or revision bump is not republished ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)) |
+| `sysext-keep-versions` | `0` | sysext only: keep the newest N versions per name, OS version and arch; `0` prunes nothing ([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)) |
 | `html-index` | `true` | Generates browsable directory pages |
 | `purge-cache` | `false` | Requires `cloudflare-zone` and `cloudflare-api-token` |
 

@@ -303,6 +303,12 @@ aws s3 sync ./repo s3://my-bucket/repo
   their bytes; `--skipped-report FILE` records what was skipped. A content
   change without a version or revision bump keeps its identity and is not
   republished (ADR-0018)
+- Use `--sysext-keep-versions N` (sysext only, default `0` keeps every
+  version) to keep only the newest `N` versions of each extension per OS
+  version and arch in `SHA256SUMS`, in systemd-sysupdate version order;
+  `--pruned-report FILE` lists the dropped payload paths. repogen removes a
+  pruned payload from the local tree only; delete the bucket object yourself
+  only after the new `SHA256SUMS` and `SHA256SUMS.gpg` are live (ADR-0019)
 - If metadata files don't exist, it falls back to normal mode automatically.
   For Debian, existing but unreadable, malformed or unselected metadata is an
   error, never a silent fallback (ADR-0014)
@@ -365,6 +371,10 @@ Flags:
                                 (known gap: a content change without a version or revision bump is not
                                 republished)
       --skipped-report string   Write the published payload path of each skipped sysext to this file
+      --sysext-keep-versions int
+                                Keep only the newest N versions of each sysext per name, OS version and
+                                arch in SHA256SUMS (sysext only; 0, the default, keeps every version)
+      --pruned-report string    Write the published payload path of each pruned sysext to this file
 
   # GPG Signing (Debian, Pacman, sysext)
   -k, --gpg-key string          Path to GPG private key

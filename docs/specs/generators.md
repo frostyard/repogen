@@ -301,6 +301,24 @@ reconstructs package metadata from bottle URLs and SHA256 values.
 - With `--gpg-key`, each manifest gets a detached binary `SHA256SUMS.gpg`
   signature and the generated transfer sets `Verify=true`; without a signer,
   the signature is omitted and the transfer sets `Verify=false`.
+- **`--sysext-keep-versions N`** (sysext only, default `0`: keep every
+  version, nothing is pruned) keeps, in each identity group (name, OS version,
+  architecture), only the `N` newest versions in `SHA256SUMS`. Versions are
+  ordered as systemd-sysupdate orders them (a port of systemd's
+  `strverscmp_improved()`, `internal/generator/sysext/version.go`), not as
+  strings. Each OS version and architecture is pruned on its own, so `13`
+  entries never push out `14` entries. Retention runs on the merged set
+  (published plus incoming) before staging: a pruned incoming file is not
+  copied, and a pruned payload present in the local tree is removed in the
+  same atomic switch as its manifest entry. A negative value is a
+  configuration error.
+- **`--pruned-report FILE`** (requires `--sysext-keep-versions` greater than
+  0) writes the published payload path of each pruned entry, `ext/NAME/FILE`,
+  sorted, one per line; an empty file when nothing was pruned, and also when an
+  identity skip left nothing to generate (that run prunes nothing). It is not
+  written when the run fails. The `publish-to-r2` action deletes those objects
+  only after the new metadata is live
+  ([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
 
 ### Parser
 
