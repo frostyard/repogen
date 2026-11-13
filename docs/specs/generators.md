@@ -155,7 +155,9 @@ extracts the `APKINDEX` entry, and parses it.
 
 ### Key Behaviors
 
-- `--repo-name` is **required** for Pacman repositories.
+- `--repo-name` is **required** whenever the recursive input scan finds a
+  Pacman package, in the input root or in any subdirectory (the same scan as
+  generation and as the Debian `--codename` check).
 - Database is a zstd-compressed tar containing `{name}-{version}/desc` entries.
 - `desc` files use `%FIELD%\nvalue\n\n` format.
 - Both `.db.tar.zst` and `.db` files are written (Pacman compatibility).

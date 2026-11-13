@@ -77,7 +77,7 @@ structures with appropriate metadata files and signatures.`,
 	// Incremental mode
 	cmd.Flags().BoolVar(&config.Incremental, "incremental", false, "Add new packages to existing repository without removing existing ones")
 	cmd.Flags().BoolVar(&config.SkipDuplicates, "skip-duplicates", false, "In incremental mode, skip packages that already exist instead of failing")
-	cmd.Flags().BoolVar(&config.SkipPublishedIdentities, "skip-published-identities", false, "In incremental mode, skip each sysext whose identity (name, version, OSVersion, arch) is already listed in the signature-verified SHA256SUMS, whatever its bytes or compression suffix (sysext only)")
+	cmd.Flags().BoolVar(&config.SkipPublishedIdentities, "skip-published-identities", false, "In incremental mode, skip each sysext whose identity (name, version, OSVersion, arch) is already listed in the signature-verified SHA256SUMS, whatever its bytes or compression suffix (sysext only). Known gap: a content change without a version or revision bump keeps its identity and is not republished")
 	cmd.Flags().StringVar(&config.SkippedReportPath, "skipped-report", "", "With --skip-published-identities, write the published payload path (ext/NAME/FILE) of each skipped sysext to this file, one per line")
 
 	// Output options
@@ -124,16 +124,19 @@ func validateConfig(config *models.RepositoryConfig) error {
 		}
 	}
 
-	// Debian output has no implicit codename: a missing --codename must not
-	// silently default to a distribution such as "stable".
-	hasDeb, err := hasDebianPackages(config.InputDir)
+	// The scan runs once and answers both the Debian codename check below and
+	// the Pacman repo-name check at the end of this function.
+	detectedTypes, err := scannedPackageTypes(config.InputDir)
 	if err != nil {
 		return &models.RepoGenError{
 			Type: models.ErrFileOp,
 			Err:  fmt.Errorf("failed to scan input directory: %w", err),
 		}
 	}
-	if hasDeb {
+
+	// Debian output has no implicit codename: a missing --codename must not
+	// silently default to a distribution such as "stable".
+	if detectedTypes[scanner.TypeDeb] {
 		config.Codename = strings.TrimSpace(config.Codename)
 		config.Suite = strings.TrimSpace(config.Suite)
 		if config.Codename == "" {
@@ -163,8 +166,10 @@ func validateConfig(config *models.RepositoryConfig) error {
 		config.Label = config.Origin
 	}
 
-	// Validate repo-name requirement for Pacman repositories
-	if hasPacmanPackages(config.InputDir) && config.RepoName == "" {
+	// Validate repo-name requirement for Pacman repositories. The scan is
+	// recursive, like the generation scan, so a Pacman package in a
+	// subdirectory needs the flag too.
+	if detectedTypes[scanner.TypePacman] && config.RepoName == "" {
 		return &models.RepoGenError{
 			Type: models.ErrInvalidConfig,
 			Err:  fmt.Errorf("--repo-name is required for Pacman (Arch Linux) repository generation"),
@@ -564,22 +569,18 @@ func validateSysextCandidates(inputDir string, scanned []scanner.ScannedPackage)
 	})
 }
 
-// hasPacmanPackages checks if input directory contains Pacman packages
-func hasPacmanPackages(inputDir string) bool {
-	matches, _ := filepath.Glob(filepath.Join(inputDir, "*.pkg.tar.*"))
-	return len(matches) > 0
-}
-
-// hasDebianPackages reports whether the scanner finds any Debian package in inputDir.
-func hasDebianPackages(inputDir string) (bool, error) {
+// scannedPackageTypes scans inputDir with the same recursive scanner that
+// generation uses and returns the set of package types found anywhere under
+// it, so a check on this set matches what generation publishes.
+func scannedPackageTypes(inputDir string) (map[scanner.PackageType]bool, error) {
 	scanned, err := scanner.NewFileSystemScanner().Scan(context.Background(), inputDir)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
+
+	types := make(map[scanner.PackageType]bool, len(scanned))
 	for _, pkg := range scanned {
-		if pkg.Type == scanner.TypeDeb {
-			return true, nil
-		}
+		types[pkg.Type] = true
 	}
-	return false, nil
+	return types, nil
 }

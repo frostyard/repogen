@@ -362,6 +362,8 @@ Flags:
       --skip-duplicates         Skip packages that already exist instead of failing
       --skip-published-identities
                                 Skip sysexts whose identity is already in the signature-verified SHA256SUMS
+                                (known gap: a content change without a version or revision bump is not
+                                republished)
       --skipped-report string   Write the published payload path of each skipped sysext to this file
 
   # GPG Signing (Debian, Pacman, sysext)

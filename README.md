@@ -26,7 +26,11 @@ and systemd-sysupdate read, so any web server can host the result.
   output stays possible. [Signing](docs/guides/usage.md#with-signing)
 - **Adds to a published repository.** Incremental mode reads the published
   metadata and adds new packages without removing old ones.
-  [Incremental mode](docs/guides/usage.md#incremental-mode)
+  `--skip-published-identities` skips a sysext whose identity is already
+  published
+  ([ADR-0018](docs/adr/0018-opt-in-identity-level-skip-for-published-sysexts.md));
+  known gap: a content change without a version or revision bump is not
+  republished. [Incremental mode](docs/guides/usage.md#incremental-mode)
 - **Publishes to Cloudflare R2.** The `publish-to-r2` GitHub Action uploads
   payloads before metadata and refuses Debian input.
   [publish-to-r2](docs/guides/publish-to-r2.md)
