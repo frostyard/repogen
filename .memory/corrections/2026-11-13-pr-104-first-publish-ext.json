@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "sysext publish",
+  "correction": "A metadata restore must not create an empty ext/ on a first publish: the sysext generator reads an existing ext/ strictly and fails with no existing sysext packages found (also in PublishedPackages); create ext/ only when the bucket has something to restore",
+  "evidence": "frostyard/repogen#104, cross-review of head f64976f (openai/gpt-6.1-sol); guard: TestFirstPublishRestoreGenerateUpload in internal/releaseasset/sysext_write_guard_test.go",
+  "promoted_to": ""
+}
