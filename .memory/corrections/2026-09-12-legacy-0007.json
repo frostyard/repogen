@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-12",
+  "scope": "R8 post-switch cleanup recovery",
+  "correction": "Once the visible output digest proves the candidate switch completed, treat its randomly named sibling as obsolete regardless of partial cleanup state; recovery must converge after interruption within RemoveAll and permit later commits without manual repair.",
+  "evidence": "Independent review 6d77ef2f4d5dc2a2934738e2d7c1bfc0 reproduced a permanent recovery and commit wedge after partial obsolete-tree deletion in commit 58ba99dd15ea1bc19639ec0202b724f663170d1a.",
+  "promoted_to": "docs/specs/generators.md"
+}

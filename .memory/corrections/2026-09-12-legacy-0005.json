@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-12",
+  "scope": "R8 durable intake and recovery",
+  "correction": "Test direct publication and partial recovery as separate real GPG/APT paths; return post-switch cleanup failures while retaining recoverable state; require one provider-level atomic create-if-absent operation with concurrent-conflict coverage; and apply current authorization only before a new writer attempt so completed results remain independently verifiable after revocation.",
+  "evidence": "Independent review b16b74112123a3aa620964870bb0126e identified missing direct publish coverage, discarded cleanup errors, underspecified create atomicity, and completed-result replay blocked by policy revocation in commit 5df6408085299a16621d6e1cac84bcb958550eb0.",
+  "promoted_to": "docs/specs/generators.md"
+}

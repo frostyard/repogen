@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-06",
+  "scope": "Docs command examples",
+  "correction": "A repogen generate example in README.md or docs/guides/ must pass the flags its input type requires: --codename for Debian input, --base-url for sysext input, --repo-name for pacman input.",
+  "evidence": "Cross-review of PR #89 at 64433c3 found Debian and sysext examples moved from the old README that the CLI rejects at run time.",
+  "promoted_to": "AGENTS.md"
+}

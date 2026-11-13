@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-12",
+  "scope": "R8 intake error classification",
+  "correction": "Classify submission-key reuse as a conflict only when an atomic create loses and the existing bytes differ; preserve provider failures as state errors and created-object read-back failures as integrity errors.",
+  "evidence": "Independent review b16b74112123a3aa620964870bb0126e identified unconditional ErrConflict wrapping for submission-pointer create and read-back failures in commit 5df6408085299a16621d6e1cac84bcb958550eb0.",
+  "promoted_to": "docs/specs/generators.md"
+}

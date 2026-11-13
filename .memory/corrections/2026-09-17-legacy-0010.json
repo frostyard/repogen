@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "R9 sysext retained-state transaction",
+  "correction": "An existing ext tree must be verified, merged, and staged in full even when the generic incremental flag is absent; an atomic directory switch must never turn normal mode into deletion authority for manifest-backed extensions.",
+  "evidence": "Independent review e22870e9c22f5f7af365ad25e2fcad52 reproduced candidate 035daf551f4f5685d014668cfdd615f0641bf6db deleting a previously signed extension during a later non-incremental generation.",
+  "promoted_to": "docs/specs/generators.md"
+}

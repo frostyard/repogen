@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "R8 durable intake request interoperability",
+  "correction": "Durable requests must use the exact shared T0 producer schema and RFC 8785 canonical bytes at manifests/request/v1; do not add writer pins to the request or hash newline-terminated Go struct JSON. Derive action and Repogen executable attestations from linked provenance into the verified result, and pin a reviewed producer request as an interoperability test.",
+  "evidence": "Independent review 12ffb0987874bc466e8680fab24dbb69 proved commit a06a9e6b72cfd9329ed510abcef34847ac9e2e73 rejected the independently reviewed C0 request at the shared immutable key.",
+  "promoted_to": "docs/specs/generators.md"
+}

@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-16",
+  "scope": "R4 shared Debian pool path validation",
+  "correction": "Do not require a retained pool object filename to begin with its package-directory name; signed Packages indexes can contain immutable historical paths such as pool/main/s/snow-first-setup/snow-first-setup.deb.",
+  "evidence": "ADC B4 independent review c45062bccc7e760fb8adab4701a8723d reproduced the path against the gpgv-verified signed stable index and the repository generator's existing layout.",
+  "promoted_to": "docs/specs/generators.md"
+}

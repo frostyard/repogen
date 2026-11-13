@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-09",
+  "scope": "baseline B6 caller check",
+  "correction": "A workflow gate must read YAML structure, not file text: the pinned uses: belongs to the uses: key at indent 4 of the job pr-triage inside the top-level jobs: mapping (never another job or a run: block), types: counts only under on: -> pull_request_target:, and globMatch keeps core's semantics (? is 1 character, a trailing /** matches 0 segments).",
+  "evidence": "frostyard/repogen#92, the same defects that cross-review (openai/gpt-6.1-sol) found in the caller checks of bketelsen/agentic-template#9 and frostyard/homebrew-tap#37",
+  "promoted_to": "internal/baseline/repository_baseline_test.go"
+}

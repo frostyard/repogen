@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-09",
+  "scope": "baseline B6 glob match",
+  "correction": "A port of core's matchGlob must expand the brace groups before the segment matching and treat `**` as a whole segment only: quoting a group keeps `?` literal inside it, and 1 regex for the whole path cannot match `**/x` against `/x`, refuse `a**b` against `a/x/b`, or refuse the empty path.",
+  "evidence": "frostyard/repogen#92, cross-review (openai/gpt-6.1-sol) of head a24cf0a, finding 1",
+  "promoted_to": "internal/baseline/repository_baseline_test.go"
+}

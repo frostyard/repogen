@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "R7 reconcile retention",
+  "correction": "A local reconcile must not exclude the complete target suite: replace only its enumerated mutable canonical indexes and signed Release files, preserve old content-addressed by-hash objects and unmodeled suite content, and test with a package-set change so old and new by-hash paths differ.",
+  "evidence": "Independent review 103307a4b82366a7149d2c9fddf84d63 reproduced silent deletion of old by-hash objects and unmodeled suite files in commit 836e215d2851e2d9d342b6dcb674a0e2c9a0333a.",
+  "promoted_to": "docs/specs/generators.md"
+}

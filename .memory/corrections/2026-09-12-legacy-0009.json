@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-12",
+  "scope": "R9 signed sysext identity conflicts",
+  "correction": "Exercise identity conflicts through production Generate against signed existing state, not only pure identity helpers; cover same-filename digest changes, alternate filenames for one logical identity, and metadata/filename OSVersion mismatches while proving the prior tree remains byte-identical.",
+  "evidence": "Independent pre-acceptance inspection 858ef6c1e1ad72dce108dd092e7233f6 found the production normalizeAndMergePackages conflict branches uncovered in candidate e9ae8712cbfe156d9b79323e3ed6f87c74847470.",
+  "promoted_to": "internal/generator/sysext/generator_test.go"
+}

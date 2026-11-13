@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "R9 skip-duplicates digest enforcement",
+  "correction": "Exercise the signed CLI generate path with incremental skip-duplicates and changed same-identity bytes; the test must fail if the pre-filter digest-conflict gate is disabled and must prove the prior output tree remains byte-identical.",
+  "evidence": "Independent review e22870e9c22f5f7af365ad25e2fcad52 proved a one-token mutation disabled the only pre-filter digest gate while the complete prior test suite still passed.",
+  "promoted_to": "internal/cli/generate_test.go"
+}

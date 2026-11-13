@@ -38,8 +38,8 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   [.coverage-thresholds.json](../../.coverage-thresholds.json) — all 1.0,
   `never_relax: true` (the loop may tighten, never loosen).
 - **Learn** — corrections land in
-  [.memory/corrections.jsonl](../../.memory/README.md) (append-only,
-  five-field schema) and are promoted into `AGENTS.md`, docs, or skills;
+  [.memory/corrections/](../../.memory/README.md) (1 file for each record,
+  five-field schema, never removed or renamed) and are promoted into `AGENTS.md`, docs, or skills;
   promotion is the only sanctioned duplication.
 - **Enforce mechanically** — [.claude/settings.json](../../.claude/settings.json)
   denies the forbidden acts at the tool layer: merging PRs (`gh pr merge`),

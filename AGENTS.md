@@ -150,8 +150,8 @@ release process is in [RELEASING.md](RELEASING.md).
   relative link resolves and every symlink is intact — thresholds in
   `.coverage-thresholds.json`, `never_relax`. Run `make check` locally before
   pushing.
-- Corrections go to `.memory/corrections.jsonl` (append-only five-field
-  schema — see [.memory/README.md](.memory/README.md)); promote into this
+- Corrections go to 1 file under `.memory/corrections/` (five-field
+  schema, canonical form — see [.memory/README.md](.memory/README.md)); promote into this
   file, docs, or skills — never duplicate without setting `promoted_to`.
 - Task runbooks live in [.github/prompts/](.github/prompts/README.md) as
   `*.prompt.md`; rules stay here.
