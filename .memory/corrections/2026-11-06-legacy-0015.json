@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-06",
+  "scope": "B6 risk-path coverage",
+  "correction": "Every generator that creates or writes a signature (apk, pacman, deb Release, sysext) and the signer package must match a risk glob; a signing path left out of .github/risk-paths.json hides a signing change from the risk:high label.",
+  "evidence": "Cross-review of PR #89 at 64433c3 found internal/generator/apk and internal/generator/pacman outside the risk list although both write signatures.",
+  "promoted_to": "internal/baseline/repository_baseline_test.go"
+}

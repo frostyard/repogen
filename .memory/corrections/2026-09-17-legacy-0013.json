@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "R10 expected-prior completeness coverage",
+  "correction": "A complete reconcile-plan test must add a valid superfluous expected-prior entry without removing any required entry and assert the exact cardinality rejection; replacement and missing-entry cases do not exercise the sole guard against unmodeled prior mutable objects.",
+  "evidence": "Independent review 83a0a39f3102710b4dc5df282f94bb65 removed the expected-prior cardinality guard from commit 1ecd5ed7996ff04ad898fb8785dbfbd676b70b5c and the full test suite still passed.",
+  "promoted_to": "internal/generator/deb/production_transaction_test.go"
+}

@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "R4 shared Debian pool filename binding",
+  "correction": "Permit the signed retained legacy filename only when it equals the package directory plus .deb; otherwise require the versioned filename to begin with the package directory plus underscore. Reject unrelated package filenames even when the path is signed.",
+  "evidence": "Independent risk run b8237075290836be64facffca327ecd3 proved the broader historical exception accepted evil.deb and incus_7.3_amd64.deb under the snow-first-setup directory while the live retained object needs only snow-first-setup.deb.",
+  "promoted_to": "docs/specs/generators.md"
+}

@@ -1,0 +1,7 @@
+{
+  "date": "2026-09-17",
+  "scope": "C1 R2 production boundary",
+  "correction": "Treat an object-store lock as liveness only unless the provider supplies fencing: never steal a held record by age, retain object-level If-None-Match/If-Match and full read-back as safety controls, and do not describe bucket-scoped R2 credentials or code allowlists as provider-enforced path permissions.",
+  "evidence": "Independent C1 risk run add4f17f080ef8e91554797e28d0281d found no trustworthy R2 fencing primitive and confirmed Cloudflare token scope does not prove per-prefix enforcement.",
+  "promoted_to": "docs/specs/production-r2-reconciliation.md"
+}

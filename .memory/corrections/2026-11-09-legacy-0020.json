@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-09",
+  "scope": "baseline B6 glob port",
+  "correction": "A Go port of a JavaScript u-flag matcher must keep UTF-8: copy literal bytes as substrings, never string(byte), and range over runes when it builds a segment pattern, so `?` is 1 code point and Unicode literals match as in core",
+  "evidence": "frostyard/repogen#92 cross-review (openai/gpt-6.1-sol) re-review 2 of head 0ddae86, finding A2",
+  "promoted_to": "internal/baseline/repository_baseline_test.go"
+}

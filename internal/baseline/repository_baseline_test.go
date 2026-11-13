@@ -5,7 +5,8 @@
 // `git ls-files`:
 //
 //	B1  AGENTS.md is canonical; the ACMM aliases are symlinks to it
-//	B2  .memory/corrections.jsonl keeps the five-field schema
+//	B2  .memory/corrections/ holds 1 canonical file for each record, and
+//	    the retired .memory/corrections.jsonl is absent
 //	B3  docs/README.md, docs/org-adrs.md and a TEMPLATE.md per category
 //	B4  one tool pin (mise.toml), the gate triad, no second linter pin
 //	B5  SHA-pinned actions, least-privilege permissions, no persisted
@@ -28,17 +29,23 @@
 package baseline
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 // repoRoot returns the absolute repository root.
@@ -133,31 +140,392 @@ func TestRepositoryBaselineB1CanonicalAgentFile(t *testing.T) {
 	}
 }
 
-// ---- B2: the corrections log keeps its five-field schema. ----
+// ---- B2: the corrections inbox, 1 canonical file for each record. ----
 
 func TestRepositoryBaselineB2CorrectionsSchema(t *testing.T) {
-	if !trackedSet(t)[".memory/corrections.jsonl"] {
-		t.Fatal(".memory/corrections.jsonl must be tracked")
+	records, problems := correctionsProblems(repoRoot(t))
+	for _, problem := range problems {
+		t.Errorf("B2: %s", problem)
 	}
-	text := readRepoFile(t, ".memory/corrections.jsonl")
-	want := []string{"date", "scope", "correction", "evidence", "promoted_to"}
-	for i, line := range strings.Split(text, "\n") {
-		if strings.TrimSpace(line) == "" {
+	t.Logf("%d corrections records", records)
+}
+
+// The corrections inbox (core ADR-0018, ADR-0081): the rules of core's
+// scripts/check-corrections.mjs (v2, without --base).
+const (
+	correctionsOld     = ".memory/corrections.jsonl"
+	correctionsDir     = ".memory/corrections"
+	correctionsSlugMax = 60
+)
+
+var (
+	correctionsName = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2})-([a-z0-9]+(?:-[a-z0-9]+)*)\.json$`)
+	correctionsDate = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+	correctionsKeys = []string{"date", "scope", "correction", "evidence", "promoted_to"}
+)
+
+// correctionRecord is a record with its 5 fields in the canonical order.
+type correctionRecord struct {
+	Date       string `json:"date"`
+	Scope      string `json:"scope"`
+	Correction string `json:"correction"`
+	Evidence   string `json:"evidence"`
+	PromotedTo string `json:"promoted_to"`
+}
+
+// correctionsProblems checks the corrections inbox under root: the retired
+// .memory/corrections.jsonl is absent, and .memory/corrections/ is a real
+// folder that holds only record files and an optional empty .gitkeep. It
+// returns the number of records and 1 problem for each rule a file breaks;
+// each problem names the file.
+func correctionsProblems(root string) (int, []string) {
+	if _, err := os.Lstat(filepath.Join(root, correctionsOld)); err == nil {
+		return 0, []string{correctionsOld + " is retired; add a file under " + correctionsDir + "/"}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return 0, []string{fmt.Sprintf("%s: %v", correctionsOld, err)}
+	}
+	folder := filepath.Join(root, correctionsDir)
+	info, err := os.Lstat(folder)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return 0, []string{correctionsDir + ": folder is missing"}
+	case err != nil:
+		return 0, []string{fmt.Sprintf("%s: %v", correctionsDir, err)}
+	case info.Mode()&fs.ModeSymlink != 0:
+		return 0, []string{correctionsDir + ": symbolic link, not followed"}
+	case !info.IsDir():
+		return 0, []string{correctionsDir + ": not a folder"}
+	}
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return 0, []string{fmt.Sprintf("%s: %v", correctionsDir, err)}
+	}
+	records := 0
+	var problems []string
+	for _, entry := range entries {
+		record, found := correctionFileProblems(folder, entry.Name())
+		if record {
+			records++
+		}
+		problems = append(problems, found...)
+	}
+	return records, problems
+}
+
+// correctionFileProblems checks 1 entry of the folder. record is true for a
+// file with a record name.
+func correctionFileProblems(folder, name string) (record bool, problems []string) {
+	where := correctionsDir + "/" + name
+	fail := func(format string, args ...any) {
+		problems = append(problems, where+": "+fmt.Sprintf(format, args...))
+	}
+	info, err := os.Lstat(filepath.Join(folder, name))
+	switch {
+	case err != nil:
+		fail("%v", err)
+		return false, problems
+	case info.Mode()&fs.ModeSymlink != 0:
+		fail("symbolic link, not followed")
+		return false, problems
+	case !info.Mode().IsRegular():
+		fail("not a regular file")
+		return false, problems
+	}
+	if name == ".gitkeep" {
+		if info.Size() != 0 {
+			fail(".gitkeep is not empty")
+		}
+		return false, problems
+	}
+	match := correctionsName.FindStringSubmatch(name)
+	if match == nil {
+		fail("bad file name (want <date>-<slug>.json)")
+		return false, problems
+	}
+	if len(match[2]) > correctionsSlugMax {
+		fail("slug longer than %d characters", correctionsSlugMax)
+	}
+	data, err := os.ReadFile(filepath.Join(folder, name))
+	if err != nil {
+		fail("%v", err)
+		return true, problems
+	}
+	if !utf8.Valid(data) {
+		fail("invalid UTF-8")
+		return true, problems
+	}
+	found, parsed := correctionRecordProblems(data)
+	for _, problem := range found {
+		fail("%s", problem)
+	}
+	if parsed == nil {
+		return true, problems
+	}
+	if match[1] != parsed.Date {
+		fail("name date %s does not equal date %s", match[1], parsed.Date)
+	}
+	// encoding/json escapes U+2028 and U+2029 and JSON.stringify does not, so
+	// a record with such a character fails here; that is acceptable.
+	var canonical bytes.Buffer
+	encoder := json.NewEncoder(&canonical)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(parsed); err != nil || !bytes.Equal(canonical.Bytes(), data) {
+		fail("not in canonical form")
+	}
+	return true, problems
+}
+
+// correctionRecordProblems checks the content of 1 record: 1 JSON object,
+// no duplicate key, exactly the 5 string fields, a real date and no empty
+// scope, correction or evidence. The record is nil unless all 5 fields are
+// strings.
+func correctionRecordProblems(data []byte) ([]string, *correctionRecord) {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return []string{"invalid JSON"}, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return []string{"not a plain object"}, nil
+	}
+	var problems []string
+	names := correctionTopKeys(data)
+	seen := map[string]int{}
+	var duplicates []string
+	for _, name := range names {
+		seen[name]++
+		if seen[name] == 2 {
+			duplicates = append(duplicates, name)
+		}
+	}
+	if len(duplicates) > 0 {
+		problems = append(problems, "duplicate key(s): "+strings.Join(duplicates, ", "))
+	}
+	var missing, unknown []string
+	for _, key := range correctionsKeys {
+		if _, ok := object[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	for _, name := range names {
+		if !slices.Contains(correctionsKeys, name) && !slices.Contains(unknown, name) {
+			unknown = append(unknown, name)
+		}
+	}
+	var parts []string
+	if len(missing) > 0 {
+		parts = append(parts, "missing key(s): "+strings.Join(missing, ", "))
+	}
+	if len(unknown) > 0 {
+		parts = append(parts, "unknown key(s): "+strings.Join(unknown, ", "))
+	}
+	if len(parts) > 0 {
+		problems = append(problems, strings.Join(parts, "; "))
+	}
+	text := map[string]string{}
+	for _, key := range correctionsKeys {
+		raw, ok := object[key]
+		if !ok {
 			continue
 		}
-		var entry map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			t.Errorf("line %d is not a JSON object: %v", i+1, err)
+		s, ok := raw.(string)
+		if !ok {
+			problems = append(problems, "value for "+key+" is not a string")
 			continue
 		}
-		if len(entry) != len(want) {
-			t.Errorf("line %d has %d fields, want %d", i+1, len(entry), len(want))
+		text[key] = s
+	}
+	if date, ok := text["date"]; ok && !validCorrectionDate(date) {
+		problems = append(problems, "invalid date: "+date)
+	}
+	for _, key := range []string{"scope", "correction", "evidence"} {
+		if s, ok := text[key]; ok && strings.TrimFunc(s, isJSSpace) == "" {
+			problems = append(problems, key+" is empty")
 		}
-		for _, key := range want {
-			if _, ok := entry[key]; !ok {
-				t.Errorf("line %d has no %q field", i+1, key)
+	}
+	if len(text) != len(correctionsKeys) {
+		return problems, nil
+	}
+	return problems, &correctionRecord{
+		Date: text["date"], Scope: text["scope"], Correction: text["correction"],
+		Evidence: text["evidence"], PromotedTo: text["promoted_to"],
+	}
+}
+
+// correctionTopKeys lists the member names of a JSON object text in order,
+// duplicates kept: json.Unmarshal keeps only the last of duplicate names.
+func correctionTopKeys(data []byte) []string {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil
+	}
+	var names []string
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return names
+		}
+		name, ok := token.(string)
+		if !ok {
+			return names
+		}
+		names = append(names, name)
+		var skip json.RawMessage
+		if err := decoder.Decode(&skip); err != nil {
+			return names
+		}
+	}
+	return names
+}
+
+// validCorrectionDate is true for a YYYY-MM-DD date that is on the calendar.
+func validCorrectionDate(date string) bool {
+	if !correctionsDate.MatchString(date) {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", date)
+	return err == nil
+}
+
+// isJSSpace is true for the characters that JavaScript's String.prototype.trim
+// removes: a lone "\r" and a byte-order mark are whitespace to core's check.
+func isJSSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u1680', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff':
+		return true
+	}
+	return r >= '\u2000' && r <= '\u200a'
+}
+
+// correctionText is a canonical record with the given date and evidence.
+func correctionText(date, evidence string) string {
+	return "{\n  \"date\": \"" + date + "\",\n  \"scope\": \"s\",\n  \"correction\": \"c\",\n  \"evidence\": \"" +
+		evidence + "\",\n  \"promoted_to\": \"\"\n}\n"
+}
+
+func TestCorrectionsProblems(t *testing.T) {
+	const good = "2026-11-06-a-record.json"
+	write := func(t *testing.T, root, name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, correctionsDir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+		want  string // "" for a pass
+	}{
+		{"a canonical record passes", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "e"))
+		}, ""},
+		{"control characters and non-ASCII text in the JavaScript form pass", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06",
+				"tab\\t nl\\n bs\\b ff\\f ctl\\u0001 del\x7f quote\\\" \u00e9 \U0001f600"))
+		}, ""},
+		{"only an empty .gitkeep passes", func(t *testing.T, root string) {
+			write(t, root, ".gitkeep", "")
+		}, ""},
+		{"the retired file fails", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "e"))
+			if err := os.WriteFile(filepath.Join(root, correctionsOld), []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
 			}
-		}
+		}, ".memory/corrections.jsonl is retired"},
+		{"a missing folder fails", func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, correctionsDir)); err != nil {
+				t.Fatal(err)
+			}
+		}, ".memory/corrections: folder is missing"},
+		{"a folder symlink fails", func(t *testing.T, root string) {
+			memory := filepath.Join(root, ".memory")
+			if err := os.Rename(filepath.Join(memory, "corrections"), filepath.Join(memory, "elsewhere")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("elsewhere", filepath.Join(memory, "corrections")); err != nil {
+				t.Fatal(err)
+			}
+		}, ".memory/corrections: symbolic link"},
+		{"a bad file name fails", func(t *testing.T, root string) {
+			write(t, root, "2026-11-06-Bad_Name.json", correctionText("2026-11-06", "e"))
+		}, "2026-11-06-Bad_Name.json: bad file name"},
+		{"a long slug fails", func(t *testing.T, root string) {
+			write(t, root, "2026-11-06-"+strings.Repeat("a", 61)+".json", correctionText("2026-11-06", "e"))
+		}, strings.Repeat("a", 61) + ".json: slug longer than 60 characters"},
+		{"a name date that differs fails", func(t *testing.T, root string) {
+			write(t, root, "2026-11-07-a-record.json", correctionText("2026-11-06", "e"))
+		}, "2026-11-07-a-record.json: name date 2026-11-07 does not equal date 2026-11-06"},
+		{"a compact record fails", func(t *testing.T, root string) {
+			write(t, root, good, `{"date":"2026-11-06","scope":"s","correction":"c","evidence":"e","promoted_to":""}`+"\n")
+		}, good + ": not in canonical form"},
+		{"a raw U+2028 fails here, unlike core", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "e \u2028"))
+		}, good + ": not in canonical form"},
+		{"invalid JSON fails", func(t *testing.T, root string) {
+			write(t, root, good, `{"date": "2026-11-06", "scope": "s"`)
+		}, good + ": invalid JSON"},
+		{"invalid UTF-8 fails", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "\xff"))
+		}, good + ": invalid UTF-8"},
+		{"a duplicate key fails", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
+				"  \"scope\": \"s\",\n", "  \"scope\": \"s\",\n  \"scope\": \"s\",\n", 1))
+		}, good + ": duplicate key(s): scope"},
+		{"a missing key fails", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"), ",\n  \"promoted_to\": \"\"", "", 1))
+		}, good + ": missing key(s): promoted_to"},
+		{"an unknown key fails", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
+				"\"promoted_to\": \"\"", "\"promoted_to\": \"\",\n  \"extra\": \"x\"", 1))
+		}, good + ": unknown key(s): extra"},
+		{"a non-string value fails", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
+				"\"promoted_to\": \"\"", "\"promoted_to\": 1", 1))
+		}, good + ": value for promoted_to is not a string"},
+		{"an invalid date fails", func(t *testing.T, root string) {
+			write(t, root, "2026-02-30-a-record.json", correctionText("2026-02-30", "e"))
+		}, "2026-02-30-a-record.json: invalid date: 2026-02-30"},
+		{"an evidence of spaces fails", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "  "))
+		}, good + ": evidence is empty"},
+		{"an evidence of a byte-order mark fails", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "\ufeff"))
+		}, good + ": evidence is empty"},
+		{"a subfolder fails", func(t *testing.T, root string) {
+			if err := os.Mkdir(filepath.Join(root, correctionsDir, "2026-11-06-a-folder.json"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, "2026-11-06-a-folder.json: not a regular file"},
+		{"a record symlink fails", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "e"))
+			if err := os.Symlink(good, filepath.Join(root, correctionsDir, "2026-11-06-a-link.json")); err != nil {
+				t.Fatal(err)
+			}
+		}, "2026-11-06-a-link.json: symbolic link"},
+		{"a non-empty .gitkeep fails", func(t *testing.T, root string) {
+			write(t, root, ".gitkeep", "x\n")
+		}, ".memory/corrections/.gitkeep: .gitkeep is not empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, correctionsDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(t, root)
+			_, problems := correctionsProblems(root)
+			got := strings.Join(problems, "\n")
+			if tt.want == "" {
+				if len(problems) > 0 {
+					t.Errorf("correctionsProblems = %q, want none", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("correctionsProblems = %q, want a problem with %q", got, tt.want)
+			}
+		})
 	}
 }
 
