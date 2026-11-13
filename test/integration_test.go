@@ -562,10 +562,11 @@ func testHomebrewRepository(t *testing.T, projectRoot, testDir string) {
 		}
 	}
 
-	// Verify both formula files are valid Ruby
+	// Verify both formula files are valid Ruby and carry the version that the
+	// bottle filename encodes
 	formulas := map[string][]string{
-		"repogen-test":  {"class RepogenTest < Formula", "desc", "version"},
-		"repogen-utils": {"class RepogenUtils < Formula", "desc", "version"},
+		"repogen-test":  {"class RepogenTest < Formula", "desc", `version "1.0.0"`},
+		"repogen-utils": {"class RepogenUtils < Formula", "desc", `version "2.0.0"`},
 	}
 
 	for name, requiredStrings := range formulas {
