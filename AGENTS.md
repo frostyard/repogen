@@ -118,7 +118,13 @@ release process is in [RELEASING.md](RELEASING.md).
   `repogen-commit` naming that same commit. A newer repogen release is not a
   bump to open in snosi on your own; ask its owner (Murbella) first. `frostyard/chairlift` and
   `frostyard/pilothouse` only name the action in pin-check test fixtures, not
-  in a workflow. Debian packages are no longer published with repogen
+  in a workflow. Sysext publishers of one bucket must run one at a time
+  (1 job or 1 `concurrency` group for all suites); the action writes each
+  `SHA256SUMS` and `SHA256SUMS.gpg` with `If-Match` on the restored ETag, so a
+  second publisher fails loudly instead of dropping entries, and it prunes old
+  versions only with `sysext-keep-versions` above `0`
+  ([ADR-0019](docs/adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
+  Debian packages are no longer published with repogen
   ([ADR-0015](docs/adr/0015-remove-the-superseded-production-path.md);
   frostyard/apt-publisher publishes them, core ADR-0055).
 

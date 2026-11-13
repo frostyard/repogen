@@ -110,6 +110,10 @@ inputs:
     description: 'sysext only: skip each built sysext whose identity (name, version, OSVersion, arch) the signature-verified SHA256SUMS already lists, whatever its bytes; when nothing is left the action publishes nothing and succeeds. Requires gpg-private-key and a ./repo without payloads. Known gap: a content change without a version or revision bump is not republished'
     required: false
     default: 'false'
+  sysext-keep-versions:
+    description: "sysext only: keep only the newest N versions of each sysext per name, OS version and arch in SHA256SUMS (systemd-sysupdate version order), and delete the pruned payload objects after the new metadata is live and the cache is purged. '0' (the default) keeps every version: nothing is pruned (ADR-0019)"
+    required: false
+    default: '0'
 
   # HTML index generation
   html-index:
@@ -151,6 +155,7 @@ runs:
         PACKAGES_DIR: ${{ inputs.packages-dir }}
         SKIP_PUBLISHED: ${{ inputs.skip-published-identities }}
         HAS_GPG_KEY: ${{ inputs.gpg-private-key != '' }}
+        KEEP_VERSIONS: ${{ inputs.sysext-keep-versions }}
       run: |
         set -e
         echo "::group::Validating inputs"
@@ -196,6 +201,17 @@ runs:
         # step's environment; only its presence is.
         if [[ "$SKIP_PUBLISHED" == "true" && "$HAS_GPG_KEY" != "true" ]]; then
           echo "::error::skip-published-identities requires gpg-private-key: published identities are read only from signature-verified SHA256SUMS"
+          exit 1
+        fi
+
+        # Retention prunes sysext manifests only, and deletes payload objects,
+        # so the value must be a plain count (ADR-0019).
+        if [[ ! "$KEEP_VERSIONS" =~ ^(0|[1-9][0-9]*)$ ]]; then
+          echo "::error::sysext-keep-versions must be 0 (keep every version) or a positive whole number, got '$KEEP_VERSIONS'"
+          exit 1
+        fi
+        if [[ "$KEEP_VERSIONS" != "0" && "$PACKAGE_TYPE" != "sysext" ]]; then
+          echo "::error::sysext-keep-versions supports only package-type sysext (got '$PACKAGE_TYPE')"
           exit 1
         fi
 
@@ -278,6 +294,8 @@ runs:
 
     - name: Sync existing repository from R2
       shell: bash
+      env:
+        METADATA_ETAGS_PATH: ${{ runner.temp }}/repogen-sysext-etags.tsv
       run: |
         set -e
         echo "::group::Syncing existing metadata from R2"
@@ -311,15 +329,13 @@ runs:
               2>&1 || echo "No existing dists directory found (this is OK for first run)"
             ;;
           sysext)
-            # Sync ext directory, excluding actual extension files
+            # Restore the ext metadata without payloads, and record the ETag of
+            # each SHA256SUMS and SHA256SUMS.gpg it restored, so the upload
+            # writes them back only when no other publisher changed them in
+            # between (ADR-0019).
             echo "Syncing ext directory (metadata only)..."
-            aws s3 sync "${S3_PATH}/ext" "./repo/ext" \
-              --endpoint-url "$R2_ENDPOINT" \
-              --exclude "*.raw" \
-              --exclude "*.raw.zst" \
-              --exclude "*.raw.xz" \
-              --exclude "*.raw.gz" \
-              2>&1
+            S3_PATH="$S3_PATH" REPO_DIR=./repo METADATA_ETAGS="$METADATA_ETAGS_PATH" \
+              "$GITHUB_ACTION_PATH/../../../scripts/sync-sysext-metadata.sh"
             ;;
           apk)
             # Sync APKINDEX files
@@ -423,9 +439,15 @@ runs:
       shell: bash
       env:
         SKIP_PUBLISHED: ${{ inputs.skip-published-identities }}
+        KEEP_VERSIONS: ${{ inputs.sysext-keep-versions }}
+        PRUNED_REPORT_PATH: ${{ runner.temp }}/repogen-pruned.txt
       run: |
         set -e
         echo "::group::Running repogen"
+
+        # A report from an earlier call in the same job must never be read as
+        # this run's (ADR-0019).
+        rm -f "$PRUNED_REPORT_PATH"
 
         # List all files in input directory for debugging
         echo "All files in ${{ inputs.packages-dir }}:"
@@ -507,6 +529,14 @@ runs:
             echo "::error::skip-published-identities needs a ./repo without payloads; found $EXISTING_PAYLOADS from an earlier step"
             exit 1
           fi
+        fi
+
+        # Retention (ADR-0019): repogen drops the older versions from
+        # SHA256SUMS and lists them in the report; a later step deletes their
+        # payload objects once the new metadata is live.
+        if [[ "$KEEP_VERSIONS" != "0" ]]; then
+          REPOGEN_ARGS+=("--sysext-keep-versions" "$KEEP_VERSIONS")
+          REPOGEN_ARGS+=("--pruned-report" "$PRUNED_REPORT_PATH")
         fi
 
         # Add html-index if enabled
@@ -613,6 +643,8 @@ runs:
       env:
         BUCKET: ${{ inputs.r2-bucket }}
         PREFIX: ${{ inputs.repo-prefix }}
+        PACKAGE_TYPE: ${{ inputs.package-type }}
+        METADATA_ETAGS_PATH: ${{ runner.temp }}/repogen-sysext-etags.tsv
       run: |
         set -e
         echo "::group::Uploading repository to R2"
@@ -637,7 +669,16 @@ runs:
         # Live metadata must never reference a payload that is not in the
         # bucket, so a single parallel sync is not used (issue #84).
         # No --delete: existing packages that are not local are preserved.
+        # For sysext, SHA256SUMS and SHA256SUMS.gpg are written conditionally
+        # on the ETags the restore recorded, so a concurrent publisher turns
+        # into a failed run, never into lost entries (ADR-0019). Other
+        # package types upload exactly as before.
         export S3_PATH
+        if [[ "$PACKAGE_TYPE" == "sysext" ]]; then
+          export METADATA_ETAGS="$METADATA_ETAGS_PATH"
+        else
+          unset METADATA_ETAGS
+        fi
         REPO_DIR=./repo "$GITHUB_ACTION_PATH/../../../scripts/upload-to-r2.sh"
 
         echo ""
@@ -672,6 +713,33 @@ runs:
         fi
 
         echo "✓ Cloudflare cache purged successfully for $HOSTNAME"
+        echo "::endgroup::"
+
+    - name: Delete pruned sysext payloads
+      # Only after the upload (and the cache purge, when it is on) succeeded:
+      # a failed step before this one skips it, so a payload is never deleted
+      # while live metadata may still list it (ADR-0019).
+      if: inputs.package-type == 'sysext' && inputs.sysext-keep-versions != '0' && steps.run-repogen.outputs.published == 'true'
+      shell: bash
+      env:
+        BUCKET: ${{ inputs.r2-bucket }}
+        PREFIX: ${{ inputs.repo-prefix }}
+        PRUNED_REPORT: ${{ runner.temp }}/repogen-pruned.txt
+      run: |
+        set -e
+        echo "::group::Deleting pruned sysext payloads"
+
+        if [[ -n "$PREFIX" ]]; then
+          S3_PATH="s3://${BUCKET}/${PREFIX}"
+        else
+          S3_PATH="s3://${BUCKET}"
+        fi
+        export S3_PATH
+
+        # The script deletes a payload only when the live SHA256SUMS no
+        # longer lists it.
+        REPO_DIR=./repo "$GITHUB_ACTION_PATH/../../../scripts/delete-pruned-payloads.sh"
+
         echo "::endgroup::"
 
     - name: Cleanup

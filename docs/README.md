@@ -87,6 +87,13 @@ Repo-local decisions; org-wide ones go to frostyard/core and are listed in
   whose identity the signature-verified `SHA256SUMS` already lists, whatever
   its bytes; the action checks that each skipped payload is still in the bucket
   and uploads nothing when every identity is published
+- [ADR-0019 — Guard sysext manifests with conditional writes; prune only on request](adr/0019-guard-sysext-manifests-and-opt-in-retention.md)
+  — proposed 2026-11-13: `publish-to-r2` writes each sysext `SHA256SUMS` and
+  `SHA256SUMS.gpg` with `If-Match` on the restored ETag, so a concurrent
+  publisher fails the run instead of dropping entries (publishers must still
+  serialize); `--sysext-keep-versions N` / `sysext-keep-versions` prunes per
+  name, OS version and arch, off by default, and deletes payloads only after
+  the new metadata is live (issue #102)
 
 ### Design
 

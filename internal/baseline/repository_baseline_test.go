@@ -1126,6 +1126,8 @@ func TestRepositoryBaselineB6RiskPaths(t *testing.T) {
 		".github/actions/publish-to-r2/action.yml",
 		"scripts/install-release.sh",
 		"scripts/upload-to-r2.sh",
+		"scripts/sync-sysext-metadata.sh",
+		"scripts/delete-pruned-payloads.sh",
 		"internal/signer/gpg.go",
 		"internal/generator/apk/generator.go",
 		"internal/generator/pacman/generator.go",

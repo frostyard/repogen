@@ -92,6 +92,7 @@ jobs:
 | `repogen-commit`       | Yes      | -           | Exact 40-character commit embedded in the binary                                         |
 | `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
 | `skip-published-identities` | No  | `false`     | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Requires `gpg-private-key` and a `./repo` without payloads. Known gap: a content change without a version or revision bump is not republished |
+| `sysext-keep-versions` | No       | `0`         | sysext only: keep only the newest N versions per name, OS version and arch in `SHA256SUMS` (systemd-sysupdate order) and delete the pruned payload objects after the new metadata is live; `0` keeps every version, nothing is pruned |
 | `purge-cache`          | No       | `false`     | Purge Cloudflare cache after upload                                                      |
 | `cloudflare-zone`      | No\*     | -           | Cloudflare Zone ID (\*required if `purge-cache` is `true`)                               |
 | `cloudflare-api-token` | No\*     | -           | Cloudflare API Token with Cache Purge permission (\*required if `purge-cache` is `true`) |
@@ -106,12 +107,19 @@ jobs:
 ## How It Works
 
 1. **Downloads repogen** from GitHub releases
-2. **Syncs existing metadata** from R2 (only metadata files, not packages)
+2. **Syncs existing metadata** from R2 (only metadata files, not packages);
+   for sysext it records the ETag of each `SHA256SUMS` and `SHA256SUMS.gpg`
+   it downloaded
 3. **Runs repogen** in incremental mode to add new packages
 4. **Checks skipped identities** still have their payloads in the bucket (only
    with `skip-published-identities`)
 5. **Uploads** the updated repository back to R2, or uploads nothing when
-   every sysext identity was already published
+   every sysext identity was already published. A sysext `SHA256SUMS` and
+   `SHA256SUMS.gpg` are written only if no other publisher changed them since
+   step 2
+6. **Purges the cache** (only with `purge-cache`)
+7. **Deletes pruned payloads** (only with `sysext-keep-versions` above `0`),
+   each only when the live `SHA256SUMS` no longer lists it
 
 The action uses incremental mode, which means:
 
@@ -136,11 +144,39 @@ content change without a version or revision bump is not republished
 ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
 
 The action is not a Debian publisher. Debian uses the separate protected
-writer. A sysext caller must serialize the full restore/generate/upload cycle
-across all extensions because `ext/index` is shared. The current R2 upload
-cannot atomically replace `SHA256SUMS` and `SHA256SUMS.gpg`; do not activate
-new production credentials until that provider-side commit boundary has been
-reviewed and approved.
+writer.
+
+### Concurrent sysext publishers
+
+Sysext publishers of one bucket must run one at a time: put every suite in 1
+job, or give all of them 1 `concurrency` group. Two suites (for example trixie
+`_13_` and forky `_14_`) share `ext/<name>/SHA256SUMS`, and each run merges its
+entries into the manifest it restored. The action writes each `SHA256SUMS` and
+`SHA256SUMS.gpg` with `If-Match` on the ETag it restored (`If-None-Match: *`
+for a new one), so a second, unserialized run does not drop the entries of the
+first: it fails with `::error::another publisher changed
+ext/<name>/SHA256SUMS since this run restored it`. Rerun that job. The
+payloads it uploaded are not listed and are harmless. This needs AWS CLI v2.22
+or newer on the runner; an older CLI fails the run and writes nothing without
+its condition.
+
+The guard does not make publication atomic. `SHA256SUMS` and its signature are
+2 writes, so a client can briefly read a new manifest with the old signature;
+it fails closed and succeeds on the next read. `ext/index` is not guarded:
+two unserialized runs that each add a new extension can leave the index short,
+and the next run then fails until the index is repaired
+([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
+
+### Retention
+
+Nothing is pruned by default: `ext/` and `SHA256SUMS` keep every published
+version. With `sysext-keep-versions: N` the action keeps the newest `N`
+versions of each extension per OS version and arch (trixie never pushes out
+forky) and deletes the pruned payload objects after the upload and the cache
+purge succeeded, each only when the live `SHA256SUMS` no longer lists it. A
+client that still holds a cached older `SHA256SUMS` can get a 404 for a pruned
+older version; the newest version is never pruned
+([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
 
 ## Setting Up R2 Credentials
 

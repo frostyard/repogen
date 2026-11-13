@@ -30,9 +30,14 @@ and systemd-sysupdate read, so any web server can host the result.
   published
   ([ADR-0018](docs/adr/0018-opt-in-identity-level-skip-for-published-sysexts.md));
   known gap: a content change without a version or revision bump is not
-  republished. [Incremental mode](docs/guides/usage.md#incremental-mode)
+  republished. `--sysext-keep-versions N` keeps only the newest N versions of
+  each sysext per OS version and arch; by default nothing is pruned.
+  [Incremental mode](docs/guides/usage.md#incremental-mode)
 - **Publishes to Cloudflare R2.** The `publish-to-r2` GitHub Action uploads
-  payloads before metadata and refuses Debian input.
+  payloads before metadata, writes each sysext `SHA256SUMS` only if no other
+  publisher changed it since the restore (publishers must still run one at a
+  time), and refuses Debian input
+  ([ADR-0019](docs/adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
   [publish-to-r2](docs/guides/publish-to-r2.md)
 - **Shows clients how to use the result.** The APT, apk, pacman, Homebrew and
   systemd-sysupdate setup for each format. [Client setup](docs/guides/client-setup.md)
