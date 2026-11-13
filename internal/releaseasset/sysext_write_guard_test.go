@@ -1035,7 +1035,8 @@ func TestFirstPublishRestoreGenerateUpload(t *testing.T) {
 			env := newGuardEnv(t)
 			env.sync()
 			if _, err := os.Stat(filepath.Join(env.repoDir, "ext")); !os.IsNotExist(err) {
-				t.Fatalf("a restore from an empty bucket left ext/ behind (stat error %v)", err)
+				// Not fatal: the generation below shows what an empty ext/ breaks.
+				t.Errorf("a restore from an empty bucket left ext/ behind (stat error %v)", err)
 			}
 
 			if err := env.generateWithCLI(tt.extra(t)...); err != nil {
