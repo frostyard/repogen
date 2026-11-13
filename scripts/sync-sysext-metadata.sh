@@ -58,7 +58,16 @@ if [[ "$s3_rest" == */* ]]; then
   key_prefix="${s3_rest#*/}/"
 fi
 
-mkdir -p "$REPO_DIR/ext"
+# A first publish restores nothing, and then ext/ must stay absent: the
+# generator treats an existing ext/ as a published repository and reads it
+# strictly, so an empty one fails with "no existing sysext packages found".
+# ext/ is created only when the bucket has something to restore, and an ext/
+# that this script created but left without files is removed at the end. An
+# ext/ that holds files stays, so a malformed published repository still fails
+# closed in the generator.
+ext_existed=0
+[[ -e "$REPO_DIR/ext" ]] && ext_existed=1
+mkdir -p "$REPO_DIR"
 
 # The state file is written beside its final path and renamed at the end, so a
 # failed restore never leaves a partial file that a later upload could trust.
@@ -129,5 +138,10 @@ done
 
 mv "$state_tmp" "$METADATA_ETAGS"
 trap - EXIT
+
+if ((!ext_existed)) && [[ -d "$REPO_DIR/ext" ]] &&
+  [[ -z "$(find "$REPO_DIR/ext" ! -type d -print -quit)" ]]; then
+  find "$REPO_DIR/ext" -depth -type d -empty -delete
+fi
 
 echo "Restored $restored guarded sysext metadata file(s) with their ETags"

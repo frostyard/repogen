@@ -250,3 +250,50 @@ func FuzzCompareVersions(f *testing.F) {
 		}
 	})
 }
+
+// TestCompareVersionsMatchesSystemdDocumentedOrder checks the order systemd
+// documents above strverscmp_improved() in src/fundamental/string-util.c
+// (systemd commit 74d392ed1bab578e901699ee272faa0c8b922128), oldest first.
+func TestCompareVersionsMatchesSystemdDocumentedOrder(t *testing.T) {
+	order := []string{
+		"122.1", "123~rc1-1", "123", "123-a", "123-a.1", "123-1", "123-1.1",
+		"123^post1", "123.a-1", "123.1-1", "123a-1", "124-1",
+	}
+	for i := range order {
+		for j := i + 1; j < len(order); j++ {
+			if got := compareVersions(order[i], order[j]); got >= 0 {
+				t.Errorf("compareVersions(%q, %q) = %d, want < 0", order[i], order[j], got)
+			}
+			if got := compareVersions(order[j], order[i]); got <= 0 {
+				t.Errorf("compareVersions(%q, %q) = %d, want > 0", order[j], order[i], got)
+			}
+		}
+	}
+}
+
+func TestCompareVersionsUpstreamEdgeCases(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		// Upstream (src/fundamental/string-util.c at systemd commit
+		// 74d392ed1bab578e901699ee272faa0c8b922128) consumes one '~' on each
+		// side, then returns CMP(*a, *b) when one side ends: "1~" ends first,
+		// so "1~~" is NEWER than "1~".
+		{"1~~", "1~", 1},
+		{"1.02", "1.2", 0},
+		{"9", "10", -1},
+		{"1_a", "1a", 0},
+		// No shortcut for an empty string: "" vs "~1" reaches the '~' rule,
+		// and the side without '~' is newer.
+		{"", "~1", 1},
+		{"", "1", -1},
+		{"", "", 0},
+	}
+	for _, tt := range tests {
+		got := compareVersions(tt.a, tt.b)
+		if (got > 0) != (tt.want > 0) || (got < 0) != (tt.want < 0) {
+			t.Errorf("compareVersions(%q, %q) = %d, want sign %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}

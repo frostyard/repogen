@@ -10,11 +10,10 @@ package sysext
 // Retention (Generator.SysextKeepVersions) must keep the versions a client
 // would pick as newest, so it uses the client's order, not a string order: as
 // strings "9" sorts after "10".
+//
+// An empty string has no shortcut: it runs through the loop like upstream, so
+// "" is newer than "~1" (a pre-release) and older than "1".
 func compareVersions(a, b string) int {
-	if a == "" || b == "" {
-		return compareInts(len(a), len(b))
-	}
-
 	for {
 		// Drop leading characters that are not valid version characters
 		// (for example '+' or '_'): they only separate segments.

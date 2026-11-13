@@ -354,9 +354,11 @@ remote_matches() {
 # put_guarded REL writes REPO_DIR/REL to the bucket only when the object is
 # still the version the restore recorded (or still absent). It returns 0 on
 # success, 2 when the condition failed (another publisher wrote the object),
-# and 1 on any other failure. A failed attempt that is not a 412 is retried;
-# a 412 after an attempt whose response was lost is recognized by comparing
-# the object with the local bytes.
+# and 1 on any other failure. A failed attempt that is not a 412 is retried.
+# Only after such an ambiguous attempt (no response, or another error) can a
+# 412 come from this run's own write; then the object is compared with the
+# local bytes. A 412 on the first attempt is always a conflict, also when the
+# other publisher wrote identical bytes: its signature may differ.
 put_guarded() {
   local rel="$1"
   local key="${guard_key_prefix}${rel}"
@@ -366,7 +368,7 @@ put_guarded() {
     condition=(--if-match "$etag")
   fi
 
-  local attempt wait error_output
+  local attempt wait error_output ambiguous=0
   for ((attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++)); do
     echo "Phase 3b (guarded metadata): $rel with ${condition[*]}, attempt $attempt of $UPLOAD_ATTEMPTS"
     if error_output="$(aws s3api put-object \
@@ -383,12 +385,13 @@ put_guarded() {
       return 1
     fi
     if grep -Eq 'PreconditionFailed|\(412\)' <<<"$error_output"; then
-      if remote_matches "$key" "$REPO_DIR/$rel"; then
+      if ((ambiguous)) && remote_matches "$key" "$REPO_DIR/$rel"; then
         echo "$rel already holds the bytes of this run (an earlier attempt wrote them)"
         return 0
       fi
       return 2
     fi
+    ambiguous=1
     if ((attempt < UPLOAD_ATTEMPTS)); then
       wait=$((UPLOAD_RETRY_DELAY * attempt))
       echo "::warning::Phase 3b (guarded metadata) could not write $rel on attempt $attempt of $UPLOAD_ATTEMPTS; retrying in ${wait}s"

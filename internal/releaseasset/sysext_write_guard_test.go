@@ -1,6 +1,7 @@
 package releaseasset
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/frostyard/repogen/internal/cli"
 )
 
 // fakeAWSObjects is a stand-in for the `aws` commands the sysext write guard
@@ -965,5 +968,113 @@ func TestPublishActionGuardsSysextMetadataAndPrunesLast(t *testing.T) {
 	deleteAt := strings.Index(action, "- name: Delete pruned sysext payloads")
 	if uploadAt >= deleteAt || purgeAt >= deleteAt {
 		t.Fatalf("the delete step must follow the upload (%d) and the cache purge (%d), at %d", uploadAt, purgeAt, deleteAt)
+	}
+}
+
+func TestUploadGuardFirstAttemptConflictWithIdenticalBytesFails(t *testing.T) {
+	env := newGuardEnv(t)
+	env.writeBucket(publishedBucket())
+	env.sync()
+	manifest, _ := env.generateNextVersion()
+
+	// Another publisher wrote byte-identical manifest bytes, with its own
+	// signature, before this run's first PUT.
+	otherSignature := "signature of the other publisher"
+	env.writeBucket(map[string]string{
+		"ext/foo/SHA256SUMS":     manifest,
+		"ext/foo/SHA256SUMS.gpg": otherSignature,
+	})
+	env.clearLog()
+
+	output, err := env.upload()
+	if err == nil {
+		t.Fatalf("a first-attempt 412 over identical bytes succeeded: %s", output)
+	}
+	if !strings.Contains(output, "::error::another publisher changed "+guardPrefix+"/ext/foo/SHA256SUMS") {
+		t.Fatalf("output lacks the conflict error:\n%s", output)
+	}
+	for _, line := range env.logLines() {
+		if strings.HasPrefix(line, "put-object "+guardPrefix+"/ext/foo/SHA256SUMS.gpg") {
+			t.Fatalf("a signature write followed a first-attempt 412: %v", env.logLines())
+		}
+	}
+	if got, _ := env.bucketFile("ext/foo/SHA256SUMS.gpg"); got != otherSignature {
+		t.Fatalf("the other publisher's signature was replaced: %q", got)
+	}
+}
+
+// generateWithCLI runs `repogen generate` (the real CLI command, in process)
+// on one sysext into the guard env's repo tree, as the action does.
+func (e *guardEnv) generateWithCLI(extra ...string) error {
+	e.t.Helper()
+	input := e.t.TempDir()
+	writeTestFile(e.t, filepath.Join(input, "incus_7.3_13_x86-64.raw"), "incus image")
+	args := []string{
+		"--input-dir", input,
+		"--output-dir", e.repoDir,
+		"--base-url", "https://example.com/repo",
+		"--gpg-key", filepath.Join(repositoryRoot(e.t), "test", "fixtures", "gpg-keys", "test-key.asc"),
+		"--incremental",
+	}
+	command := cli.NewGenerateCmd()
+	command.SetArgs(append(args, extra...))
+	return command.ExecuteContext(context.Background())
+}
+
+func TestFirstPublishRestoreGenerateUpload(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		extra func(t *testing.T) []string
+	}{
+		{"default", func(*testing.T) []string { return nil }},
+		{"skip published identities", func(t *testing.T) []string {
+			return []string{"--skip-published-identities", "--skipped-report", filepath.Join(t.TempDir(), "skipped.txt")}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newGuardEnv(t)
+			env.sync()
+			if _, err := os.Stat(filepath.Join(env.repoDir, "ext")); !os.IsNotExist(err) {
+				t.Fatalf("a restore from an empty bucket left ext/ behind (stat error %v)", err)
+			}
+
+			if err := env.generateWithCLI(tt.extra(t)...); err != nil {
+				t.Fatalf("first-publish generation after the restore failed: %v", err)
+			}
+			env.clearLog()
+			if output, err := env.upload(); err != nil {
+				t.Fatalf("first guarded publish failed: %v\n%s", err, output)
+			}
+
+			for _, call := range []string{
+				"upload ext/incus/incus_7.3_13_x86-64.raw",
+				"put-object " + guardPrefix + "/ext/incus/SHA256SUMS if-none-match *",
+				"put-object " + guardPrefix + "/ext/incus/SHA256SUMS.gpg if-none-match *",
+				"upload ext/index",
+			} {
+				if env.indexOf(call) < 0 {
+					t.Fatalf("first publish lacks %q: %v", call, env.logLines())
+				}
+			}
+			manifest, ok := env.bucketFile("ext/incus/SHA256SUMS")
+			if !ok || !strings.Contains(manifest, "incus_7.3_13_x86-64.raw") {
+				t.Fatalf("bucket SHA256SUMS = %q (present %v)", manifest, ok)
+			}
+		})
+	}
+}
+
+func TestRestoreKeepsMalformedPublishedRepository(t *testing.T) {
+	env := newGuardEnv(t)
+	// A published ext/ without any manifest is not an empty repository.
+	env.writeBucket(map[string]string{"ext/incus/incus.transfer": "transfer"})
+	env.sync()
+	if _, err := os.Stat(filepath.Join(env.repoDir, "ext", "incus", "incus.transfer")); err != nil {
+		t.Fatalf("the restore dropped published metadata: %v", err)
+	}
+
+	err := env.generateWithCLI()
+	if err == nil || !strings.Contains(err.Error(), "no existing sysext packages found") {
+		t.Fatalf("generation over a malformed published repository = %v, want the strict reader's failure", err)
 	}
 }
