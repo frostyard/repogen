@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/frostyard/repogen/internal/generator"
@@ -44,11 +45,12 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		return err
 	}
 
-	// Group bottles by package name
-	bottlesByPkg := make(map[string][]models.Package)
-	for _, pkg := range packages {
-		name := extractPackageName(pkg.Filename)
-		bottlesByPkg[name] = append(bottlesByPkg[name], pkg)
+	// Group bottles by the package name that the filename encodes. A filename
+	// that does not parse stops the run: the name and the version are needed
+	// and must not be guessed.
+	bottlesByPkg, err := bottlesByPackageName(packages)
+	if err != nil {
+		return err
 	}
 
 	// Generate formulas
@@ -111,10 +113,12 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 func (g *Generator) generateFormula(name string, bottles []models.Package) (string, error) {
 	className := toClassName(name)
 
-	// Extract version from first bottle
-	version := "1.0.0"
-	if len(bottles) > 0 && bottles[0].Version != "" {
-		version = bottles[0].Version
+	// The bottle filename holds the version. Package metadata is no source for
+	// it: in incremental mode the version comes from an old formula file, which
+	// can hold a wrong value.
+	version, err := bottleVersion(name, bottles)
+	if err != nil {
+		return "", err
 	}
 
 	// Get description
@@ -204,21 +208,50 @@ func (g *Generator) getBottleURL(filename string) string {
 	return fmt.Sprintf("bottles/%s", filepath.Base(filename))
 }
 
-// extractPackageName extracts package name from bottle filename
-// Format: package--version.platform.bottle.tar.gz
-func extractPackageName(filename string) string {
-	base := filepath.Base(filename)
-	// Remove .bottle.tar.gz or .bottle.tar
-	base = strings.TrimSuffix(base, ".bottle.tar.gz")
-	base = strings.TrimSuffix(base, ".bottle.tar")
+// bottlesByPackageName groups bottles by the package name that each filename
+// encodes. A filename that the pattern does not match gives an error: the name
+// must not be guessed.
+func bottlesByPackageName(packages []models.Package) (map[string][]models.Package, error) {
+	byName := make(map[string][]models.Package, len(packages))
+	for _, pkg := range packages {
+		parsed, err := parseBottleFilename(pkg.Filename)
+		if err != nil {
+			return nil, err
+		}
+		byName[parsed.Name] = append(byName[parsed.Name], pkg)
+	}
+	return byName, nil
+}
 
-	// Split by -- to get package name
-	parts := strings.Split(base, "--")
-	if len(parts) > 0 {
-		return parts[0]
+// bottleVersion returns the single version that the bottle filenames of one
+// package encode. Filenames that do not parse, and filenames with different
+// versions, give an error.
+func bottleVersion(name string, bottles []models.Package) (string, error) {
+	if len(bottles) == 0 {
+		return "", fmt.Errorf("no bottles for package %s", name)
 	}
 
-	return base
+	seen := make(map[string]struct{}, len(bottles))
+	for _, bottle := range bottles {
+		parsed, err := parseBottleFilename(bottle.Filename)
+		if err != nil {
+			return "", err
+		}
+		seen[parsed.Version] = struct{}{}
+	}
+
+	versions := make([]string, 0, len(seen))
+	for version := range seen {
+		versions = append(versions, version)
+	}
+	slices.Sort(versions)
+
+	if len(versions) > 1 {
+		return "", fmt.Errorf("bottles for %s have different versions: %s",
+			name, strings.Join(versions, ", "))
+	}
+
+	return versions[0], nil
 }
 
 // extractPlatform extracts platform from bottle filename
@@ -259,13 +292,34 @@ func toClassName(name string) string {
 	return strings.Join(words, "")
 }
 
-// ValidatePackages checks if packages are valid Homebrew bottles
+// ValidatePackages checks if packages are valid Homebrew bottles. Each
+// filename must encode a name, a version and a platform, and all bottles of
+// one formula must carry the same version.
 func (g *Generator) ValidatePackages(packages []models.Package) error {
 	for _, pkg := range packages {
-		if !strings.Contains(pkg.Filename, ".bottle.tar") {
+		if !strings.Contains(pkg.Filename, bottleSuffix) {
 			return fmt.Errorf("package %s is not a Homebrew bottle", pkg.Filename)
 		}
 	}
+
+	byName, err := bottlesByPackageName(packages)
+	if err != nil {
+		return err
+	}
+
+	// Sort the names so that a run reports the same error every time.
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	for _, name := range names {
+		if _, err := bottleVersion(name, byName[name]); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

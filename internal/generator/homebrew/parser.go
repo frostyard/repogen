@@ -20,6 +20,65 @@ var (
 	formulaSHA256Re   = regexp.MustCompile(`sha256\s+"([^"]+)"`)
 )
 
+// Bottle filename suffixes, the gzip form tested first.
+const (
+	bottleSuffixGz = ".bottle.tar.gz"
+	bottleSuffix   = ".bottle.tar"
+)
+
+// bottleName holds the parts that a bottle filename encodes.
+type bottleName struct {
+	Name     string
+	Version  string
+	Platform string
+}
+
+// parseBottleFilename parses a bottle filename of the form
+// name--version.platform.bottle.tar.gz (or .bottle.tar). It accepts a local
+// path or a URL, because a bottle filename can be either.
+func parseBottleFilename(filename string) (bottleName, error) {
+	base := filepath.Base(filename)
+
+	stem, ok := strings.CutSuffix(base, bottleSuffixGz)
+	if !ok {
+		stem, ok = strings.CutSuffix(base, bottleSuffix)
+	}
+	if !ok {
+		return bottleName{}, bottlePatternError(base)
+	}
+
+	name, rest, ok := strings.Cut(stem, "--")
+	if !ok {
+		return bottleName{}, bottlePatternError(base)
+	}
+
+	// The platform is the last dot-separated field; a version can hold dots,
+	// and a platform tag holds none (x86_64_linux, arm64_sonoma).
+	dot := strings.LastIndex(rest, ".")
+	if dot < 0 {
+		return bottleName{}, bottlePatternError(base)
+	}
+
+	parsed := bottleName{
+		Name:     name,
+		Version:  rest[:dot],
+		Platform: rest[dot+1:],
+	}
+	if parsed.Name == "" || parsed.Version == "" || parsed.Platform == "" {
+		return bottleName{}, bottlePatternError(base)
+	}
+
+	return parsed, nil
+}
+
+// bottlePatternError names a bottle filename that the expected pattern does
+// not match.
+func bottlePatternError(base string) error {
+	return fmt.Errorf(
+		"homebrew bottle filename %q does not match the expected pattern "+
+			"name--version.platform.bottle.tar.gz", base)
+}
+
 // ParseExistingMetadata reads Formula/*.rb files
 func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error) {
 	formulaDir := filepath.Join(config.OutputDir, "Formula")
@@ -110,9 +169,13 @@ func extractPackageNameFromURL(url string) string {
 	}
 	filename := parts[len(parts)-1]
 
-	// Remove .bottle.tar.gz
-	filename = strings.TrimSuffix(filename, ".bottle.tar.gz")
-	filename = strings.TrimSuffix(filename, ".bottle.tar")
+	if parsed, err := parseBottleFilename(filename); err == nil {
+		return parsed.Name
+	}
+
+	// Fall back to the plain name for input that the pattern does not match.
+	filename = strings.TrimSuffix(filename, bottleSuffixGz)
+	filename = strings.TrimSuffix(filename, bottleSuffix)
 
 	// Split by --
 	nameParts := strings.Split(filename, "--")

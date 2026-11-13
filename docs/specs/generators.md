@@ -191,6 +191,14 @@ decompresses it, and parses each package's `desc` file.
 
 - Bottles are grouped by package name (extracted from filename pattern
   `name--version.platform.bottle.tar.gz`).
+- The bottle filename is the source of truth for the formula name and the
+  formula version. Package metadata is no source for them: in incremental mode
+  the version comes from an old formula file, which can hold a wrong value.
+- A filename that does not match `name--version.platform.bottle.tar.gz` (or
+  `.bottle.tar`) fails validation before output is written.
+- All bottles of one formula must hold the same version. Validation fails when
+  they do not, for example
+  `bottles for repogen-utils have different versions: 1.0.0, 2.0.0`.
 - Generated Ruby formula uses `on_macos`/`on_linux` blocks with
   `Hardware::CPU.arm?`/`Hardware::CPU.intel?` conditionals.
 - Formula class name is PascalCase conversion of package name.
@@ -202,7 +210,10 @@ decompresses it, and parses each package's `desc` file.
 ### Parser
 
 Homebrew bottles don't require metadata parsing — the filename encodes
-the package name, version, and platform.
+the package name, version, and platform. `parseBottleFilename` reads them:
+the name is the text before the first `--`, the platform is the text after the
+last `.`, and the version is the text between them. A version can hold dots
+(`1.21.4`); a platform tag holds none (`x86_64_linux`, `arm64_sonoma`).
 
 ### Incremental Mode
 
