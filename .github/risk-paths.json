@@ -9,7 +9,7 @@
     { "glob": "{.goreleaser.yml,.svu.yml}", "level": "L1", "why": "publication: the release build, the asset names, the embedded version and the version rule" },
     { "glob": "{Makefile,mise.toml,mise.lock}", "level": "L1", "why": "publication: make bump tags releases with the pinned svu; the pins of the gate tools" },
     { "glob": ".github/actions/publish-to-r2/**", "level": "L1", "why": "publication: the action that consumers run with R2 credentials and the repository signing key" },
-    { "glob": "scripts/{upload-to-r2,validate-publish-target,check-published-payloads}.sh", "level": "L1", "why": "publication: the ordered R2 upload, the refusal of stable and Debian, the published-payload check" },
+    { "glob": "scripts/{upload-to-r2,validate-publish-target,check-published-payloads,sync-sysext-metadata,delete-pruned-payloads}.sh", "level": "L1", "why": "publication: the ordered R2 upload, the refusal of stable and Debian, the published-payload check, the sysext write guard and the pruned-payload delete" },
     { "glob": "scripts/install-release.sh", "level": "L1", "why": "update verification: the SHA-256 and embedded-identity check of a release binary before install" },
     { "glob": "internal/signer/**", "level": "L1", "why": "signing and keys: GPG and RSA signing of repository metadata" },
     { "glob": "internal/generator/{apk,pacman}/generator.go", "level": "L1", "why": "signing and keys: the APK RSA signature and the pacman database and package signatures" },

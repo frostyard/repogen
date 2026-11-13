@@ -41,6 +41,18 @@ type RepositoryConfig struct {
 	// line, sorted. The file is written only when the run succeeds.
 	SkippedReportPath string
 
+	// SysextKeepVersions, when greater than 0, keeps only the newest N
+	// versions of each sysext identity group (name, OS version, arch) in
+	// SHA256SUMS, in systemd-sysupdate version order. 0 keeps every version,
+	// which is the default: nothing is pruned (ADR-0019).
+	SysextKeepVersions int
+
+	// PrunedReportPath, when set with SysextKeepVersions, receives the
+	// published payload path (ext/NAME/FILE) of each entry that retention
+	// dropped from SHA256SUMS, one per line, sorted. The file is written only
+	// when the run succeeds.
+	PrunedReportPath string
+
 	// Output options
 	HTMLIndex bool // Generate HTML directory index pages for browser-friendly navigation
 }

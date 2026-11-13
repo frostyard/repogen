@@ -38,6 +38,9 @@ type Generator struct {
 	baseURL    string
 	signer     signer.Signer
 	beforeStep func(string) error
+	// pruned holds the entries the last successful Generate call dropped
+	// under config.SysextKeepVersions (ADR-0019).
+	pruned []models.Package
 }
 
 // NewGenerator creates a new systemd-sysext generator.
@@ -55,6 +58,7 @@ func NewGenerator(baseURL string, metadataSigner signer.Signer) generator.Genera
 //	<output>/ext/<name>/SHA256SUMS
 //	<output>/ext/<name>/<name>_<version>_<osversion>_<arch>.raw[.compression]
 func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfig, packages []models.Package) error {
+	g.pruned = nil
 	releaseLock, err := acquireReconcileLock(ctx, config.OutputDir)
 	if err != nil {
 		return err
@@ -93,6 +97,14 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	if err != nil {
 		return err
 	}
+	// Retention runs on the merged set, so it sees the published entries and
+	// the incoming ones together. It is off unless SysextKeepVersions > 0.
+	packages, pruned := retainNewestVersions(packages, config.SysextKeepVersions)
+	for _, pkg := range pruned {
+		osVersion, _ := pkg.Metadata["OSVersion"].(string)
+		logrus.Infof("Pruning %s: retention keeps the newest %d version(s) of %s for OS version %s and arch %s",
+			filepath.Base(pkg.Filename), config.SysextKeepVersions, pkg.Name, osVersion, pkg.Architecture)
+	}
 
 	if err := g.runBeforeStep("stage:create"); err != nil {
 		return err
@@ -123,6 +135,13 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	if err := g.generateStaged(ctx, &stageConfig, packages); err != nil {
 		return err
 	}
+	// A pruned payload that is present locally (a full local tree) goes with
+	// its manifest entry, in the same atomic switch. In the publish-to-r2
+	// action payloads are not synced, and the action deletes the bucket
+	// objects only after the new metadata is live.
+	if err := removePrunedPayloads(stageExt, pruned); err != nil {
+		return err
+	}
 	if err := g.runBeforeStep("stage:validate"); err != nil {
 		return err
 	}
@@ -145,6 +164,86 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 	if currentExists {
 		if err := os.RemoveAll(stageExt); err != nil {
 			return fmt.Errorf("remove prior sysext generation after commit: %w", err)
+		}
+	}
+	g.pruned = pruned
+	return nil
+}
+
+// PrunedPayloads returns the published payload path (ext/NAME/FILE) of each
+// entry the last successful Generate call dropped from SHA256SUMS under
+// RepositoryConfig.SysextKeepVersions, sorted. It is empty when retention is
+// off or nothing was pruned.
+func (g *Generator) PrunedPayloads() []string {
+	paths := make([]string, 0, len(g.pruned))
+	for _, pkg := range g.pruned {
+		paths = append(paths, "ext/"+pkg.Name+"/"+filepath.Base(pkg.Filename))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// retainNewestVersions keeps, for each identity group (name, OS version,
+// arch), only the keep newest versions in systemd-sysupdate order
+// (compareVersions), and returns the kept and the pruned packages. Each OS
+// version and each arch is a group of its own, so the files of one suite never
+// push out the files of another. keep <= 0 keeps everything.
+func retainNewestVersions(packages []models.Package, keep int) (kept, pruned []models.Package) {
+	if keep <= 0 {
+		return packages, nil
+	}
+
+	groups := make(map[string][]int)
+	for index, pkg := range packages {
+		osVersion, _ := pkg.Metadata["OSVersion"].(string)
+		key := pkg.Name + "\x00" + osVersion + "\x00" + pkg.Architecture
+		groups[key] = append(groups[key], index)
+	}
+
+	prune := make(map[int]bool)
+	for _, indexes := range groups {
+		if len(indexes) <= keep {
+			continue
+		}
+		sort.SliceStable(indexes, func(i, j int) bool {
+			left, right := packages[indexes[i]], packages[indexes[j]]
+			if r := compareVersions(left.Version, right.Version); r != 0 {
+				return r > 0
+			}
+			// Equivalent versions ("1.02" and "1.2"): any fixed order will do.
+			if left.Version != right.Version {
+				return left.Version > right.Version
+			}
+			return filepath.Base(left.Filename) > filepath.Base(right.Filename)
+		})
+		for _, index := range indexes[keep:] {
+			prune[index] = true
+		}
+	}
+
+	for index, pkg := range packages {
+		if prune[index] {
+			pruned = append(pruned, pkg)
+		} else {
+			kept = append(kept, pkg)
+		}
+	}
+	sort.Slice(pruned, func(i, j int) bool {
+		if pruned[i].Name != pruned[j].Name {
+			return pruned[i].Name < pruned[j].Name
+		}
+		return filepath.Base(pruned[i].Filename) < filepath.Base(pruned[j].Filename)
+	})
+	return kept, pruned
+}
+
+// removePrunedPayloads deletes the payload file of each pruned package from the
+// staged ext tree when it is there.
+func removePrunedPayloads(stageExt string, pruned []models.Package) error {
+	for _, pkg := range pruned {
+		payload := filepath.Join(stageExt, pkg.Name, filepath.Base(pkg.Filename))
+		if err := os.Remove(payload); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove pruned sysext payload %s: %w", payload, err)
 		}
 	}
 	return nil

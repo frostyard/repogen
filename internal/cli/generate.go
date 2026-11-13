@@ -80,6 +80,10 @@ structures with appropriate metadata files and signatures.`,
 	cmd.Flags().BoolVar(&config.SkipPublishedIdentities, "skip-published-identities", false, "In incremental mode, skip each sysext whose identity (name, version, OSVersion, arch) is already listed in the signature-verified SHA256SUMS, whatever its bytes or compression suffix (sysext only). Known gap: a content change without a version or revision bump keeps its identity and is not republished")
 	cmd.Flags().StringVar(&config.SkippedReportPath, "skipped-report", "", "With --skip-published-identities, write the published payload path (ext/NAME/FILE) of each skipped sysext to this file, one per line")
 
+	// Sysext retention (ADR-0019): off by default, nothing is pruned.
+	cmd.Flags().IntVar(&config.SysextKeepVersions, "sysext-keep-versions", 0, "Keep only the newest N versions of each sysext per name, OS version and arch in SHA256SUMS, in systemd-sysupdate version order (sysext only; 0 keeps every version)")
+	cmd.Flags().StringVar(&config.PrunedReportPath, "pruned-report", "", "With --sysext-keep-versions, write the published payload path (ext/NAME/FILE) of each pruned sysext to this file, one per line")
+
 	// Output options
 	cmd.Flags().BoolVar(&config.HTMLIndex, "html-index", false, "Generate HTML directory index pages for browser-friendly navigation")
 
@@ -121,6 +125,20 @@ func validateConfig(config *models.RepositoryConfig) error {
 		return &models.RepoGenError{
 			Type: models.ErrInvalidConfig,
 			Err:  fmt.Errorf("--skipped-report requires --skip-published-identities"),
+		}
+	}
+
+	if config.SysextKeepVersions < 0 {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--sysext-keep-versions must be 0 (keep every version) or more, got %d", config.SysextKeepVersions),
+		}
+	}
+
+	if config.PrunedReportPath != "" && config.SysextKeepVersions == 0 {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--pruned-report requires --sysext-keep-versions greater than 0"),
 		}
 	}
 
@@ -460,7 +478,11 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	// output is written and no directory index is generated, so a nightly
 	// rebuild of unchanged sysexts succeeds without touching the repository.
 	if config.SkipPublishedIdentities && len(plannedPackages) == 0 {
-		if err := writeSkippedReport(config.SkippedReportPath, skippedReportLines); err != nil {
+		if err := writeReport(config.SkippedReportPath, skippedReportLines); err != nil {
+			return err
+		}
+		// Nothing is generated, so nothing is pruned in this run.
+		if err := writeReport(config.PrunedReportPath, nil); err != nil {
 			return err
 		}
 		logrus.Info("Nothing to publish: every sysext identity is already published")
@@ -468,6 +490,7 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	}
 
 	// Phase 2: write each format's output.
+	var prunedReportLines []string
 	for pkgType, finalPackages := range plannedPackages {
 		gen := generators[pkgType]
 		logrus.Infof("Generating %s repository with %d packages...", pkgType, len(finalPackages))
@@ -477,6 +500,9 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 				Type: models.ErrMetadataGen,
 				Err:  fmt.Errorf("failed to generate %s repository: %w", pkgType, err),
 			}
+		}
+		if prunedGenerator, ok := gen.(interface{ PrunedPayloads() []string }); ok {
+			prunedReportLines = append(prunedReportLines, prunedGenerator.PrunedPayloads()...)
 		}
 	}
 
@@ -490,11 +516,14 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 		}
 	}
 
-	// The report is a proof of a successful run, so it is written last.
+	// The reports are a proof of a successful run, so they are written last.
 	if config.SkipPublishedIdentities {
-		if err := writeSkippedReport(config.SkippedReportPath, skippedReportLines); err != nil {
+		if err := writeReport(config.SkippedReportPath, skippedReportLines); err != nil {
 			return err
 		}
+	}
+	if err := writeReport(config.PrunedReportPath, prunedReportLines); err != nil {
+		return err
 	}
 
 	logrus.Info("Repository generation completed successfully!")
@@ -503,10 +532,10 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	return nil
 }
 
-// writeSkippedReport writes the sorted skipped-identity lines, one per line, to
-// reportPath. An empty path writes nothing; a run that skipped nothing writes
-// an empty file.
-func writeSkippedReport(reportPath string, lines []string) error {
+// writeReport writes the sorted report lines (skipped or pruned payload
+// paths), one per line, to reportPath. An empty path writes nothing; a run
+// with no line writes an empty file.
+func writeReport(reportPath string, lines []string) error {
 	if reportPath == "" {
 		return nil
 	}
@@ -523,7 +552,7 @@ func writeSkippedReport(reportPath string, lines []string) error {
 	if err := os.WriteFile(reportPath, []byte(builder.String()), 0o644); err != nil {
 		return &models.RepoGenError{
 			Type: models.ErrFileOp,
-			Err:  fmt.Errorf("failed to write skipped report %s: %w", reportPath, err),
+			Err:  fmt.Errorf("failed to write report %s: %w", reportPath, err),
 		}
 	}
 
