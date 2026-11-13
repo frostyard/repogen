@@ -384,8 +384,9 @@ func validCorrectionDate(date string) bool {
 	if !correctionsDate.MatchString(date) {
 		return false
 	}
-	_, err := time.Parse("2006-01-02", date)
-	return err == nil
+	parsed, err := time.Parse("2006-01-02", date)
+	// Core's Date.UTC maps years 0-99 to 1900-1999, so it rejects them.
+	return err == nil && parsed.Year() >= 100
 }
 
 // isJSSpace is true for the characters that JavaScript's String.prototype.trim
@@ -486,6 +487,16 @@ func TestCorrectionsProblems(t *testing.T) {
 		{"an invalid date fails", func(t *testing.T, root string) {
 			write(t, root, "2026-02-30-a-record.json", correctionText("2026-02-30", "e"))
 		}, "2026-02-30-a-record.json: invalid date: 2026-02-30"},
+		// Core's Date.UTC maps years 0-99 to 1900-1999, so a year below 100 fails.
+		{"the year 0000 fails", func(t *testing.T, root string) {
+			write(t, root, "0000-01-01-a-record.json", correctionText("0000-01-01", "e"))
+		}, "0000-01-01-a-record.json: invalid date: 0000-01-01"},
+		{"the year 0099 fails", func(t *testing.T, root string) {
+			write(t, root, "0099-12-31-a-record.json", correctionText("0099-12-31", "e"))
+		}, "0099-12-31-a-record.json: invalid date: 0099-12-31"},
+		{"the year 0100 passes", func(t *testing.T, root string) {
+			write(t, root, "0100-01-01-a-record.json", correctionText("0100-01-01", "e"))
+		}, ""},
 		{"an evidence of spaces fails", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "  "))
 		}, good + ": evidence is empty"},
