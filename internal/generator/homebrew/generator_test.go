@@ -91,45 +91,59 @@ func TestParseBottleFilename(t *testing.T) {
 // TestGenerateUsesBottleFilenameVersion guards the formula version: the bottle
 // filename, not the package metadata, holds it. The CLI builds Homebrew
 // packages with no Name and no Version, so the generator must read them from
-// the filename.
+// the filename. In incremental mode the metadata version comes from an old
+// formula and can be a stale 1.0.0: the filename must win over it too.
 func TestGenerateUsesBottleFilenameVersion(t *testing.T) {
-	srcDir := t.TempDir()
-	outDir := t.TempDir()
-
-	bottlePath := filepath.Join(srcDir, "repogen-utils--2.0.0.x86_64_linux.bottle.tar.gz")
-	content := []byte("not a real bottle, only its name matters")
-	if err := os.WriteFile(bottlePath, content, 0o600); err != nil {
-		t.Fatalf("failed to write test bottle: %v", err)
+	tests := []struct {
+		name            string
+		metadataVersion string
+	}{
+		{name: "no metadata version, as the CLI builds it", metadataVersion: ""},
+		{name: "stale metadata version from an old formula", metadataVersion: "1.0.0"},
 	}
 
-	packages := []models.Package{{
-		Filename:  bottlePath,
-		Size:      int64(len(content)),
-		SHA256Sum: "0000000000000000000000000000000000000000000000000000000000000000",
-	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srcDir := t.TempDir()
+			outDir := t.TempDir()
 
-	g := NewGenerator("https://example.invalid")
-	config := &models.RepositoryConfig{OutputDir: outDir}
+			bottlePath := filepath.Join(srcDir, "repogen-utils--2.0.0.x86_64_linux.bottle.tar.gz")
+			content := []byte("not a real bottle, only its name matters")
+			if err := os.WriteFile(bottlePath, content, 0o600); err != nil {
+				t.Fatalf("failed to write test bottle: %v", err)
+			}
 
-	if err := g.ValidatePackages(packages); err != nil {
-		t.Fatalf("ValidatePackages returned an unexpected error: %v", err)
-	}
-	if err := g.Generate(context.Background(), config, packages); err != nil {
-		t.Fatalf("Generate returned an unexpected error: %v", err)
-	}
+			packages := []models.Package{{
+				Filename:  bottlePath,
+				Version:   tt.metadataVersion,
+				Size:      int64(len(content)),
+				SHA256Sum: "0000000000000000000000000000000000000000000000000000000000000000",
+			}}
 
-	formulaPath := filepath.Join(outDir, "Formula", "repogen-utils.rb")
-	data, err := os.ReadFile(formulaPath)
-	if err != nil {
-		t.Fatalf("failed to read formula: %v", err)
-	}
+			g := NewGenerator("https://example.invalid")
+			config := &models.RepositoryConfig{OutputDir: outDir}
 
-	formula := string(data)
-	if !strings.Contains(formula, `version "2.0.0"`) {
-		t.Errorf("formula does not hold the bottle version %q:\n%s", "2.0.0", formula)
-	}
-	if strings.Contains(formula, `version "1.0.0"`) {
-		t.Errorf("formula falls back to the default version:\n%s", formula)
+			if err := g.ValidatePackages(packages); err != nil {
+				t.Fatalf("ValidatePackages returned an unexpected error: %v", err)
+			}
+			if err := g.Generate(context.Background(), config, packages); err != nil {
+				t.Fatalf("Generate returned an unexpected error: %v", err)
+			}
+
+			formulaPath := filepath.Join(outDir, "Formula", "repogen-utils.rb")
+			data, err := os.ReadFile(formulaPath)
+			if err != nil {
+				t.Fatalf("failed to read formula: %v", err)
+			}
+
+			formula := string(data)
+			if !strings.Contains(formula, `version "2.0.0"`) {
+				t.Errorf("formula does not hold the bottle version %q:\n%s", "2.0.0", formula)
+			}
+			if strings.Contains(formula, `version "1.0.0"`) {
+				t.Errorf("formula holds the default or stale version:\n%s", formula)
+			}
+		})
 	}
 }
 
