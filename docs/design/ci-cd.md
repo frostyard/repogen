@@ -140,7 +140,8 @@ not make the pair atomic
      then each guarded key from `list-objects-v2` by `aws s3api get-object`,
      which returns the ETag of the bytes it wrote; it records
      `path<TAB>ETag<TAB>SHA-256` in `$RUNNER_TEMP/repogen-sysext-etags.tsv`;
-     any restore error aborts
+     an empty bucket leaves `ext/` absent (a first publish), and any restore
+     error aborts
    - apk: everything except `.apk` files
    - pacman: everything except `.pkg.tar.*` and `.sig` files
    - homebrew: `Formula/` directory
@@ -190,7 +191,8 @@ not make the pair atomic
       with `aws s3api put-object --if-match <restored ETag>` (or
       `--if-none-match '*'` for a new one); changed extensions first, new ones
       last; an unchanged manifest is not written. A 412 stops the run with
-      `::error::` before any other manifest or index; a 412 after a lost
+      `::error::` before any other manifest or index (a first-attempt 412 is
+      a conflict even over identical bytes); a 412 after a lost
       response is recognized by comparing the object with the local bytes; an
       aws CLI without the flags fails the run;
    4. directory indexes (`index`, `*/index`, `index.html`, `*/index.html`)

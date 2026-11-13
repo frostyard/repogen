@@ -43,7 +43,10 @@ files carry `14`. Both land in the same `ext/<name>/` directory with one
   `aws s3api get-object`, which returns the ETag of exactly the bytes it wrote.
   It records `path, ETag, SHA-256 of the bytes` in a state file under
   `$RUNNER_TEMP`. An ETag read after a download (a separate `HEAD`) is never
-  used: it can belong to a newer object and would hide the race.
+  used: it can belong to a newer object and would hide the race. When the
+  bucket has nothing to restore (a first publish), `ext/` stays absent, so the
+  generator starts a new repository; an `ext/` that holds any restored file
+  stays, so a malformed published repository still fails closed.
 - **Write with conditions.** `scripts/upload-to-r2.sh` with `METADATA_ETAGS`
   set leaves the guarded files out of phase 3 and writes them in a new phase
   3b, after the rest of the metadata and before the indexes, with one
@@ -57,8 +60,12 @@ files carry `14`. Both land in the same `ext/<name>/` directory with one
   `ext/<name>/SHA256SUMS` since the restore, no metadata of this run replaced
   it, the payloads this run uploaded are not listed and so are harmless, and
   the job must be rerun. Nothing after it is written: no other manifest, no
-  index. A 412 after an attempt whose response was lost is recognized by
-  downloading the object and comparing it with the local bytes.
+  index. A 412 on the first attempt is always a conflict, also when the
+  object already holds identical bytes (the other publisher's signature can
+  differ). Only a 412 after an ambiguous attempt in the same call (no
+  response, or another error) is checked by downloading the object and
+  comparing it with the local bytes: equal bytes mean this run's own write
+  landed.
 - **Old CLI.** An `aws` without the flags exits with "Unknown options"; the
   script reports that AWS CLI v2.22 or newer is needed and writes nothing
   without its condition. There is no unconditional fallback.
@@ -79,9 +86,7 @@ the publication atomic. The windows that remain:
   both refuse a manifest whose signature does not verify) and succeeds on the
   next read. A publisher writes a signature only after its own manifest write
   won, so a 412 on `SHA256SUMS.gpg` means that an unguarded writer (an older
-  action pin, a manual upload) changed it, or that another publisher wrote a
-  byte-identical `SHA256SUMS` and its own signature (then the bucket holds that
-  publisher's consistent pair). After an unguarded writer the pair can
+  action pin, a manual upload) changed it. After such a writer the pair can
   mismatch until one writer writes a consistent pair; a rerun after that writer
   finished repairs it.
 - `ext/index` is not guarded. If 2 unserialized runs each add a new extension,
