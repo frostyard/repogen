@@ -939,6 +939,24 @@ func TestDeletePrunedPayloadsWarnsOnDeleteFailure(t *testing.T) {
 		t.Fatal("the payload is gone although its delete failed")
 	}
 
+	// A step summary that cannot be written does not fail the run either.
+	env = newGuardEnv(t)
+	env.writeBucket(map[string]string{
+		"ext/foo/foo_1_13_x86-64.raw": "payload 1",
+		"ext/foo/SHA256SUMS":          "bbbb  foo_2_13_x86-64.raw\n",
+	})
+	env.writeRepo(map[string]string{"ext/foo/SHA256SUMS": "bbbb  foo_2_13_x86-64.raw\n"})
+	env.setEnv("FAKE_DELETE_FAIL", "1")
+	env.setEnv("GITHUB_STEP_SUMMARY", t.TempDir())
+	output, err = env.deletePruned("ext/foo/foo_1_13_x86-64.raw\n")
+	if err != nil {
+		t.Fatalf("an unwritable step summary failed the run: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "::warning::could not delete "+guardPrefix+"/ext/foo/foo_1_13_x86-64.raw") ||
+		!strings.Contains(output, "::warning::could not write the step summary") {
+		t.Fatalf("output does not warn about the object and the summary:\n%s", output)
+	}
+
 	// A malformed report stays an error and writes no summary line.
 	env = newGuardEnv(t)
 	if output, err := env.deletePruned("ext/foo/../SHA256SUMS\n"); err == nil {

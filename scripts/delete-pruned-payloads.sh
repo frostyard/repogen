@@ -138,8 +138,10 @@ done
 if ((failed > 0)); then
   summary="$failed pruned sysext payload object(s) were not deleted from s3://$bucket/${key_prefix} ($deleted deleted); each is not listed by any live manifest, or is listed and must stay, and no later run deletes it"
   echo "::warning::$summary"
-  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-    echo "- :warning: $summary" >>"$GITHUB_STEP_SUMMARY"
+  # Best effort: a summary file that cannot be written must not fail the run.
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] &&
+    ! { echo "- :warning: $summary" >>"$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+    echo "::warning::could not write the step summary"
   fi
   exit 0
 fi
