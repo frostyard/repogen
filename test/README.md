@@ -29,7 +29,7 @@ test/
 ### Prerequisites
 
 - Docker (for running containers)
-- Go 1.26+ (for running tests)
+- Go 1.27.4+ (for running tests; the `go` line in `go.mod`. With `GOTOOLCHAIN=auto`, an older go command downloads Go 1.27.4)
 - `dpkg-deb` (for building Debian packages)
 
 Or use Docker to build all packages:

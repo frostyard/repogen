@@ -8,9 +8,9 @@ GOFMT ?= gofmt
 GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))
 SVU_VERSION := $(strip $(shell sed -n 's/^svu = "\(.*\)"/\1/p' mise.toml))
 SVU ?= svu
-# go.mod's toolchain line, the only Go pin. golangci-lint must be built with a
-# Go at least this new.
-GO_TOOLCHAIN := $(strip $(shell sed -n 's/^toolchain go\(.*\)/\1/p' go.mod))
+# go.mod's go line (a full 1.MINOR.PATCH version), the only Go pin.
+# golangci-lint must be built with a Go of at least this minor.
+GO_MOD_VERSION := $(strip $(shell sed -n 's/^go \(.*\)/\1/p' go.mod))
 # govulncheck release; the Go checksum database verifies the module.
 GOVULNCHECK_VERSION := v1.9.0
 
@@ -80,7 +80,8 @@ lint: lint-version-check
 	@echo "Running linter..."
 	golangci-lint run ./...
 
-# Fail unless the installed golangci-lint is the mise.toml pin, built with a Go no older than go.mod's toolchain
+# Fail unless the installed golangci-lint is the mise.toml pin, built with a Go
+# whose major.minor is no older than go.mod's (a patch difference does not change gofmt output)
 lint-version-check:
 	@test -n "$(GOLANGCI_LINT_VERSION)" || { echo "mise.toml pins no golangci-lint"; exit 1; }
 	@installed="$$(golangci-lint version --short 2>/dev/null)" || { \
@@ -89,8 +90,10 @@ lint-version-check:
 		echo "expected golangci-lint $(GOLANGCI_LINT_VERSION), found $$installed (run: mise install)"; exit 1; \
 	fi; \
 	built="$$(golangci-lint version 2>/dev/null | sed -n 's/.*built with go\([0-9.]*\).*/\1/p')"; \
-	if [ -n "$$built" ] && [ "$$(printf '%s\n%s\n' "$(GO_TOOLCHAIN)" "$$built" | sort -V | head -1)" != "$(GO_TOOLCHAIN)" ]; then \
-		echo "golangci-lint $(GOLANGCI_LINT_VERSION) was built with go$$built, older than go.mod's toolchain go$(GO_TOOLCHAIN)"; exit 1; \
+	built_minor="$$(printf '%s' "$$built" | cut -d. -f1,2)"; \
+	module_minor="$$(printf '%s' "$(GO_MOD_VERSION)" | cut -d. -f1,2)"; \
+	if [ -n "$$built" ] && [ "$$(printf '%s\n%s\n' "$$module_minor" "$$built_minor" | sort -V | head -1)" != "$$module_minor" ]; then \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) was built with go$$built, older than go.mod's go$(GO_MOD_VERSION): bump golangci-lint first"; exit 1; \
 	fi
 
 # --- Gate triad (core ADR-0043, ADR-0044) ---
