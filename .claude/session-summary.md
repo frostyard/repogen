@@ -17,5 +17,6 @@ GitHub issues (`gh --repo frostyard/repogen`).
 
 ## Next
 
-- the docs site (core ADR-0070, B9) and the Go 1.27 bump (B11), each its own
-  PR.
+- the docs site (core ADR-0070, B9), its own PR. The Go 1.27 bump (B11,
+  #97) is this change: `go.mod` says `go 1.27.4`, the only Go pin, with no
+  `toolchain` line.

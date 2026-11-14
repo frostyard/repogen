@@ -17,8 +17,8 @@ external action is pinned to a full 40-character commit SHA with a trailing
 
 1. Checkout with `persist-credentials: false`, so the job cannot push with
    the workflow token.
-2. Set up Go from `go.mod`: the module minimum is 1.26.0, and the
-   `toolchain go1.26.10` line makes the go command use Go 1.26.10.
+2. Set up Go from `go.mod`: its `go 1.27.4` line is a full version and the
+   only Go pin (there is no `toolchain` line), so the go command uses Go 1.27.4.
 3. `jdx/mise-action` installs `golangci-lint` and `node` at the `mise.toml`
    pins, verified against `mise.lock` (Go still comes from step 2).
 4. `make ci`, the one gate. It runs, in order:
@@ -65,8 +65,8 @@ Triggered by `v*.*.*` tags. The workflow has `permissions: {}` at the top and
 access:
 1. Checks out the tag with full history and `persist-credentials: false`,
    and sets up Go, all with commit-pinned actions; Go setup reads the same
-   `go.mod`, so release binaries build with the `toolchain` version
-   (go1.26.10) that CI uses.
+   `go.mod`, so release binaries build with the `go` line version
+   (go1.27.4) that CI uses.
 2. Runs exact GoReleaser version `v2.18.1`.
 3. Builds raw linux amd64/arm64 binaries with the exact tag version and full
    source commit embedded.

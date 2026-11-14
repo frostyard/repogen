@@ -259,8 +259,8 @@ and [Plan 0001](../plans/0001-frostyard-production-publisher.md)).
 | `github.com/klauspost/compress` | gzip + zstd compression |
 | `github.com/ulikunitz/xz` | XZ decompression (deb control.tar.xz) |
 
-Go module minimum: 1.26.0
-Build toolchain: go1.26.10
+Go version: 1.27.4 (`go.mod`'s `go` line, the only Go pin; no `toolchain`
+line)
 
 `golang.org/x/crypto` stays in the module graph only as an indirect
 requirement of `ProtonMail/go-crypto`. CI runs a pinned `govulncheck`
