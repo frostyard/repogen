@@ -180,12 +180,19 @@ type correctionMember struct {
 	Value []byte
 }
 
-// correctionsProblems checks the corrections inbox under root: the retired
-// .memory/corrections.jsonl is absent, and .memory/corrections/ is a real
-// folder that holds only record files and an optional empty .gitkeep. It
-// returns the number of records and 1 problem for each rule a file breaks;
-// each problem names the file.
+// correctionsProblems checks the corrections inbox under root: .memory is
+// not a symbolic link, the retired .memory/corrections.jsonl is absent, and
+// .memory/corrections/ is a real folder that holds only record files and an
+// optional empty .gitkeep. It returns the number of records and 1 problem for
+// each rule a file breaks; each problem names the file.
 func correctionsProblems(root string) (int, []string) {
+	// A symbolic link at .memory would move the records out of the path that
+	// core's check reads, so it fails before either form is read.
+	if info, err := os.Lstat(filepath.Join(root, ".memory")); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return 0, []string{".memory: symbolic link, not followed"}
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return 0, []string{fmt.Sprintf(".memory: %v", err)}
+	}
 	if _, err := os.Lstat(filepath.Join(root, correctionsOld)); err == nil {
 		return 0, []string{correctionsOld + " is retired; add a file under " + correctionsDir + "/"}
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -643,6 +650,15 @@ func TestCorrectionsProblems(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, ".memory/corrections: symbolic link", ""},
+		{"a .memory symlink fails", func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", "e"))
+			if err := os.Rename(filepath.Join(root, ".memory"), filepath.Join(root, "inbox")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("inbox", filepath.Join(root, ".memory")); err != nil {
+				t.Fatal(err)
+			}
+		}, ".memory: symbolic link, not followed", ""},
 		{"a bad file name fails", func(t *testing.T, root string) {
 			write(t, root, "2026-11-06-Bad_Name.json", correctionText("2026-11-06", "e"))
 		}, "2026-11-06-Bad_Name.json: bad file name", ""},
@@ -676,6 +692,18 @@ func TestCorrectionsProblems(t *testing.T) {
 		{"a newline as \\u000a fails", evidence(`e \u000a`), good + ": not in canonical form", ""},
 		{"a raw é passes", evidence("e \u00e9"), "", ""},
 		{"an escaped é fails", evidence(`e \u00e9`), good + ": not in canonical form", ""},
+		{"an escaped U+007F fails", evidence(`e \u007f`), good + ": not in canonical form", ""},
+		{"an escaped required name fails, but is not missing", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"), `"date"`, `"d\u0061te"`, 1))
+		}, good + ": not in canonical form", "missing key"},
+		{"a required name and its escaped form are duplicates", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
+				"\"promoted_to\": \"\"", "\"promoted_to\": \"\",\n  \"d\\u0061te\": \"2026-11-06\"", 1))
+		}, good + ": duplicate key(s): date", ""},
+		{"a nested non-string value fails, and the other members still parse", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
+				`"promoted_to": ""`, `"promoted_to": {"a": [1, "x\"y", {"b": null}]}`, 1))
+		}, good + ": value for promoted_to is not a string", "missing key"},
 		{"2 different lone surrogate names are unknown keys, not duplicates", func(t *testing.T, root string) {
 			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
 				"\"promoted_to\": \"\"", "\"promoted_to\": \"\",\n  \"\\ud800\": \"x\",\n  \"\\udc00\": \"y\"", 1))
