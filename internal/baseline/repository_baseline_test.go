@@ -45,6 +45,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -164,13 +165,19 @@ var (
 	correctionsKeys = []string{"date", "scope", "correction", "evidence", "promoted_to"}
 )
 
-// correctionRecord is a record with its 5 fields in the canonical order.
+// correctionRecord is a record whose 5 fields are strings: the values in the
+// canonical order, as the UTF-16 code units that JSON.parse gives, so a lone
+// surrogate stays as it is.
 type correctionRecord struct {
-	Date       string `json:"date"`
-	Scope      string `json:"scope"`
-	Correction string `json:"correction"`
-	Evidence   string `json:"evidence"`
-	PromotedTo string `json:"promoted_to"`
+	Date   string
+	Values [5][]uint16
+}
+
+// correctionMember is 1 top-level member of a JSON object text: its name as
+// UTF-16 code units, and the raw JSON text of its value.
+type correctionMember struct {
+	Name  []uint16
+	Value []byte
 }
 
 // correctionsProblems checks the corrections inbox under root: the retired
@@ -264,13 +271,7 @@ func correctionFileProblems(folder, name string) (record bool, problems []string
 	if match[1] != parsed.Date {
 		fail("name date %s does not equal date %s", match[1], parsed.Date)
 	}
-	// encoding/json escapes U+2028 and U+2029 and JSON.stringify does not, so
-	// a record with such a character fails here; that is acceptable.
-	var canonical bytes.Buffer
-	encoder := json.NewEncoder(&canonical)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(parsed); err != nil || !bytes.Equal(canonical.Bytes(), data) {
+	if !bytes.Equal(correctionCanonical(parsed), data) {
 		fail("not in canonical form")
 	}
 	return true, problems
@@ -279,21 +280,23 @@ func correctionFileProblems(folder, name string) (record bool, problems []string
 // correctionRecordProblems checks the content of 1 record: 1 JSON object,
 // no duplicate key, exactly the 5 string fields, a real date and no empty
 // scope, correction or evidence. The record is nil unless all 5 fields are
-// strings.
+// strings; as in JSON.parse, the last of duplicate members gives the value.
 func correctionRecordProblems(data []byte) ([]string, *correctionRecord) {
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if !json.Valid(data) {
 		return []string{"invalid JSON"}, nil
 	}
-	object, ok := value.(map[string]any)
-	if !ok {
+	if start := jsonSkipSpace(data, 0); data[start] != '{' {
 		return []string{"not a plain object"}, nil
 	}
 	var problems []string
-	names := correctionTopKeys(data)
+	members := correctionMembers(data)
 	seen := map[string]int{}
-	var duplicates []string
-	for _, name := range names {
+	var names, duplicates []string
+	values := map[string][]byte{}
+	for _, member := range members {
+		name := jsonNameText(member.Name)
+		names = append(names, name)
+		values[name] = member.Value
 		seen[name]++
 		if seen[name] == 2 {
 			duplicates = append(duplicates, name)
@@ -304,7 +307,7 @@ func correctionRecordProblems(data []byte) ([]string, *correctionRecord) {
 	}
 	var missing, unknown []string
 	for _, key := range correctionsKeys {
-		if _, ok := object[key]; !ok {
+		if _, ok := values[key]; !ok {
 			missing = append(missing, key)
 		}
 	}
@@ -323,18 +326,21 @@ func correctionRecordProblems(data []byte) ([]string, *correctionRecord) {
 	if len(parts) > 0 {
 		problems = append(problems, strings.Join(parts, "; "))
 	}
+	var record correctionRecord
 	text := map[string]string{}
-	for _, key := range correctionsKeys {
-		raw, ok := object[key]
+	for i, key := range correctionsKeys {
+		raw, ok := values[key]
 		if !ok {
 			continue
 		}
-		s, ok := raw.(string)
-		if !ok {
+		if raw[0] != '"' {
 			problems = append(problems, "value for "+key+" is not a string")
 			continue
 		}
-		text[key] = s
+		record.Values[i] = jsonStringUnits(raw)
+		// A lone surrogate becomes U+FFFD here; that changes neither the date
+		// rule nor the empty-text rule.
+		text[key] = string(utf16.Decode(record.Values[i]))
 	}
 	if date, ok := text["date"]; ok && !validCorrectionDate(date) {
 		problems = append(problems, "invalid date: "+date)
@@ -347,36 +353,218 @@ func correctionRecordProblems(data []byte) ([]string, *correctionRecord) {
 	if len(text) != len(correctionsKeys) {
 		return problems, nil
 	}
-	return problems, &correctionRecord{
-		Date: text["date"], Scope: text["scope"], Correction: text["correction"],
-		Evidence: text["evidence"], PromotedTo: text["promoted_to"],
-	}
+	record.Date = text["date"]
+	return problems, &record
 }
 
-// correctionTopKeys lists the member names of a JSON object text in order,
-// duplicates kept: json.Unmarshal keeps only the last of duplicate names.
-func correctionTopKeys(data []byte) []string {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+// correctionCanonical returns the canonical bytes of a record (core
+// ADR-0081): JSON.stringify of the 5 fields in the canonical order, with a
+// 2-space indent and 1 final newline.
+func correctionCanonical(record *correctionRecord) []byte {
+	var out bytes.Buffer
+	out.WriteString("{\n")
+	for i, key := range correctionsKeys {
+		out.WriteString("  ")
+		out.Write(jsonStringify(utf16.Encode([]rune(key))))
+		out.WriteString(": ")
+		out.Write(jsonStringify(record.Values[i]))
+		if i < len(correctionsKeys)-1 {
+			out.WriteByte(',')
+		}
+		out.WriteByte('\n')
+	}
+	out.WriteString("}\n")
+	return out.Bytes()
+}
+
+// correctionMembers lists the top-level members of a valid JSON object text
+// in order, duplicates kept: JSON.parse keeps only the last of duplicate
+// names. The text must pass json.Valid.
+func correctionMembers(data []byte) []correctionMember {
+	i := jsonSkipSpace(data, 0)
+	if i >= len(data) || data[i] != '{' {
 		return nil
 	}
-	var names []string
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return names
+	i = jsonSkipSpace(data, i+1)
+	var members []correctionMember
+	for i < len(data) && data[i] == '"' {
+		end := jsonStringEnd(data, i)
+		name := jsonStringUnits(data[i:end])
+		i = jsonSkipSpace(data, end)
+		if i >= len(data) || data[i] != ':' {
+			return members
 		}
-		name, ok := token.(string)
-		if !ok {
-			return names
-		}
-		names = append(names, name)
-		var skip json.RawMessage
-		if err := decoder.Decode(&skip); err != nil {
-			return names
+		start := jsonSkipSpace(data, i+1)
+		i = jsonValueEnd(data, start)
+		members = append(members, correctionMember{Name: name, Value: data[start:i]})
+		i = jsonSkipSpace(data, i)
+		if i < len(data) && data[i] == ',' {
+			i = jsonSkipSpace(data, i+1)
 		}
 	}
-	return names
+	return members
+}
+
+// jsonSkipSpace returns the index of the first byte at or after i that is
+// not JSON whitespace.
+func jsonSkipSpace(data []byte, i int) int {
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// jsonStringEnd returns the index after the closing quote of the JSON string
+// that starts at data[i].
+func jsonStringEnd(data []byte, i int) int {
+	for j := i + 1; j < len(data); j++ {
+		switch data[j] {
+		case '\\':
+			j++
+		case '"':
+			return j + 1
+		}
+	}
+	return len(data)
+}
+
+// jsonValueEnd returns the index after the JSON value that starts at data[i].
+func jsonValueEnd(data []byte, i int) int {
+	depth := 0
+	for i < len(data) {
+		switch c := data[i]; {
+		case c == '"':
+			i = jsonStringEnd(data, i)
+			if depth == 0 {
+				return i
+			}
+			continue
+		case c == '{' || c == '[':
+			depth++
+		case c == '}' || c == ']':
+			if depth == 0 {
+				return i
+			}
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		case depth == 0 && (c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r'):
+			return i
+		}
+		i++
+	}
+	return i
+}
+
+// jsonStringUnits decodes a valid JSON string token, quotes included, to
+// UTF-16 code units, as JSON.parse does: each \uXXXX escape gives its 1 unit
+// as it is, so a lone surrogate stays, and 2 escapes of a surrogate pair give
+// the pair.
+func jsonStringUnits(token []byte) []uint16 {
+	if len(token) < 2 {
+		return nil
+	}
+	body := token[1 : len(token)-1]
+	units := make([]uint16, 0, len(body))
+	for i := 0; i < len(body); {
+		c := body[i]
+		if c != '\\' {
+			r, size := utf8.DecodeRune(body[i:])
+			units = utf16.AppendRune(units, r)
+			i += size
+			continue
+		}
+		if i+1 >= len(body) {
+			break
+		}
+		switch body[i+1] {
+		case 'b':
+			units = append(units, '\b')
+		case 'f':
+			units = append(units, '\f')
+		case 'n':
+			units = append(units, '\n')
+		case 'r':
+			units = append(units, '\r')
+		case 't':
+			units = append(units, '\t')
+		case 'u':
+			var unit uint16
+			for _, h := range body[i+2 : min(i+6, len(body))] {
+				unit = unit<<4 | uint16(jsonHexValue(h))
+			}
+			units = append(units, unit)
+			i += 6
+			continue
+		default: // '"', '\\' and '/' stand for themselves.
+			units = append(units, uint16(body[i+1]))
+		}
+		i += 2
+	}
+	return units
+}
+
+// jsonHexValue is the value of 1 hexadecimal digit, in either case.
+func jsonHexValue(h byte) byte {
+	switch {
+	case h >= '0' && h <= '9':
+		return h - '0'
+	case h >= 'a' && h <= 'f':
+		return h - 'a' + 10
+	case h >= 'A' && h <= 'F':
+		return h - 'A' + 10
+	}
+	return 0
+}
+
+// jsonStringify writes UTF-16 code units as JSON.stringify writes a string,
+// in UTF-8: it escapes only '"', '\\' and the characters below U+0020 (\b,
+// \t, \n, \f and \r by name, the others as \u00xx in lowercase hex), and a
+// lone surrogate as \udxxx in lowercase hex. Every other character, U+2028
+// and U+2029 included, is written as itself; a surrogate pair is 1 character.
+func jsonStringify(units []uint16) []byte {
+	const hexDigits = "0123456789abcdef"
+	out := []byte{'"'}
+	for i := 0; i < len(units); i++ {
+		u := units[i]
+		switch {
+		case utf16.IsSurrogate(rune(u)):
+			if u < 0xdc00 && i+1 < len(units) && units[i+1] >= 0xdc00 && units[i+1] <= 0xdfff {
+				out = utf8.AppendRune(out, utf16.DecodeRune(rune(u), rune(units[i+1])))
+				i++
+				continue
+			}
+			out = append(out, '\\', 'u', hexDigits[u>>12], hexDigits[u>>8&0xf], hexDigits[u>>4&0xf], hexDigits[u&0xf])
+		case u == '"':
+			out = append(out, '\\', '"')
+		case u == '\\':
+			out = append(out, '\\', '\\')
+		case u == '\b':
+			out = append(out, '\\', 'b')
+		case u == '\t':
+			out = append(out, '\\', 't')
+		case u == '\n':
+			out = append(out, '\\', 'n')
+		case u == '\f':
+			out = append(out, '\\', 'f')
+		case u == '\r':
+			out = append(out, '\\', 'r')
+		case u < 0x20:
+			out = append(out, '\\', 'u', '0', '0', hexDigits[u>>4], hexDigits[u&0xf])
+		default:
+			out = utf8.AppendRune(out, rune(u))
+		}
+	}
+	return append(out, '"')
+}
+
+// jsonNameText is a member name as text, for the key checks and messages: the
+// JSON.stringify form without its quotes. Unlike a Go string, it keeps 2
+// different lone surrogates apart, as core's JSON.parse does.
+func jsonNameText(units []uint16) string {
+	quoted := jsonStringify(units)
+	return string(quoted[1 : len(quoted)-1])
 }
 
 // validCorrectionDate is true for a YYYY-MM-DD date that is on the calendar.
@@ -413,32 +601,39 @@ func TestCorrectionsProblems(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// evidence writes a record with the given evidence text, as JSON.
+	evidence := func(text string) func(t *testing.T, root string) {
+		return func(t *testing.T, root string) {
+			write(t, root, good, correctionText("2026-11-06", text))
+		}
+	}
 	tests := []struct {
-		name  string
-		setup func(t *testing.T, root string)
-		want  string // "" for a pass
+		name    string
+		setup   func(t *testing.T, root string)
+		want    string // "" for a pass
+		notWant string // a problem text that must not appear; "" for none
 	}{
 		{"a canonical record passes", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "e"))
-		}, ""},
+		}, "", ""},
 		{"control characters and non-ASCII text in the JavaScript form pass", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06",
 				"tab\\t nl\\n bs\\b ff\\f ctl\\u0001 del\x7f quote\\\" \u00e9 \U0001f600"))
-		}, ""},
+		}, "", ""},
 		{"only an empty .gitkeep passes", func(t *testing.T, root string) {
 			write(t, root, ".gitkeep", "")
-		}, ""},
+		}, "", ""},
 		{"the retired file fails", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "e"))
 			if err := os.WriteFile(filepath.Join(root, correctionsOld), []byte("{}\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-		}, ".memory/corrections.jsonl is retired"},
+		}, ".memory/corrections.jsonl is retired", ""},
 		{"a missing folder fails", func(t *testing.T, root string) {
 			if err := os.Remove(filepath.Join(root, correctionsDir)); err != nil {
 				t.Fatal(err)
 			}
-		}, ".memory/corrections: folder is missing"},
+		}, ".memory/corrections: folder is missing", ""},
 		{"a folder symlink fails", func(t *testing.T, root string) {
 			memory := filepath.Join(root, ".memory")
 			if err := os.Rename(filepath.Join(memory, "corrections"), filepath.Join(memory, "elsewhere")); err != nil {
@@ -447,76 +642,98 @@ func TestCorrectionsProblems(t *testing.T) {
 			if err := os.Symlink("elsewhere", filepath.Join(memory, "corrections")); err != nil {
 				t.Fatal(err)
 			}
-		}, ".memory/corrections: symbolic link"},
+		}, ".memory/corrections: symbolic link", ""},
 		{"a bad file name fails", func(t *testing.T, root string) {
 			write(t, root, "2026-11-06-Bad_Name.json", correctionText("2026-11-06", "e"))
-		}, "2026-11-06-Bad_Name.json: bad file name"},
+		}, "2026-11-06-Bad_Name.json: bad file name", ""},
 		{"a long slug fails", func(t *testing.T, root string) {
 			write(t, root, "2026-11-06-"+strings.Repeat("a", 61)+".json", correctionText("2026-11-06", "e"))
-		}, strings.Repeat("a", 61) + ".json: slug longer than 60 characters"},
+		}, strings.Repeat("a", 61) + ".json: slug longer than 60 characters", ""},
 		{"a name date that differs fails", func(t *testing.T, root string) {
 			write(t, root, "2026-11-07-a-record.json", correctionText("2026-11-06", "e"))
-		}, "2026-11-07-a-record.json: name date 2026-11-07 does not equal date 2026-11-06"},
+		}, "2026-11-07-a-record.json: name date 2026-11-07 does not equal date 2026-11-06", ""},
 		{"a compact record fails", func(t *testing.T, root string) {
 			write(t, root, good, `{"date":"2026-11-06","scope":"s","correction":"c","evidence":"e","promoted_to":""}`+"\n")
-		}, good + ": not in canonical form"},
-		{"a raw U+2028 fails here, unlike core", func(t *testing.T, root string) {
-			write(t, root, good, correctionText("2026-11-06", "e \u2028"))
-		}, good + ": not in canonical form"},
+		}, good + ": not in canonical form", ""},
+		// The canonical bytes are JSON.stringify's (core ADR-0081): each rule
+		// has a raw form that passes and an escaped form that fails.
+		{"a raw U+2028 passes", evidence("e \u2028"), "", ""},
+		{"an escaped U+2028 fails", evidence(`e \u2028`), good + ": not in canonical form", ""},
+		{"a raw U+2029 passes", evidence("e \u2029"), "", ""},
+		{"an escaped U+2029 fails", evidence(`e \u2029`), good + ": not in canonical form", ""},
+		{"a lone lead surrogate in lowercase hex passes", evidence(`e \ud800`), "", ""},
+		{"a lone lead surrogate in uppercase hex fails", evidence(`e \uD800`), good + ": not in canonical form", ""},
+		{"a lone trail surrogate passes", evidence(`e \udc00`), "", ""},
+		{"a raw emoji passes", evidence("e \U0001f600"), "", ""},
+		{"an emoji as an escaped surrogate pair fails", evidence(`e \ud83d\ude00`), good + ": not in canonical form", ""},
+		{"raw <>&/ passes", evidence("e <>&/"), "", ""},
+		{"an escaped < fails", evidence(`e \u003c`), good + ": not in canonical form", ""},
+		{"an escaped / fails", evidence(`e \/`), good + ": not in canonical form", ""},
+		{"a raw U+007F passes", evidence("e \x7f"), "", ""},
+		{"a control character in lowercase hex passes", evidence(`e \u001f`), "", ""},
+		{"a control character in uppercase hex fails", evidence(`e \u001F`), good + ": not in canonical form", ""},
+		{"a newline as \\n passes", evidence(`e \n`), "", ""},
+		{"a newline as \\u000a fails", evidence(`e \u000a`), good + ": not in canonical form", ""},
+		{"a raw é passes", evidence("e \u00e9"), "", ""},
+		{"an escaped é fails", evidence(`e \u00e9`), good + ": not in canonical form", ""},
+		{"2 different lone surrogate names are unknown keys, not duplicates", func(t *testing.T, root string) {
+			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
+				"\"promoted_to\": \"\"", "\"promoted_to\": \"\",\n  \"\\ud800\": \"x\",\n  \"\\udc00\": \"y\"", 1))
+		}, good + ": unknown key(s): \\ud800, \\udc00", "duplicate key"},
 		{"invalid JSON fails", func(t *testing.T, root string) {
 			write(t, root, good, `{"date": "2026-11-06", "scope": "s"`)
-		}, good + ": invalid JSON"},
+		}, good + ": invalid JSON", ""},
 		{"invalid UTF-8 fails", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "\xff"))
-		}, good + ": invalid UTF-8"},
+		}, good + ": invalid UTF-8", ""},
 		{"a duplicate key fails", func(t *testing.T, root string) {
 			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
 				"  \"scope\": \"s\",\n", "  \"scope\": \"s\",\n  \"scope\": \"s\",\n", 1))
-		}, good + ": duplicate key(s): scope"},
+		}, good + ": duplicate key(s): scope", ""},
 		{"a missing key fails", func(t *testing.T, root string) {
 			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"), ",\n  \"promoted_to\": \"\"", "", 1))
-		}, good + ": missing key(s): promoted_to"},
+		}, good + ": missing key(s): promoted_to", ""},
 		{"an unknown key fails", func(t *testing.T, root string) {
 			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
 				"\"promoted_to\": \"\"", "\"promoted_to\": \"\",\n  \"extra\": \"x\"", 1))
-		}, good + ": unknown key(s): extra"},
+		}, good + ": unknown key(s): extra", ""},
 		{"a non-string value fails", func(t *testing.T, root string) {
 			write(t, root, good, strings.Replace(correctionText("2026-11-06", "e"),
 				"\"promoted_to\": \"\"", "\"promoted_to\": 1", 1))
-		}, good + ": value for promoted_to is not a string"},
+		}, good + ": value for promoted_to is not a string", ""},
 		{"an invalid date fails", func(t *testing.T, root string) {
 			write(t, root, "2026-02-30-a-record.json", correctionText("2026-02-30", "e"))
-		}, "2026-02-30-a-record.json: invalid date: 2026-02-30"},
+		}, "2026-02-30-a-record.json: invalid date: 2026-02-30", ""},
 		// Core's Date.UTC maps years 0-99 to 1900-1999, so a year below 100 fails.
 		{"the year 0000 fails", func(t *testing.T, root string) {
 			write(t, root, "0000-01-01-a-record.json", correctionText("0000-01-01", "e"))
-		}, "0000-01-01-a-record.json: invalid date: 0000-01-01"},
+		}, "0000-01-01-a-record.json: invalid date: 0000-01-01", ""},
 		{"the year 0099 fails", func(t *testing.T, root string) {
 			write(t, root, "0099-12-31-a-record.json", correctionText("0099-12-31", "e"))
-		}, "0099-12-31-a-record.json: invalid date: 0099-12-31"},
+		}, "0099-12-31-a-record.json: invalid date: 0099-12-31", ""},
 		{"the year 0100 passes", func(t *testing.T, root string) {
 			write(t, root, "0100-01-01-a-record.json", correctionText("0100-01-01", "e"))
-		}, ""},
+		}, "", ""},
 		{"an evidence of spaces fails", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "  "))
-		}, good + ": evidence is empty"},
+		}, good + ": evidence is empty", ""},
 		{"an evidence of a byte-order mark fails", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "\ufeff"))
-		}, good + ": evidence is empty"},
+		}, good + ": evidence is empty", ""},
 		{"a subfolder fails", func(t *testing.T, root string) {
 			if err := os.Mkdir(filepath.Join(root, correctionsDir, "2026-11-06-a-folder.json"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-		}, "2026-11-06-a-folder.json: not a regular file"},
+		}, "2026-11-06-a-folder.json: not a regular file", ""},
 		{"a record symlink fails", func(t *testing.T, root string) {
 			write(t, root, good, correctionText("2026-11-06", "e"))
 			if err := os.Symlink(good, filepath.Join(root, correctionsDir, "2026-11-06-a-link.json")); err != nil {
 				t.Fatal(err)
 			}
-		}, "2026-11-06-a-link.json: symbolic link"},
+		}, "2026-11-06-a-link.json: symbolic link", ""},
 		{"a non-empty .gitkeep fails", func(t *testing.T, root string) {
 			write(t, root, ".gitkeep", "x\n")
-		}, ".memory/corrections/.gitkeep: .gitkeep is not empty"},
+		}, ".memory/corrections/.gitkeep: .gitkeep is not empty", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -527,6 +744,9 @@ func TestCorrectionsProblems(t *testing.T) {
 			tt.setup(t, root)
 			_, problems := correctionsProblems(root)
 			got := strings.Join(problems, "\n")
+			if tt.notWant != "" && strings.Contains(got, tt.notWant) {
+				t.Errorf("correctionsProblems = %q, want no problem with %q", got, tt.notWant)
+			}
 			if tt.want == "" {
 				if len(problems) > 0 {
 					t.Errorf("correctionsProblems = %q, want none", got)
