@@ -244,7 +244,10 @@ type guardEnv struct {
 	logPath    string
 	etagsPath  string
 	prunedPath string
-	env        []string
+	// summaryPath stands for $GITHUB_STEP_SUMMARY, so a test run in CI never
+	// writes to the job's real summary.
+	summaryPath string
+	env         []string
 }
 
 func newGuardEnv(t *testing.T) *guardEnv {
@@ -260,12 +263,13 @@ func newGuardEnv(t *testing.T) *guardEnv {
 		t.Fatal(err)
 	}
 	env := &guardEnv{
-		t:          t,
-		repoDir:    filepath.Join(root, "repo"),
-		bucketDir:  filepath.Join(root, "bucket"),
-		logPath:    filepath.Join(root, "aws.log"),
-		etagsPath:  filepath.Join(root, "etags.tsv"),
-		prunedPath: filepath.Join(root, "pruned.txt"),
+		t:           t,
+		repoDir:     filepath.Join(root, "repo"),
+		bucketDir:   filepath.Join(root, "bucket"),
+		logPath:     filepath.Join(root, "aws.log"),
+		etagsPath:   filepath.Join(root, "etags.tsv"),
+		prunedPath:  filepath.Join(root, "pruned.txt"),
+		summaryPath: filepath.Join(root, "step-summary.md"),
 	}
 	env.env = append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -276,6 +280,7 @@ func newGuardEnv(t *testing.T) *guardEnv {
 		"UPLOAD_RETRY_DELAY=0",
 		"FAKE_BUCKET="+env.bucketDir,
 		"FAKE_AWS_LOG="+env.logPath,
+		"GITHUB_STEP_SUMMARY="+env.summaryPath,
 	)
 	return env
 }
@@ -795,11 +800,12 @@ func TestDeletePrunedPayloadsOnlyAfterMetadataIsLive(t *testing.T) {
 	report := "ext/foo/foo_1_13_x86-64.raw\n"
 
 	// Before the upload the live manifest still lists foo 1: nothing goes.
+	// The refusal is a warning; the object stays.
 	output, err := env.deletePruned(report)
-	if err == nil {
-		t.Fatalf("delete before the metadata upload succeeded: %s", output)
+	if err != nil {
+		t.Fatalf("a refused delete failed the run: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "is still listed") {
+	if !strings.Contains(output, "::warning::"+guardPrefix+"/ext/foo/foo_1_13_x86-64.raw is still listed") {
 		t.Fatalf("output does not explain the refusal:\n%s", output)
 	}
 	if _, ok := env.bucketFile("ext/foo/foo_1_13_x86-64.raw"); !ok {
@@ -856,8 +862,13 @@ func TestDeletePrunedPayloadsNeverAfterFailedMetadataWrite(t *testing.T) {
 	}
 
 	// Even when run by hand, the script refuses: the live manifest lists it.
-	if output, err := env.deletePruned("ext/foo/foo_1_13_x86-64.raw\n"); err == nil {
-		t.Fatalf("delete with a live manifest that lists the payload succeeded: %s", output)
+	// The refusal is a warning, not a failed run (the object must stay).
+	refused, err := env.deletePruned("ext/foo/foo_1_13_x86-64.raw\n")
+	if err != nil {
+		t.Fatalf("a refused delete failed the run: %v\n%s", err, refused)
+	}
+	if !strings.Contains(refused, "::warning::"+guardPrefix+"/ext/foo/foo_1_13_x86-64.raw is still listed") {
+		t.Fatalf("output does not warn about the listed payload:\n%s", refused)
 	}
 	if _, ok := env.bucketFile("ext/foo/foo_1_13_x86-64.raw"); !ok {
 		t.Fatal("a payload the live manifest lists was deleted")
@@ -894,7 +905,9 @@ func TestDeletePrunedPayloadsValidatesReport(t *testing.T) {
 	}
 }
 
-func TestDeletePrunedPayloadsReportsDeleteFailure(t *testing.T) {
+// A payload that cannot be deleted is a warning plus 1 step-summary line, not a
+// red run: the metadata is live and the leftover object is harmless.
+func TestDeletePrunedPayloadsWarnsOnDeleteFailure(t *testing.T) {
 	env := newGuardEnv(t)
 	env.writeBucket(map[string]string{
 		"ext/foo/foo_1_13_x86-64.raw": "payload 1",
@@ -905,11 +918,34 @@ func TestDeletePrunedPayloadsReportsDeleteFailure(t *testing.T) {
 	env.setEnv("FAKE_DELETE_FAIL", "1")
 
 	output, err := env.deletePruned("ext/foo/foo_1_13_x86-64.raw\n")
-	if err == nil {
-		t.Fatalf("a failed delete succeeded: %s", output)
+	if err != nil {
+		t.Fatalf("a failed delete of a pruned payload failed the run: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "::error::could not delete "+guardPrefix+"/ext/foo/foo_1_13_x86-64.raw") {
-		t.Fatalf("output does not name the object:\n%s", output)
+	if !strings.Contains(output, "::warning::could not delete "+guardPrefix+"/ext/foo/foo_1_13_x86-64.raw") {
+		t.Fatalf("output does not warn about the object:\n%s", output)
+	}
+	if strings.Contains(output, "::error::") {
+		t.Fatalf("a failed delete of a pruned payload is an error annotation:\n%s", output)
+	}
+	if !strings.Contains(output, "::warning::1 pruned sysext payload object(s) were not deleted") {
+		t.Fatalf("output has no summary warning:\n%s", output)
+	}
+	summary, ok := readOptional(t, env.summaryPath)
+	if !ok || strings.Count(summary, "\n") != 1 ||
+		!strings.Contains(summary, "1 pruned sysext payload object(s) were not deleted from s3://"+guardBucket+"/"+guardPrefix+"/ (0 deleted)") {
+		t.Fatalf("step summary is not 1 line about the leftover object: %q", summary)
+	}
+	if _, ok := env.bucketFile("ext/foo/foo_1_13_x86-64.raw"); !ok {
+		t.Fatal("the payload is gone although its delete failed")
+	}
+
+	// A malformed report stays an error and writes no summary line.
+	env = newGuardEnv(t)
+	if output, err := env.deletePruned("ext/foo/../SHA256SUMS\n"); err == nil {
+		t.Fatalf("a malformed report succeeded: %s", output)
+	}
+	if _, ok := readOptional(t, env.summaryPath); ok {
+		t.Fatal("a malformed report wrote a step-summary line")
 	}
 }
 

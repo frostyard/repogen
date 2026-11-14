@@ -221,6 +221,9 @@ not make the pair atomic
     downloads the live `ext/<name>/SHA256SUMS`, and deletes a pruned payload
     only when neither the live nor the local manifest lists it
     ([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
+    A payload it cannot or must not delete is a warning plus 1 line in the
+    step summary, not a failed run; a malformed report line fails the step
+    before any delete.
 11. **Cleanup** — removes temp key files, clears AWS credentials.
 
 ### Required Inputs
