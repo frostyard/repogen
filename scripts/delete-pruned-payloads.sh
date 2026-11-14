@@ -20,9 +20,12 @@
 #                  list a pruned file either
 #
 # A payload this script cannot delete, or refuses to delete, is reported with
-# `::error::` and the script exits non-zero after it tried every line. Such an
-# object is not listed by the live manifest (or is still listed and so must
-# stay); it costs storage, nothing else.
+# `::warning::`; after it tried every line, the script prints a summary
+# warning, adds 1 line to $GITHUB_STEP_SUMMARY when that is set, and exits 0.
+# Such an object is not listed by the live manifest (or is still listed and so
+# must stay); it costs storage, nothing else, so it does not fail the publish
+# run, whose metadata is already live. A missing input or a malformed report
+# line is still an error (exit 1) before any delete.
 
 set -euo pipefail
 
@@ -99,10 +102,10 @@ for name in "${names[@]}"; do
     --key "$manifest_key" \
     --endpoint-url "$R2_ENDPOINT" \
     "$live" </dev/null >/dev/null; then
-    echo "::error::cannot read the live $manifest_key; no pruned payload of $name was deleted"
+    echo "::warning::cannot read the live $manifest_key; no pruned payload of $name was deleted"
     manifest_ok=0
   elif [[ ! -f "$local_manifest" ]]; then
-    echo "::error::$local_manifest does not exist; no pruned payload of $name was deleted"
+    echo "::warning::$local_manifest does not exist; no pruned payload of $name was deleted"
     manifest_ok=0
   fi
 
@@ -115,7 +118,7 @@ for name in "${names[@]}"; do
       continue
     fi
     if lists "$live" "$file" || lists "$local_manifest" "$file"; then
-      echo "::error::$key is still listed by ext/$name/SHA256SUMS; it was not deleted"
+      echo "::warning::$key is still listed by ext/$name/SHA256SUMS; it was not deleted"
       failed=$((failed + 1))
       continue
     fi
@@ -123,7 +126,7 @@ for name in "${names[@]}"; do
       --bucket "$bucket" \
       --key "$key" \
       --endpoint-url "$R2_ENDPOINT" </dev/null >/dev/null; then
-      echo "::error::could not delete $key; it is not listed by any manifest, so it is harmless, but nothing will delete it later"
+      echo "::warning::could not delete $key; it is not listed by any manifest, so it is harmless, but nothing will delete it later"
       failed=$((failed + 1))
       continue
     fi
@@ -133,7 +136,13 @@ for name in "${names[@]}"; do
 done
 
 if ((failed > 0)); then
-  echo "::error::$failed pruned sysext payload object(s) were not deleted from s3://$bucket/${key_prefix}"
-  exit 1
+  summary="$failed pruned sysext payload object(s) were not deleted from s3://$bucket/${key_prefix} ($deleted deleted); each is not listed by any live manifest, or is listed and must stay, and no later run deletes it"
+  echo "::warning::$summary"
+  # Best effort: a summary file that cannot be written must not fail the run.
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] &&
+    ! { echo "- :warning: $summary" >>"$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+    echo "::warning::could not write the step summary"
+  fi
+  exit 0
 fi
 echo "deleted $deleted pruned sysext payload object(s)"

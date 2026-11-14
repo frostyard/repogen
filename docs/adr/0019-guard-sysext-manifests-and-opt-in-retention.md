@@ -144,9 +144,13 @@ the publication atomic. The windows that remain:
   prune can fetch a deleted older version and get 404. The newest version of
   each group is never pruned, so a client that picks the newest version is not
   affected; enable `purge-cache` to shorten the window.
-- A pruned payload object that the delete step cannot delete is reported with
-  `::error::` (red run, after the metadata is live); no later run deletes it,
-  because it is no longer listed.
+- A pruned payload object that the delete step cannot delete, or refuses to
+  delete because a live manifest still lists it, is a `::warning::` plus 1
+  summary warning and 1 line in the job's step summary; the run stays green,
+  because the metadata is already live and the leftover object costs storage,
+  nothing else. No later run deletes it, because it is no longer listed. A
+  missing input or a malformed pruned-report line is still an error before any
+  delete.
 
 ## Alternatives considered
 
