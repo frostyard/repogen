@@ -3,5 +3,5 @@
   "scope": "sysext publish",
   "correction": "A conditional PUT that gets 412 on its first attempt is a conflict even when the object holds identical bytes; compare the object with the local bytes only after an earlier attempt of the same call failed ambiguously (no response or another error), or the signature of another publisher is overwritten",
   "evidence": "frostyard/repogen#104, cross-review of head f64976f (openai/gpt-6.1-sol); guard: TestUploadGuardFirstAttemptConflictWithIdenticalBytesFails in internal/releaseasset/sysext_write_guard_test.go",
-  "promoted_to": ""
+  "promoted_to": "internal/releaseasset/sysext_write_guard_test.go"
 }
