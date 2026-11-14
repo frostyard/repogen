@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-14",
+  "scope": "baseline",
+  "correction": "A Go port of core's check-corrections.mjs must not make the canonical form with encoding/json: it always escapes U+2028 and U+2029 and decodes a lone surrogate escape to U+FFFD, while JSON.stringify writes U+2028 and U+2029 as themselves and a lone surrogate as a lowercase \\udxxx escape",
+  "evidence": "frostyard/repogen#108, a check of the ports against core's validator at 3d3d5c7",
+  "promoted_to": "internal/baseline/repository_baseline_test.go"
+}
