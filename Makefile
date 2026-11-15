@@ -1,4 +1,4 @@
-.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check verify-static verify check vuln test-race build-cross ci svu-version-check bump
+.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump
 
 GO ?= go
 GOFMT ?= gofmt
@@ -114,8 +114,35 @@ fmt-check:
 docs-check:
 	node scripts/check-docs.mjs
 
+# The corrections inbox (core ADR-0018, ADR-0081): the format of every record
+# in .memory/corrections/ (scripts/check-corrections.mjs, a byte-identical copy
+# of core's script), with no comparison against a base
+corrections-check:
+	node scripts/check-corrections.mjs
+
+# The corrections check compares the record files in .memory/corrections/ with
+# BASE: no record is removed, renamed or changed, except that an empty
+# promoted_to may be filled in once. The old single file must not come back.
+# The contract starts with the gate: a BASE that does not hold
+# scripts/check-corrections.mjs had no such rule, so the comparison is skipped
+# with a notice. Every BASE after the adoption holds the script.
+#
+# A BASE that does not resolve to a commit is an error, never an old base: a
+# typo or an unfetched ref must not turn the comparison into a silent pass.
+corrections-base:
+	@if [ -z "$(BASE)" ]; then exit 0; fi; \
+	if ! git rev-parse --verify --quiet "$(BASE)^{commit}" >/dev/null; then \
+		echo "FAIL: BASE $(BASE) does not resolve to a commit (fetch it first)"; \
+		exit 1; \
+	fi; \
+	if git cat-file -e "$(BASE):scripts/check-corrections.mjs" 2>/dev/null; then \
+		node scripts/check-corrections.mjs --base "$(BASE)"; \
+	else \
+		echo "==> corrections: BASE $(BASE) predates the corrections gate; append-only comparison skipped"; \
+	fi
+
 # verify-static: the non-mutating static checks
-verify-static: tidy-check vet fmt-check lint docs-check
+verify-static: tidy-check vet fmt-check lint docs-check corrections-check
 
 # verify: credential-free, non-mutating gate (what a read-only reviewer runs)
 verify: verify-static test-unit
@@ -137,7 +164,9 @@ build-cross:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -o /dev/null ./cmd/repogen
 
 # ci: what CI runs (.github/workflows/ci.yml). Needs Docker for the test packages and the integration tests.
-ci: verify vuln test-race test-packages-docker test-integration build-cross
+# corrections-base runs here, with BASE set by the CI workflow to the pull
+# request's base commit (empty on a push or a merge-group event).
+ci: verify corrections-base vuln test-race test-packages-docker test-integration build-cross
 	@echo "==> CI gate passed"
 
 # Fail unless the installed svu is the mise.toml pin
@@ -190,7 +219,9 @@ help:
 	@echo "  make vet                   - Run go vet"
 	@echo "  make fmt-check             - Check every tracked Go file is gofmt-clean"
 	@echo "  make docs-check            - Check the docs index, links and symlinks"
-	@echo "  make verify-static         - Non-mutating static checks (tidy, vet, fmt, lint, docs)"
+	@echo "  make corrections-check     - Check the format of every corrections record"
+	@echo "  make corrections-base      - Check the corrections records are append-only against BASE"
+	@echo "  make verify-static         - Non-mutating static checks (tidy, vet, fmt, lint, docs, corrections)"
 	@echo "  make verify                - verify-static plus the unit tests (no write)"
 	@echo "  make check                 - Format, then verify (the developer gate)"
 	@echo "  make vuln                  - Run govulncheck"

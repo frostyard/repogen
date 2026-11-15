@@ -16,14 +16,23 @@ external action is pinned to a full 40-character commit SHA with a trailing
 `release.yml` follows the same rule. The job runs these steps in order:
 
 1. Checkout with `persist-credentials: false`, so the job cannot push with
-   the workflow token.
+   the workflow token, and `fetch-depth: 0`, so the base commit of the pull
+   request is in the clone for the corrections comparison.
 2. Set up Go from `go.mod`: its `go 1.27.4` line is a full version and the
    only Go pin (there is no `toolchain` line), so the go command uses Go 1.27.4.
 3. `jdx/mise-action` installs `golangci-lint` and `node` at the `mise.toml`
    pins, verified against `mise.lock` (Go still comes from step 2).
 4. `make ci`, the one gate. It runs, in order:
    - `make verify`: `make verify-static` (tidy, vet, gofmt check, `make lint`
-     at the mise pin, `node scripts/check-docs.mjs`) then `make test-unit`;
+     at the mise pin, `node scripts/check-docs.mjs`, `make corrections-check`)
+     then `make test-unit`;
+   - `make corrections-base` — with `BASE` set to
+     `${{ github.event.pull_request.base.sha }}`, the records in
+     `.memory/corrections/` are compared with that commit, so no record is
+     removed, renamed or edited
+     ([core ADR-0081](https://github.com/frostyard/core/blob/main/docs/adr/0081-store-each-correction-in-a-file-of-its-own.md));
+     on a push or a merge-group event `BASE` is empty, so the comparison is
+     skipped there;
    - `make vuln` — `govulncheck` v1.9.0; a vulnerability that the code
      reaches fails the job ([ADR-0016](../adr/0016-remove-rpm-generation.md));
    - `make test-race` — unit tests with race detection and
@@ -301,12 +310,14 @@ automatically, providing CI validation before merge.
 | `make vet` | `go vet ./...` |
 | `make fmt-check` | Every tracked Go file is gofmt-clean (no write) |
 | `make docs-check` | `node scripts/check-docs.mjs` |
-| `make verify-static` | tidy, vet, fmt-check, lint, docs-check |
+| `make corrections-check` | `node scripts/check-corrections.mjs`: the format of every record in `.memory/corrections/` |
+| `make corrections-base` | With `BASE` set, the append-only comparison of the records with that commit (`node scripts/check-corrections.mjs --base`) |
+| `make verify-static` | tidy, vet, fmt-check, lint, docs-check, corrections-check |
 | `make verify` | `verify-static` plus the unit tests; writes no file |
 | `make check` | `make fmt`, then `make verify` — the developer gate |
 | `make vuln` | `govulncheck` at the pinned version |
 | `make build-cross` | The linux amd64 and arm64 release builds |
-| `make ci` | What CI runs: verify, vuln, test-race, test-packages-docker, test-integration, build-cross |
+| `make ci` | What CI runs: verify, corrections-base, vuln, test-race, test-packages-docker, test-integration, build-cross |
 | `make svu-version-check` | Fail unless `svu` matches the `mise.toml` pin |
 | `make bump` | Create the next annotated release tag with `svu`; a maintainer pushes it |
 | `make fmt` | Format code |

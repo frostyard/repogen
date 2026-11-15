@@ -16,6 +16,8 @@ fork; see AGENTS.md "Repo gotchas").
 3. Run the gates the rubric names:
    - `make build && make fmt && make lint && make test-unit`
    - `node scripts/check-docs.mjs`
+   - `make corrections-check`, and `make corrections-base BASE=<the PR's base>`
+     when the diff touches `.memory/corrections/`
    - if `internal/generator/**`, `internal/scanner/**`, or
      `internal/signer/**` changed: `make test-integration`
 4. If the diff changes generator output formats, verify
