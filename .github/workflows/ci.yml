@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -39,8 +40,13 @@ jobs:
           install_args: golangci-lint node
           cache: true
 
+      # make ci also runs corrections-base, which compares the records in
+      # .memory/corrections/ with BASE. On a push or merge-group event BASE is
+      # empty, so the corrections comparison is skipped there.
       - name: make ci
         run: make ci
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
 
       - name: Upload coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0

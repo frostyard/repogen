@@ -32,15 +32,21 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   the packages built in Docker and the e2e suite — real packages built for
   every supported type and the published repository output asserted on
   (entry point: [test/e2e/README.md](../../test/e2e/README.md)) — then the
-  release builds. Docs integrity (`node scripts/check-docs.mjs`) is part of
+  release builds. Docs integrity (`node scripts/check-docs.mjs`) and the
+  corrections form (`node scripts/check-corrections.mjs`) are part of
   `make verify`: docs-index coverage, relative-link integrity, and symlink
   resolution against
   [.coverage-thresholds.json](../../.coverage-thresholds.json) — all 1.0,
   `never_relax: true` (the loop may tighten, never loosen).
+  `make ci` also runs `make corrections-base`, which with `BASE` set to the
+  pull request's base commit refuses a removed, renamed or edited record
+  ([core ADR-0081](https://github.com/frostyard/core/blob/main/docs/adr/0081-store-each-correction-in-a-file-of-its-own.md)).
 - **Learn** — corrections land in
   [.memory/corrections/](../../.memory/README.md) (1 file for each record,
   five-field schema, never removed or renamed) and are promoted into `AGENTS.md`, docs, or skills;
-  promotion is the only sanctioned duplication.
+  promotion is the only sanctioned duplication. The corrections gate is what
+  keeps that promise: run `make corrections-check` while you work, and
+  `make corrections-base BASE=origin/main` before a push.
 - **Enforce mechanically** — [.claude/settings.json](../../.claude/settings.json)
   denies the forbidden acts at the tool layer: merging PRs (`gh pr merge`),
   approving own work (`gh pr review --approve`), publishing releases
@@ -62,7 +68,9 @@ make test-integration    # for generator/scanner/signer changes
 `make ci` runs the whole CI gate when Docker is available.
 
 Failure modes: a broken alias or missing index line fails docs-gate (fix the
-canonical target or the index, never the alias); integration failures mean a
+canonical target or the index, never the alias); a corrected or renamed
+record file fails `make corrections-base` (a record is appended, never
+rewritten — set `promoted_to` instead); integration failures mean a
 generator's published output regressed — fix before merge, since downstream
 repos consume that output via the `publish-to-r2` action.
 

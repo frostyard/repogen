@@ -10,8 +10,8 @@ closes. -->
 
 <!-- The build gate from AGENTS.md — run after every code change. -->
 
-- [ ] `make check` — formats, then runs the verify gate: tidy, vet, gofmt, lint at the mise pin, docs integrity, unit tests
-- [ ] `make ci` — adds govulncheck, race tests, the Docker-built packages and the integration suite, the release builds — or a green CI run
+- [ ] `make check` — formats, then runs the verify gate: tidy, vet, gofmt, lint at the mise pin, docs integrity, corrections, unit tests
+- [ ] `make ci` — adds corrections-base, govulncheck, race tests, the Docker-built packages and the integration suite, the release builds — or a green CI run
 - [ ] Generator/scanner/signer changes: `make test-integration` green
 
 ## Risk tier

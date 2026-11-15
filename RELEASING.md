@@ -23,9 +23,11 @@ make ci
 ```
 
 `make ci` needs Docker. It runs `make verify` (tidy, vet, gofmt, lint at the
-mise pin, `node scripts/check-docs.mjs`, the unit tests), `make vuln`,
-`make test-race`, `make test-packages-docker`, `make test-integration` and
-`make build-cross`.
+mise pin, `node scripts/check-docs.mjs`, `make corrections-check`, the unit
+tests), `make corrections-base` with `BASE` set (the corrections records stay
+append-only),
+`make vuln`, `make test-race`, `make test-packages-docker`,
+`make test-integration` and `make build-cross`.
 
 Also retain a GoReleaser `v2.18.1` snapshot proving the candidate emits the
 three authoritative names below. Snapshot evidence does not satisfy the

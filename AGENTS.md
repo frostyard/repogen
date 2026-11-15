@@ -148,7 +148,7 @@ release process is in [RELEASING.md](RELEASING.md).
   edit their canonical targets, never the aliases.
 - CI gate: [.github/workflows/ci.yml](.github/workflows/ci.yml) runs
   `make ci` — `make verify` (tidy, vet, gofmt, lint at the mise pin, docs
-  integrity, unit tests), a pinned `govulncheck` (a reachable vulnerability
+  integrity, corrections, unit tests), a pinned `govulncheck` (a reachable vulnerability
   fails CI,
   [ADR-0016](docs/adr/0016-remove-rpm-generation.md)), the race tests, the
   packages built in Docker, the integration suite and the release builds.
@@ -159,6 +159,13 @@ release process is in [RELEASING.md](RELEASING.md).
 - Corrections go to 1 file under `.memory/corrections/` (five-field
   schema, canonical form — see [.memory/README.md](.memory/README.md)); promote into this
   file, docs, or skills — never duplicate without setting `promoted_to`.
+  `make corrections-check` runs `node scripts/check-corrections.mjs` over the
+  folder, and `make ci` also runs `make corrections-base`, which with `BASE`
+  set compares the records with that commit and refuses a removed, renamed or
+  edited record
+  ([core ADR-0081](https://github.com/frostyard/core/blob/main/docs/adr/0081-store-each-correction-in-a-file-of-its-own.md)).
+  `scripts/check-corrections.mjs` is a byte-identical copy of frostyard/core's
+  script: change it in core, then copy it.
 - Task runbooks live in [.github/prompts/](.github/prompts/README.md) as
   `*.prompt.md`; rules stay here.
 
@@ -169,7 +176,7 @@ After making any code changes, you MUST run:
 ```bash
 make build   # code compiles
 make check   # formats, then runs the verify gate: tidy, vet, gofmt, lint
-             # at the mise pin, docs integrity, unit tests
+             # at the mise pin, docs integrity, corrections, unit tests
 ```
 
 `make ci` runs the full CI gate when Docker is available.
@@ -206,9 +213,13 @@ formatting.
 - `make fmt` — format code with go fmt
 - `make lint` — run golangci-lint at the `mise.toml` pin
 - `make verify` — the non-mutating gate: tidy, vet, gofmt check, lint, docs
-  integrity, unit tests
+  integrity, corrections, unit tests
 - `make check` — `make fmt`, then `make verify` (the developer gate)
 - `make ci` — what CI runs; it needs Docker
+- `make corrections-check` — the format of every record in
+  `.memory/corrections/` (`node scripts/check-corrections.mjs`)
+- `make corrections-base` — with `BASE` set, the append-only comparison of the
+  records with that commit (`make corrections-base BASE=origin/main`)
 - `make vuln` — `govulncheck` at the pinned version
 - `make test-race` — unit tests with the race detector and `coverage.txt`
 - `make build-cross` — the linux amd64 and arm64 release builds

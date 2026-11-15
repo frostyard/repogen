@@ -13,9 +13,11 @@ everything the CI workflow runs.
 
 | Target | What it runs |
 |---|---|
-| `make verify` | The non-mutating gate: `go mod tidy -diff`, `go vet`, a gofmt check, `golangci-lint` at the `mise.toml` pin, `node scripts/check-docs.mjs`, and the unit tests. It writes no file, so a read-only reviewer can run it |
+| `make verify` | The non-mutating gate: `go mod tidy -diff`, `go vet`, a gofmt check, `golangci-lint` at the `mise.toml` pin, `node scripts/check-docs.mjs`, `make corrections-check`, and the unit tests. It writes no file, so a read-only reviewer can run it |
 | `make check` | `make fmt`, then `make verify`. The developer gate |
-| `make ci` | `make verify`, `make vuln`, `make test-race`, `make test-packages-docker` and `make test-integration`, then `make build-cross`. Needs Docker |
+| `make ci` | `make verify`, `make corrections-base`, `make vuln`, `make test-race`, `make test-packages-docker` and `make test-integration`, then `make build-cross`. Needs Docker |
+| `make corrections-check` | `node scripts/check-corrections.mjs`: the format of every record in `.memory/corrections/`, with no comparison |
+| `make corrections-base` | With `BASE` set, the append-only comparison of the records with that commit: `make corrections-base BASE=origin/main` |
 | `make vuln` | `govulncheck` at a pinned version; a reachable known vulnerability fails it |
 | `make test-race` | The unit tests with the race detector and a `coverage.txt` profile |
 | `make build-cross` | The release builds: linux amd64 and linux arm64 |
