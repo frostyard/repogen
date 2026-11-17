@@ -10,20 +10,20 @@ and systemd-sysupdate read, so any web server can host the result.
 
 **Status:** pre-release. Frostyard publishes its systemd-sysext images with it; Frostyard's Debian packages go through frostyard/apt-publisher instead.
 
-**Documentation:** [docs/README.md](docs/README.md)
+**Documentation:** the user guides are at <https://frostyard.github.io/repogen/>; [docs/README.md](docs/README.md) indexes the maintainer docs (decisions, designs, specs, plans).
 
 ## What it does
 
 - **Finds packages.** It scans a directory and detects each package type by
   its magic bytes, with the file name as a fallback.
-  [Usage](docs/guides/usage.md)
+  [Usage](site/content/guides/usage.md)
 - **Writes repository metadata for 5 formats.** Debian/APT, Alpine/APK, Arch
   Linux/pacman, Homebrew bottles and systemd-sysext images. RPM was removed in
   v0.7.0 ([ADR-0016](docs/adr/0016-remove-rpm-generation.md)).
   [Generator spec](docs/specs/generators.md)
 - **Signs what it writes.** GPG for Debian, pacman and sysext (a sysext gets
   `SHA256SUMS.gpg` and transfers with `Verify=true`), RSA for Alpine. Unsigned
-  output stays possible. [Signing](docs/guides/usage.md#with-signing)
+  output stays possible. [Signing](site/content/guides/usage.md#with-signing)
 - **Adds to a published repository.** Incremental mode reads the published
   metadata and adds new packages without removing old ones.
   `--skip-published-identities` skips a sysext whose identity is already
@@ -32,15 +32,15 @@ and systemd-sysupdate read, so any web server can host the result.
   known gap: a content change without a version or revision bump is not
   republished. `--sysext-keep-versions N` keeps only the newest N versions of
   each sysext per OS version and arch; by default nothing is pruned.
-  [Incremental mode](docs/guides/usage.md#incremental-mode)
+  [Incremental mode](site/content/guides/usage.md#incremental-mode)
 - **Publishes to Cloudflare R2.** The `publish-to-r2` GitHub Action uploads
   payloads before metadata, writes each sysext `SHA256SUMS` only if no other
   publisher changed it since the restore (publishers must still run one at a
   time), and refuses Debian input
   ([ADR-0019](docs/adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
-  [publish-to-r2](docs/guides/publish-to-r2.md)
+  [publish-to-r2](site/content/guides/publish-to-r2.md)
 - **Shows clients how to use the result.** The APT, apk, pacman, Homebrew and
-  systemd-sysupdate setup for each format. [Client setup](docs/guides/client-setup.md)
+  systemd-sysupdate setup for each format. [Client setup](site/content/guides/client-setup.md)
 
 ## Install
 
@@ -55,7 +55,7 @@ sudo scripts/install-release.sh --github-release v0.7.2 b5dccc7fe10f40d55d34b092
 
 Take the newest tag from the
 [releases page](https://github.com/frostyard/repogen/releases) and its commit
-from `git rev-list -n1 <tag>`. [Install](docs/guides/usage.md#installation)
+from `git rev-list -n1 <tag>`. [Install](site/content/guides/usage.md#installation)
 also covers a build from source.
 
 ## Use
@@ -67,7 +67,7 @@ repogen generate --input-dir ./extensions --output-dir ./repo \
 ```
 
 Debian input needs `--codename`; sysext input needs `--base-url`.
-`repogen generate --help` and [Usage](docs/guides/usage.md#configuration-options)
+`repogen generate --help` and [Usage](site/content/guides/usage.md#configuration-options)
 list every flag.
 
 ## Credits
@@ -85,12 +85,12 @@ make check     # format, then the verify gate
 make ci        # what CI runs; needs Docker
 ```
 
-[Development](docs/guides/development.md) explains each target and the tests.
+[Development](site/content/contributing/build.md) explains each target and the tests.
 
 ## Where to go next
 
 - [AGENTS.md](AGENTS.md): the rules for agents and contributors.
-- [docs/README.md](docs/README.md): the decisions, designs, specs, plans and guides.
+- [docs/README.md](docs/README.md): the decisions, designs, specs and plans.
 - [RELEASING.md](RELEASING.md): the release process and the asset contract.
 - [SECURITY.md](SECURITY.md): report a vulnerability privately.
 - [LICENSE](LICENSE): MIT.

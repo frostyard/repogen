@@ -1,4 +1,4 @@
-# Development
+# Build from source
 
 ```bash
 mise install   # Go from go.mod, and the pinned golangci-lint, node and svu
@@ -8,6 +8,23 @@ make ci        # the full CI gate; it needs Docker
 
 `make check` never needs credentials and never needs Docker. `make ci` runs
 everything the CI workflow runs.
+
+## Build the site
+
+The repository builds the documentation site with `make site`, and previews it
+with `make site-serve`:
+
+```sh
+make site        # strict build into site/dist
+make site-serve  # preview at http://127.0.0.1:8000/repogen/
+```
+
+The site needs the Python lock in `site/requirements.txt` and writes its
+virtual environment to `build/site-venv`. `make ci` does not build the site.
+
+Pages live in `site/content/`. A page explains what a user does, not how the
+code works: the maintainer contracts stay in `docs/`. Change the page in the
+same pull request as a user-visible behavior change.
 
 ## Gate targets
 
@@ -25,9 +42,9 @@ everything the CI workflow runs.
 
 ## Testing
 
-Repogen includes a comprehensive test suite with Docker-based integration tests that verify each repository type works correctly in its native environment.
+repogen includes a comprehensive test suite with Docker-based integration tests that verify each repository type works correctly in its native environment.
 
-### Quick Start
+### Quick start
 
 ```bash
 # Build the binary
@@ -43,7 +60,7 @@ make test
 make test-integration
 ```
 
-### Test Package Generation
+### Test package generation
 
 Test packages are minimal dummy packages used to verify repository functionality:
 
@@ -62,7 +79,7 @@ This creates:
 - `test/fixtures/pacman/repogen-test-1.0.0-1-x86_64.pkg.tar.zst`
 - `test/fixtures/bottles/repogen-test--1.0.0.x86_64_linux.bottle.tar.gz`
 
-### Integration Tests
+### Integration tests
 
 Integration tests use Docker to:
 
@@ -92,15 +109,15 @@ go test -v -timeout 15m ./test
 go test -v -short ./...
 ```
 
-### Test Output
+### Test output
 
 Integration tests verify:
 
-- ✓ Repository structure (all expected files present)
-- ✓ Metadata files (Release, Packages, APKINDEX)
-- ✓ Package manager can read repository metadata
-- ✓ Package manager can install packages
-- ✓ Installed binaries execute successfully
+- Repository structure (all expected files present)
+- Metadata files (Release, Packages, APKINDEX)
+- Package manager can read repository metadata
+- Package manager can install packages
+- Installed binaries execute successfully
 
 Example output:
 
@@ -123,7 +140,7 @@ Example output:
     ✓ Homebrew repository test passed
 ```
 
-### Manual Testing
+### Manual testing
 
 You can manually test repositories:
 
@@ -154,7 +171,7 @@ apt install repogen-test
 
 Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
 
-### Development Workflow
+### Development workflow
 
 ```bash
 # Clone and build

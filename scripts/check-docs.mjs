@@ -17,9 +17,9 @@ if (thresholds.never_relax !== true) {
 const failures = [];
 const rate = (pass, total) => (total === 0 ? 1 : pass / total);
 
-// ---- 1. Index coverage: every doc in each category (and guides/) is indexed. ----
+// ---- 1. Index coverage: every doc in each category is indexed. ----
 const indexText = readFileSync(join(root, "docs/README.md"), "utf8");
-const categories = ["adr", "design", "specs", "plans", "guides"];
+const categories = ["adr", "design", "specs", "plans"];
 let docsTotal = 0;
 let docsIndexed = 0;
 for (const cat of categories) {
@@ -45,6 +45,15 @@ for (const cat of categories) {
     if (name.endsWith(".md") && name !== "TEMPLATE.md") mdFiles.push(join(root, "docs", cat, name));
   }
 }
+// Site pages (site/content/): relative links must resolve. `make site` also
+// checks them, but `make ci` does not build the site.
+(function walk(dir) {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (lstatSync(path).isDirectory()) walk(path);
+    else if (name.endsWith(".md")) mdFiles.push(path);
+  }
+})(join(root, "site/content"));
 let linksTotal = 0;
 let linksOk = 0;
 for (const file of mdFiles) {
@@ -64,7 +73,7 @@ for (const file of mdFiles) {
 }
 
 // ---- 3. Symlink resolution: every repo symlink resolves inside the repo. ----
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "integration-output"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "integration-output"]);
 const symlinks = [];
 (function walk(dir) {
   for (const name of readdirSync(dir)) {

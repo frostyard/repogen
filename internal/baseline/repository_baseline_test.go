@@ -14,6 +14,8 @@
 //	B6  risk paths: the spec, the caller, and a glob matcher
 //	B7  the pull request template asks for a risk tier
 //	B8  .svu.yml names the tag pattern, and the bump recipe stops on a failure
+//	B9  the docs site: site/, a hash-locked Python lock, the site targets and
+//	    workflow, the README link, and no docs/guides/
 //	B10 the LICENSE is present and holds the MIT text
 //	B12 CI runs `make ci` on pull requests and merge-queue entries
 //	B13 Dependabot covers every ecosystem in the tree
@@ -22,8 +24,8 @@
 //	B16 no stray agent directories, a minimal .claude/
 //	B17 the README is a `tool` README within 1000 words
 //
-// B9 (docs site) and B11 (Go version) are not checked here: both are follow-up
-// changes that this repository does not carry yet.
+// B11 (Go version) is not checked here: it is a follow-up change that this
+// repository does not carry yet.
 //
 // This package is test-only. It uses the standard library only.
 package baseline
@@ -2514,5 +2516,229 @@ func TestRepositoryBaselineB17Readme(t *testing.T) {
 		if strings.Contains(readme, drawing) {
 			t.Errorf("README.md must not hold a tree drawing (%q)", drawing)
 		}
+	}
+}
+
+// ---- B9: the documentation site (core ADR-0070, ADR-0084). ----
+
+const siteURL = "https://frostyard.github.io/repogen/"
+
+func TestRepositoryBaselineB9DocsSite(t *testing.T) {
+	tracked := trackedFiles(t)
+	set := trackedSet(t)
+	for _, problem := range siteFileProblems(tracked) {
+		t.Error(problem)
+	}
+	if !set["site/requirements.txt"] || !set["site/properdocs.yml"] ||
+		!set[".github/workflows/site.yml"] {
+		t.Fatal("site files are missing; later checks need them")
+	}
+	for _, problem := range siteLockProblems(readRepoFile(t, "site/requirements.txt")) {
+		t.Errorf("site/requirements.txt: %s", problem)
+	}
+	for _, problem := range siteMakefileProblems(readRepoFile(t, "Makefile")) {
+		t.Errorf("Makefile: %s", problem)
+	}
+	for _, problem := range siteWorkflowProblems(readRepoFile(t, ".github/workflows/site.yml")) {
+		t.Errorf(".github/workflows/site.yml: %s", problem)
+	}
+	for _, problem := range siteReadmeProblems(readRepoFile(t, "README.md")) {
+		t.Errorf("README.md: %s", problem)
+	}
+	config := readRepoFile(t, "site/properdocs.yml")
+	for _, problem := range siteConfigProblems(config, tracked) {
+		t.Errorf("site/properdocs.yml: %s", problem)
+	}
+}
+
+// siteFileProblems checks the tracked files: the site config and lock, the
+// home page, and no leftover docs/guides/ file.
+func siteFileProblems(tracked []string) []string {
+	var problems []string
+	for _, want := range []string{
+		"site/properdocs.yml",
+		"site/requirements.in",
+		"site/requirements.txt",
+		"site/content/index.md",
+		".github/workflows/site.yml",
+	} {
+		if !slices.Contains(tracked, want) {
+			problems = append(problems, want+" must be tracked")
+		}
+	}
+	for _, name := range tracked {
+		if strings.HasPrefix(name, "docs/guides/") {
+			problems = append(problems, name+": user guides live in site/content/, not docs/guides/")
+		}
+	}
+	return problems
+}
+
+// siteLockProblems checks that every requirement of a pip lock file has at
+// least 1 --hash=sha256: line, so that --require-hashes can install it.
+func siteLockProblems(lock string) []string {
+	var problems []string
+	requirement := ""
+	hashes := 0
+	finish := func() {
+		if requirement != "" && hashes == 0 {
+			problems = append(problems, "requirement "+requirement+" has no --hash=sha256: line")
+		}
+	}
+	count := 0
+	for _, line := range strings.Split(lock, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "" || strings.HasPrefix(trimmed, "#"):
+		case strings.HasPrefix(trimmed, "--hash=sha256:"):
+			hashes++
+		case line[0] != ' ' && line[0] != '\t':
+			finish()
+			requirement = strings.TrimSpace(strings.TrimSuffix(trimmed, "\\"))
+			hashes = 0
+			count++
+		}
+	}
+	finish()
+	if count == 0 {
+		problems = append(problems, "no requirement line")
+	}
+	return problems
+}
+
+// siteMakefileProblems checks the site rules, the strict build and .PHONY.
+func siteMakefileProblems(makefile string) []string {
+	var problems []string
+	rules := rulePrerequisites(makefile)
+	for _, target := range []string{"site", "site-serve"} {
+		if _, ok := rules[target]; !ok {
+			problems = append(problems, "no rule "+target+":")
+		}
+	}
+	if !strings.Contains(makefile, "properdocs build --strict") {
+		problems = append(problems, "the site recipe must run properdocs build --strict")
+	}
+	phony := ""
+	for _, line := range strings.Split(makefile, "\n") {
+		if strings.HasPrefix(line, ".PHONY:") {
+			phony += " " + strings.TrimPrefix(line, ".PHONY:")
+		}
+	}
+	for _, target := range []string{"site", "site-serve"} {
+		if !contains(strings.Fields(phony), target) {
+			problems = append(problems, ".PHONY must name "+target)
+		}
+	}
+	return problems
+}
+
+// siteWorkflowProblems checks that the workflow builds the site with make.
+func siteWorkflowProblems(workflow string) []string {
+	if !regexp.MustCompile(`(?m)^\s*-?\s*run:\s*make site\s*$`).MatchString(workflow) {
+		return []string{"it must run `make site`"}
+	}
+	return nil
+}
+
+// siteReadmeProblems checks that the README links the site.
+func siteReadmeProblems(readme string) []string {
+	if !strings.Contains(readme, siteURL) {
+		return []string{"it must link " + siteURL}
+	}
+	return nil
+}
+
+// siteConfigProblems checks site_url and that every page under
+// site/content is named in the nav of the config.
+func siteConfigProblems(config string, tracked []string) []string {
+	var problems []string
+	if !regexp.MustCompile(`(?m)^site_url: ` + regexp.QuoteMeta(siteURL) + `\s*$`).MatchString(config) {
+		problems = append(problems, "site_url must be "+siteURL)
+	}
+	nav := ""
+	inNav := false
+	for _, line := range strings.Split(config, "\n") {
+		if line == "nav:" {
+			inNav = true
+			continue
+		}
+		if inNav && line != "" && line[0] != ' ' && line[0] != '#' {
+			break
+		}
+		if inNav {
+			nav += line + "\n"
+		}
+	}
+	if nav == "" {
+		problems = append(problems, "no nav: list")
+	}
+	for _, name := range tracked {
+		page, ok := strings.CutPrefix(name, "site/content/")
+		if !ok || !strings.HasSuffix(page, ".md") {
+			continue
+		}
+		if !regexp.MustCompile(`(?m):\s*` + regexp.QuoteMeta(page) + `\s*$`).MatchString(nav) {
+			problems = append(problems, page+" is not in nav")
+		}
+	}
+	return problems
+}
+
+func TestSiteProblems(t *testing.T) {
+	goodTracked := []string{
+		"site/properdocs.yml", "site/requirements.in", "site/requirements.txt",
+		"site/content/index.md", ".github/workflows/site.yml", "README.md",
+	}
+	const goodLock = "# header\nbabel==2.18.0 \\\n    --hash=sha256:aa \\\n    --hash=sha256:bb\n    # via x\nrich==1.0 \\\n    --hash=sha256:cc\n"
+	const goodMakefile = ".PHONY: all site site-serve\n\nsite: venv\n\tvenv/bin/properdocs build --strict -f site/properdocs.yml\n\nsite-serve: venv\n\tvenv/bin/properdocs serve\n"
+	const goodConfig = "site_url: " + siteURL + "\nnav:\n  - Home: index.md\n  - Guides:\n      - Usage: guides/usage.md\ntheme:\n  name: materialx\n"
+	with := func(list []string, extra ...string) []string {
+		return append(slices.Clone(list), extra...)
+	}
+	without := func(list []string, drop string) []string {
+		var out []string
+		for _, item := range list {
+			if item != drop {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
+
+	cases := []struct {
+		name    string
+		got     []string
+		wantBad int
+	}{
+		{"files ok", siteFileProblems(goodTracked), 0},
+		{"no config", siteFileProblems(without(goodTracked, "site/properdocs.yml")), 1},
+		{"no requirements.in", siteFileProblems(without(goodTracked, "site/requirements.in")), 1},
+		{"no requirements.txt", siteFileProblems(without(goodTracked, "site/requirements.txt")), 1},
+		{"no home page", siteFileProblems(without(goodTracked, "site/content/index.md")), 1},
+		{"no workflow", siteFileProblems(without(goodTracked, ".github/workflows/site.yml")), 1},
+		{"leftover guide", siteFileProblems(with(goodTracked, "docs/guides/usage.md")), 1},
+		{"lock ok", siteLockProblems(goodLock), 0},
+		{"lock without hash", siteLockProblems(goodLock + "idna==3.0\n"), 1},
+		{"empty lock", siteLockProblems("# only a comment\n"), 1},
+		{"makefile ok", siteMakefileProblems(goodMakefile), 0},
+		{"no site rule", siteMakefileProblems(strings.Replace(goodMakefile, "site: venv", "docs: venv", 1)), 1},
+		{"no site-serve rule", siteMakefileProblems(strings.Replace(goodMakefile, "site-serve: venv", "serve: venv", 1)), 1},
+		{"not strict", siteMakefileProblems(strings.Replace(goodMakefile, " --strict", "", 1)), 1},
+		{"not phony", siteMakefileProblems(strings.Replace(goodMakefile, " site-serve\n", "\n", 1)), 1},
+		{"workflow ok", siteWorkflowProblems("steps:\n  - run: make site\n"), 0},
+		{"workflow without make site", siteWorkflowProblems("steps:\n  - run: make ci\n"), 1},
+		{"readme ok", siteReadmeProblems("See " + siteURL + "\n"), 0},
+		{"readme without link", siteReadmeProblems("See the docs\n"), 1},
+		{"config ok", siteConfigProblems(goodConfig, with(goodTracked, "site/content/guides/usage.md")), 0},
+		{"wrong site_url", siteConfigProblems(strings.Replace(goodConfig, siteURL, "https://example.org/", 1), goodTracked), 1},
+		{"page not in nav", siteConfigProblems(goodConfig, with(goodTracked, "site/content/guides/other.md")), 1},
+		{"no nav", siteConfigProblems("site_url: "+siteURL+"\n", goodTracked), 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if len(tc.got) != tc.wantBad {
+				t.Errorf("got %d problems %q, want %d", len(tc.got), tc.got, tc.wantBad)
+			}
+		})
 	}
 }

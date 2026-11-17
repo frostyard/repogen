@@ -3,9 +3,9 @@
 What repogen writes for each package format, and the commands a client uses to
 read it.
 
-## Generated Repository Structures
+## Generated repository structures
 
-### Debian/APT Repository
+### Debian/APT repository
 
 ```
 repo/
@@ -42,7 +42,7 @@ sudo apt update
 sudo apt install package-name
 ```
 
-### Alpine/APK Repository
+### Alpine/APK repository
 
 ```
 repo/
@@ -67,7 +67,7 @@ sudo apk update
 sudo apk add package-name
 ```
 
-### Arch Linux/Pacman Repository
+### Arch Linux/Pacman repository
 
 ```
 repo/
@@ -101,7 +101,7 @@ sudo pacman -Sy
 sudo pacman -S package-name
 ```
 
-### Homebrew Tap
+### Homebrew tap
 
 ```
 repo/
@@ -121,7 +121,7 @@ brew tap username/repo https://github.com/username/repo
 brew install package-name
 ```
 
-### systemd-sysext Repository
+### systemd-sysext repository
 
 systemd-sysext repositories are designed to work with systemd-sysupdate for automatic system extension updates.
 
@@ -172,7 +172,7 @@ repogen generate \
 
 **Using with systemd-sysupdate:**
 
-Repogen generates a `.transfer` file for each extension that can be copied to `/etc/sysupdate.d/`:
+repogen generates a `.transfer` file for each extension that can be copied to `/etc/sysupdate.d/`:
 
 ```bash
 # Copy the generated transfer file
@@ -214,11 +214,11 @@ MatchPattern=docker_@v_%w_%a.raw.zst \
 - `%w`: OS version from the running system (`VERSION_ID` in `/etc/os-release`); must match the `OSVERSION` embedded in the sysext filename (e.g., `13` for Debian Trixie, `22.04` for Ubuntu)
 - `%a`: Architecture in systemd naming (e.g., `x86-64`, `arm64`)
 
-## Repository Structure Details
+## Repository structure details
 
-### Debian Repository Format
+### Debian repository format
 
-Repogen generates Debian repositories following the standard format:
+repogen generates Debian repositories following the standard format:
 
 - **InRelease**: Cleartext signed Release file (preferred by modern apt). For unsigned repositories, contains the same content as Release file without signature wrapper.
 - **Release**: Contains metadata and checksums of all index files
@@ -233,9 +233,9 @@ Key fields in Packages file:
 - Size, MD5sum, SHA1, SHA256, SHA512
 - Description, Depends, Maintainer
 
-### Alpine Repository Format
+### Alpine repository format
 
-Repogen generates Alpine repositories in the apk v2 format:
+repogen generates Alpine repositories in the apk v2 format:
 
 - **APKINDEX.tar.gz**: Contains DESCRIPTION and APKINDEX files
 - **APKINDEX**: Letter:value format package metadata
@@ -248,9 +248,9 @@ Repogen generates Alpine repositories in the apk v2 format:
   - L: License
   - D: Dependencies (space-separated)
 
-### Pacman Repository Format
+### Pacman repository format
 
-Repogen generates Pacman (Arch Linux) repositories:
+repogen generates Pacman (Arch Linux) repositories:
 
 - **Database file** (e.g., `myrepo.db.tar.zst`): Tarball containing package metadata
 - **desc files**: Package information in Pacman format within the database
@@ -263,9 +263,9 @@ Repogen generates Pacman (Arch Linux) repositories:
   - `%ARCH%`, `%BUILDDATE%`, `%PACKAGER%`, `%URL%`, `%LICENSE%`
   - `%DEPENDS%`, `%CONFLICTS%`, `%GROUPS%`
 
-### Homebrew Tap Format
+### Homebrew tap format
 
-Repogen generates Homebrew taps with:
+repogen generates Homebrew taps with:
 
 - **Formula/**: Ruby formula files auto-generated from bottles
 - **bottles/**: Binary packages
