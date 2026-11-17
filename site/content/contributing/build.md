@@ -113,11 +113,11 @@ go test -v -short ./...
 
 Integration tests verify:
 
-- ✓ Repository structure (all expected files present)
-- ✓ Metadata files (Release, Packages, APKINDEX)
-- ✓ Package manager can read repository metadata
-- ✓ Package manager can install packages
-- ✓ Installed binaries execute successfully
+- Repository structure (all expected files present)
+- Metadata files (Release, Packages, APKINDEX)
+- Package manager can read repository metadata
+- Package manager can install packages
+- Installed binaries execute successfully
 
 Example output:
 

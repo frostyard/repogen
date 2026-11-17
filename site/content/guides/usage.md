@@ -321,7 +321,7 @@ aws s3 sync ./repo s3://my-bucket/repo
 
 ### With signing
 
-#### Debian/Pacman (GPG Signing)
+#### Debian/Pacman (GPG signing)
 
 ```bash
 # Generate a signed Debian repository (--codename is required for Debian)
@@ -341,7 +341,7 @@ repogen generate \
   --gpg-passphrase "your-passphrase"
 ```
 
-#### Alpine (RSA Signing)
+#### Alpine (RSA signing)
 
 ```bash
 # Generate signed Alpine repository

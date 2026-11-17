@@ -29,7 +29,7 @@ input needs `--repo-name`.
 | `--label` | Repository label. |
 | `--repo-name` | Repository name for pacman database files (required for pacman). |
 | `--codename` | Codename for Debian repositories (required when Debian packages are present). |
-| `--suite` | Suite for Debian repositories (defaults to the codename). |
+| `--suite` | Suite for Debian repositories (defaults to the codename; when given, it must equal `--codename`). |
 | `--components` | Components for Debian repositories (default `main`). |
 | `--arch` | Architectures to support (default `amd64`). |
 | `--base-url` | Base URL for Homebrew bottles and sysext transfer files (required for sysext). |
