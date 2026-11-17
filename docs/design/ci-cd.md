@@ -67,6 +67,25 @@ It removes `ready-for-human` when the head moves after the label
 ([core ADR-0077](https://github.com/frostyard/core/blob/main/docs/adr/0077-bind-ready-for-human-to-the-head-commit.md)).
 It is not a required check, and its job holds `pull-requests: write` only.
 
+### Site (`.github/workflows/site.yml`)
+
+Builds the documentation site in `site/` and deploys it to GitHub Pages at
+<https://frostyard.github.io/repogen/>
+([core ADR-0070](https://github.com/frostyard/core/blob/main/docs/adr/0070-build-tool-docs-sites-with-materialx-on-github-pages.md)).
+`make ci` does not build the site.
+
+- Triggers: a push to `main` and pull requests that touch `site/**`, the
+  `Makefile` or `site.yml`, and `workflow_dispatch`.
+- Build: `make site` on Python 3.13, which installs ProperDocs and MaterialX
+  from the hash-locked `site/requirements.txt` and runs
+  `properdocs build --strict`, so a broken link or anchor fails the job.
+- Deploy: to GitHub Pages from `main` only; a pull request builds and does not
+  deploy.
+- Least privilege: the workflow has `permissions: {}` at the top; `pages: write`
+  and `id-token: write` belong to the deploy job only.
+- Owner setting: the repository's Pages source must be "GitHub Actions"; the
+  repository owner sets it, and the workflow cannot.
+
 ### Release (`.github/workflows/release.yml`)
 
 Triggered by `v*.*.*` tags. The workflow has `permissions: {}` at the top and
@@ -310,6 +329,8 @@ automatically, providing CI validation before merge.
 | `make vet` | `go vet ./...` |
 | `make fmt-check` | Every tracked Go file is gofmt-clean (no write) |
 | `make docs-check` | `node scripts/check-docs.mjs` |
+| `make site` | Build the documentation site strictly into `site/dist` (not part of `make ci`) |
+| `make site-serve` | Preview the documentation site at `http://127.0.0.1:8000/repogen/` |
 | `make corrections-check` | `node scripts/check-corrections.mjs`: the format of every record in `.memory/corrections/` |
 | `make corrections-base` | With `BASE` set, the append-only comparison of the records with that commit (`node scripts/check-corrections.mjs --base`) |
 | `make verify-static` | tidy, vet, fmt-check, lint, docs-check, corrections-check |

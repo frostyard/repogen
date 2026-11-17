@@ -38,3 +38,7 @@ test/integration-output/
 *.gpg
 private.key
 secring.gpg
+
+# Documentation site
+site/dist/
+build/

@@ -44,6 +44,7 @@ internal/
   scanner/            # Package detection and file scanning
   signer/             # GPG and RSA signing utilities
   utils/              # Shared utilities (checksums, compression, file ops)
+site/                 # Documentation site (ProperDocs); pages in site/content/
 test/                 # Integration (e2e) tests and fixtures
 ```
 
@@ -225,6 +226,8 @@ formatting.
 - `make build-cross` — the linux amd64 and arm64 release builds
 - `make bump` — create the annotated release tag locally (maintainers only;
   agents never run it and never push a tag)
+- `make site` — build the documentation site (strict) into `site/dist`
+- `make site-serve` — preview the site at http://127.0.0.1:8000/repogen/
 - `make install` — install to /usr/local/bin
 - `make clean` — clean build artifacts
 
@@ -248,11 +251,18 @@ decision rationale rather than user-facing guides.
   kind `tool`, at most 1000 words, a link out to the docs. Update it for new
   package types, CLI flags or commands, features or workflows, repository
   structure changes.
-- **docs/guides/**: user guides live there until the docs site lands (core
-  ADR-0070). They take no `TEMPLATE.md`, but each one is indexed in
-  `docs/README.md`.
+- **site/**: the user documentation site (core
+  [ADR-0070](https://github.com/frostyard/core/blob/main/docs/adr/0070-build-tool-docs-sites-with-materialx-on-github-pages.md)),
+  published at <https://frostyard.github.io/repogen/>. Pages live in
+  `site/content/`; `make site` builds them strictly; the navigation is the
+  `nav:` list in `site/properdocs.yml`, and every page must be in it. A
+  user-visible behavior change updates its page in the same PR. A link from a
+  page to a file outside `site/content/` is an absolute
+  `https://github.com/frostyard/repogen/blob/main/...` URL. `make ci` does not
+  build the site; `.github/workflows/site.yml` builds it on PRs and deploys it
+  from `main`.
 - **Command examples must run as written.** Every `repogen generate` example
-  in `README.md` and `docs/guides/` carries the flags its input type requires:
+  in `README.md` and `site/content/` carries the flags its input type requires:
   Debian input passes `--codename`, sysext input passes `--base-url`, pacman
   input passes `--repo-name` (see `repogen generate --help`).
 - **docs/**: update `docs/design/overview.md` and the relevant

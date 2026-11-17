@@ -172,8 +172,8 @@ the publication atomic. The windows that remain:
 
 - Shapes: [design/ci-cd.md](../design/ci-cd.md),
   [specs/generators.md](../specs/generators.md),
-  [guides/publish-to-r2.md](../guides/publish-to-r2.md),
-  [guides/usage.md](../guides/usage.md)
+  [site/content/guides/publish-to-r2.md](../../site/content/guides/publish-to-r2.md),
+  [site/content/guides/usage.md](../../site/content/guides/usage.md)
 - Builds on: [ADR-0011](0011-incremental-state-from-published-metadata.md)
   (published metadata is the incremental state),
   [ADR-0017](0017-upload-payloads-before-metadata.md) (payloads before

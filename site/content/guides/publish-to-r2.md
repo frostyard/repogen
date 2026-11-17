@@ -1,17 +1,17 @@
-# The publish-to-r2 GitHub Action
+# The publish-to-r2 GitHub action
 
-Repogen provides a legacy reusable GitHub Action for publishing non-Debian
+repogen provides a legacy reusable GitHub Action for publishing non-Debian
 package formats to repositories hosted on Cloudflare R2 storage.
 
 > **Production status:** The current action is the generic legacy publisher.
-> It requires an exact Repogen tag and commit but still uses broad
+> It requires an exact repogen tag and commit but still uses broad
 > synchronization for supported non-Debian formats. Debian is rejected
 > structurally; the action cannot initialize or reconcile Frostyard
 > Trixie/Forky. Frostyard Debian publication moved to `frostyard/apt-publisher`
 > (core ADR-0055). This action stays for sysexts and other non-Debian
 > formats.
 
-## Quick Start
+## Quick start
 
 ```yaml
 - name: Publish to repository
@@ -28,7 +28,7 @@ package formats to repositories hosted on Cloudflare R2 storage.
     repogen-commit: <40-character-release-commit>
 ```
 
-## Full Example: Publishing Sysext Images
+## Full example: publishing sysext images
 
 ```yaml
 name: Build and Publish Sysext
@@ -64,7 +64,7 @@ jobs:
           repogen-commit: <40-character-release-commit>
 ```
 
-## Action Inputs
+## Action inputs
 
 | Input                  | Required | Default     | Description                                                                              |
 | ---------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------- |
@@ -88,7 +88,7 @@ jobs:
 | `origin`               | No       | -           | Repository origin name                                                                   |
 | `label`                | No       | -           | Repository label                                                                         |
 | `repo-name`            | No\*     | -           | Repository name (\*required for `pacman`)                                                |
-| `repogen-version`      | Yes      | -           | Exact v-prefixed Repogen release tag                                                     |
+| `repogen-version`      | Yes      | -           | Exact v-prefixed repogen release tag                                                     |
 | `repogen-commit`       | Yes      | -           | Exact 40-character commit embedded in the binary                                         |
 | `skip-duplicates`      | No       | `false`     | Skip packages that already exist instead of failing                                      |
 | `skip-published-identities` | No  | `false`     | sysext only: skip each built sysext whose identity the signature-verified `SHA256SUMS` already lists, whatever its bytes; nothing left means nothing is uploaded and the run succeeds. Requires `gpg-private-key` and a `./repo` without payloads. Known gap: a content change without a version or revision bump is not republished |
@@ -97,14 +97,14 @@ jobs:
 | `cloudflare-zone`      | No\*     | -           | Cloudflare Zone ID (\*required if `purge-cache` is `true`)                               |
 | `cloudflare-api-token` | No\*     | -           | Cloudflare API Token with Cache Purge permission (\*required if `purge-cache` is `true`) |
 
-## Action Outputs
+## Action outputs
 
 | Output           | Description                                |
 | ---------------- | ------------------------------------------ |
 | `packages-added` | Number of packages added to the repository |
 | `published`      | `'true'` when the action uploaded to R2; `'false'` when `skip-published-identities` left nothing to publish |
 
-## How It Works
+## How it works
 
 1. **Downloads repogen** from GitHub releases
 2. **Syncs existing metadata** from R2 (only metadata files, not packages);
@@ -141,7 +141,7 @@ that
 skipped every built sysext uploads nothing, purges nothing, and reports
 `published=false`, while an empty `packages-dir` stays an error. Known gap: a
 content change without a version or revision bump is not republished
-([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
+([ADR-0018](https://github.com/frostyard/repogen/blob/main/docs/adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
 
 The action is not a Debian publisher. Debian uses the separate protected
 writer.
@@ -165,7 +165,7 @@ The guard does not make publication atomic. `SHA256SUMS` and its signature are
 it fails closed and succeeds on the next read. `ext/index` is not guarded:
 two unserialized runs that each add a new extension can leave the index short,
 and the next run then fails until the index is repaired
-([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
+([ADR-0019](https://github.com/frostyard/repogen/blob/main/docs/adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
 
 ### Retention
 
@@ -176,9 +176,9 @@ forky) and deletes the pruned payload objects after the upload and the cache
 purge succeeded, each only when the live `SHA256SUMS` no longer lists it. A
 client that still holds a cached older `SHA256SUMS` can get a 404 for a pruned
 older version; the newest version is never pruned
-([ADR-0019](../adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
+([ADR-0019](https://github.com/frostyard/repogen/blob/main/docs/adr/0019-guard-sysext-manifests-and-opt-in-retention.md)).
 
-## Setting Up R2 Credentials
+## Setting up R2 credentials
 
 1. Go to Cloudflare Dashboard → R2 → Manage R2 API Tokens
 2. Create an API token with "Object Read & Write" permissions
@@ -188,7 +188,7 @@ older version; the newest version is never pruned
    - `R2_ACCESS_KEY_ID`
    - `R2_SECRET_ACCESS_KEY`
 
-## Setting Up Cache Purge (Optional)
+## Setting up cache purge (optional)
 
 If your R2 bucket is served through a Cloudflare domain, you can configure the action to automatically purge the CDN cache after uploading. This ensures clients immediately see the updated repository metadata.
 
@@ -210,7 +210,7 @@ If your R2 bucket is served through a Cloudflare domain, you can configure the a
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
 
-## Configuring Public Access
+## Configuring public access
 
 To serve your repository publicly:
 

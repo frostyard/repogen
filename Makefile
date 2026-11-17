@@ -1,4 +1,4 @@
-.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump
+.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump site site-serve
 
 GO ?= go
 GOFMT ?= gofmt
@@ -110,6 +110,23 @@ vet:
 fmt-check:
 	@test -z "$$($(GOFMT) -l $$(git ls-files '*.go'))" || { $(GOFMT) -l $$(git ls-files '*.go'); echo "run: make fmt"; exit 1; }
 
+# The documentation site (site/), built with pinned ProperDocs and MaterialX
+# (core ADR-0070, the frostyard-docs-site skill). `make ci` does not build the
+# site, so a change that does not touch site/ needs no Python toolchain;
+# .github/workflows/site.yml builds it.
+SITE_VENV := build/site-venv
+
+$(SITE_VENV)/bin/properdocs: site/requirements.txt
+	python3 -m venv $(SITE_VENV)
+	$(SITE_VENV)/bin/pip install -q --require-hashes -r site/requirements.txt
+	touch $@
+
+site: $(SITE_VENV)/bin/properdocs
+	$(SITE_VENV)/bin/properdocs build --strict -f site/properdocs.yml
+
+site-serve: $(SITE_VENV)/bin/properdocs
+	$(SITE_VENV)/bin/properdocs serve -f site/properdocs.yml
+
 # Docs integrity: index, links, symlinks (scripts/check-docs.mjs)
 docs-check:
 	node scripts/check-docs.mjs
@@ -219,6 +236,8 @@ help:
 	@echo "  make vet                   - Run go vet"
 	@echo "  make fmt-check             - Check every tracked Go file is gofmt-clean"
 	@echo "  make docs-check            - Check the docs index, links and symlinks"
+	@echo "  make site                  - Build the documentation site (strict) into site/dist"
+	@echo "  make site-serve            - Preview the documentation site at http://127.0.0.1:8000/repogen/"
 	@echo "  make corrections-check     - Check the format of every corrections record"
 	@echo "  make corrections-base      - Check the corrections records are append-only against BASE"
 	@echo "  make verify-static         - Non-mutating static checks (tidy, vet, fmt, lint, docs, corrections)"

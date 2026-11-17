@@ -1,12 +1,12 @@
 # Usage
 
-> **⚠️ Alpha Software Warning**
->
-> Repogen is alpha software and has not been extensively battle-tested in production environments. While it includes comprehensive test coverage and has been validated with package managers, use it with caution for critical infrastructure. Always verify generated repositories work correctly with your package manager before deploying to production.
+!!! warning "Alpha software"
 
-Repogen is a CLI tool that generates static repository structures for multiple package managers. It scans directories for packages, generates appropriate metadata files, and signs repositories with GPG/RSA keys.
+    repogen is alpha software and has not been extensively battle-tested in production environments. While it includes comprehensive test coverage and has been validated with package managers, use it with caution for critical infrastructure. Always verify generated repositories work correctly with your package manager before deploying to production.
 
-## Supported Package Types
+repogen is a CLI tool that generates static repository structures for multiple package managers. It scans directories for packages, generates appropriate metadata files, and signs repositories with GPG/RSA keys.
+
+## Supported package types
 
 - **Debian/APT** (.deb packages)
 - **Alpine/APK** (.apk packages)
@@ -15,11 +15,11 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 - **systemd-sysext** (.raw, .raw.zst, .raw.xz, .raw.gz)
 
 > **RPM is not supported.** RPM generation was removed in v0.7.0
-> ([ADR-0016](../adr/0016-remove-rpm-generation.md)) because its parser
+> ([ADR-0016](https://github.com/frostyard/repogen/blob/main/docs/adr/0016-remove-rpm-generation.md)) because its parser
 > depended on the unmaintained `golang.org/x/crypto/openpgp` package
 > (GO-2026-5932, no fix). `.rpm` files are ignored by `generate`, and the
 > `--distro`, `--version` and `--gpg-key-url` flags no longer exist. Use
-> Repogen v0.6.0 or earlier if you still need RPM repositories.
+> repogen v0.6.0 or earlier if you still need RPM repositories.
 
 ## Features
 
@@ -42,7 +42,7 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 ### From a release
 
 Each `vMAJOR.MINOR.PATCH` release publishes `repogen-linux-amd64`,
-`repogen-linux-arm64` and `SHA256SUMS`. [RELEASING.md](../../RELEASING.md) holds
+`repogen-linux-arm64` and `SHA256SUMS`. [RELEASING.md](https://github.com/frostyard/repogen/blob/main/RELEASING.md) holds
 the release contract.
 
 Run `scripts/install-release.sh` from a clone. It needs the exact tag and its
@@ -73,7 +73,7 @@ same-origin, so authenticity depends on GitHub and repository release controls;
 there is no independent release signature or attestation. No `latest` lookup
 is accepted. Darwin assets from the retired workflow are not produced.
 
-### From Source
+### From source
 
 ```bash
 # Clone the repository
@@ -94,7 +94,7 @@ sudo cp repogen /usr/local/bin/
 
 ## Usage
 
-### Basic Usage
+### Basic usage
 
 ```bash
 # Scan current directory and generate repositories
@@ -113,15 +113,15 @@ repogen generate -v
 
 ### Frostyard Debian publication
 
-Repogen does not publish Frostyard Debian packages.
+repogen does not publish Frostyard Debian packages.
 [`frostyard/apt-publisher`](https://github.com/frostyard/apt-publisher) is the
 only Frostyard Debian writer (core
 [ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)).
-Repogen is a general-purpose generator plus the `publish-to-r2` action for
+repogen is a general-purpose generator plus the `publish-to-r2` action for
 sysext and other non-Debian formats. The former production commands, which
 shipped in v0.5.2, were removed
-([ADR-0015](../adr/0015-remove-the-superseded-production-path.md); history
-in [ADR-0013](../adr/0013-separate-generic-generation-from-production-publishing.md)).
+([ADR-0015](https://github.com/frostyard/repogen/blob/main/docs/adr/0015-remove-the-superseded-production-path.md); history
+in [ADR-0013](https://github.com/frostyard/repogen/blob/main/docs/adr/0013-separate-generic-generation-from-production-publishing.md)).
 
 The `publish-to-r2` action refuses the `stable` suite and any Debian input
 (`scripts/validate-publish-target.sh`, `TestPublishTargetRefusesStable`,
@@ -142,9 +142,9 @@ supported formats and unsigned behavior. It has no implicit Debian codename:
 Debian input requires `--codename`, and a `--suite` must equal it. Its Debian
 incremental mode initializes only when `dists/<codename>` is absent; an
 unreadable, malformed or unselected existing index stops the run before any
-format writes ([ADR-0014](../adr/0014-debian-incremental-restore-fails-closed.md)).
+format writes ([ADR-0014](https://github.com/frostyard/repogen/blob/main/docs/adr/0014-debian-incremental-restore-fails-closed.md)).
 
-### Incremental Mode
+### Incremental mode
 
 Incremental mode allows you to add new packages to an existing repository without regenerating everything from scratch. This is useful when:
 
@@ -202,7 +202,7 @@ stops the run. A repository published unsigned therefore cannot use the mode.
 payload path (`ext/NAME/FILE`) of each skipped sysext, one per line. When every
 identity was skipped the run succeeds without writing output. mkosi builds are
 not byte-reproducible, so this is how a nightly rebuild of the same extension
-succeeds ([ADR-0018](../adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
+succeeds ([ADR-0018](https://github.com/frostyard/repogen/blob/main/docs/adr/0018-opt-in-identity-level-skip-for-published-sysexts.md)).
 
 **Known gap:** a content change without a version or `SYSEXT_REVISION` bump
 keeps its identity, so it is skipped and **is not republished**; the old bytes
@@ -214,7 +214,7 @@ The incremental mode is particularly powerful when combined with S3. You can syn
 
 A manual upload must also upload packages before metadata, so live metadata
 never lists a package that is not in the bucket
-([ADR-0017](../adr/0017-upload-payloads-before-metadata.md)). For sysext,
+([ADR-0017](https://github.com/frostyard/repogen/blob/main/docs/adr/0017-upload-payloads-before-metadata.md)). For sysext,
 the two commands are joined with `&&`, so a failed payload upload stops before
 the metadata goes up:
 
@@ -232,7 +232,7 @@ aws s3 sync ./repo s3://my-bucket/repo --exclude '*' \
 payload is in the bucket, uploads metadata and indexes last, and retries each
 phase.
 
-#### Debian Repository
+#### Debian repository
 
 ```bash
 # Sync only metadata from S3 (not package files)
@@ -245,7 +245,7 @@ repogen generate --input-dir ./new-packages --output-dir ./repo --codename trixi
 aws s3 sync ./repo s3://my-bucket/repo
 ```
 
-#### Pacman Repository
+#### Pacman repository
 
 ```bash
 # Sync only database files (exclude actual package files)
@@ -264,7 +264,7 @@ repogen generate \
 aws s3 sync ./repo s3://my-bucket/repo
 ```
 
-#### APK Repository
+#### APK repository
 
 ```bash
 # Sync metadata only
@@ -277,7 +277,7 @@ repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
 aws s3 sync ./repo s3://my-bucket/repo
 ```
 
-#### systemd-sysext Repository
+#### systemd-sysext repository
 
 ```bash
 # Sync only SHA256SUMS metadata files
@@ -319,7 +319,7 @@ aws s3 sync ./repo s3://my-bucket/repo
   merged, and retained even without `--incremental`; omitting the flag never
   authorizes deletion of manifest-backed extensions
 
-### With Signing
+### With signing
 
 #### Debian/Pacman (GPG Signing)
 
@@ -353,7 +353,7 @@ repogen generate \
   --key-name "mykey"
 ```
 
-### Configuration Options
+### Configuration options
 
 ```bash
 repogen generate [flags]
@@ -402,9 +402,9 @@ Flags:
       --base-url string         Base URL for Homebrew bottles and sysext transfer files (required for sysext)
 ```
 
-## GPG Key Setup
+## GPG key setup
 
-### Generate GPG Key for Signing
+### Generate GPG key for signing
 
 ```bash
 # Generate key
@@ -417,7 +417,7 @@ gpg --export-secret-keys YOUR_KEY_ID > private.key
 gpg --export --armor YOUR_KEY_ID > public.key
 ```
 
-### Generate RSA Key for Alpine
+### Generate RSA key for Alpine
 
 ```bash
 # Generate RSA private key
@@ -432,7 +432,7 @@ openssl genrsa -aes256 -out private.pem 2048
 
 ## Examples
 
-### Example 1: Simple Debian Repository
+### Example 1: simple Debian repository
 
 ```bash
 # Organize packages
@@ -446,7 +446,7 @@ repogen generate --input-dir packages --output-dir /var/www/repo --codename stab
 sudo ln -s /var/www/repo /usr/share/nginx/html/repo
 ```
 
-### Example 2: Multi-Architecture Debian Repository
+### Example 2: Multi-architecture Debian repository
 
 ```bash
 repogen generate \
@@ -458,7 +458,7 @@ repogen generate \
   --label "Production Packages"
 ```
 
-### Example 3: Homebrew Tap with Multiple Bottles
+### Example 3: Homebrew tap with multiple bottles
 
 ```bash
 # Organize bottles
@@ -472,7 +472,7 @@ repogen generate \
   --base-url "https://github.com/username/homebrew-tap/releases/download/v1.0"
 ```
 
-### Example 4: Pacman Repository with Signing
+### Example 4: pacman repository with signing
 
 ```bash
 # Organize packages
@@ -515,7 +515,7 @@ gpg --export --armor YOUR_KEY_ID > /var/www/repo/myrepo.key
 
 ### Debian Trixie requires InRelease files
 
-Even with `[trusted=yes]`, Debian Trixie expects InRelease files to exist. Repogen now automatically generates InRelease files for all repositories:
+Even with `[trusted=yes]`, Debian Trixie expects InRelease files to exist. repogen now automatically generates InRelease files for all repositories:
 
 - **Signed repositories**: InRelease contains cleartext signature
 - **Unsigned repositories**: InRelease contains Release content (no signature)
