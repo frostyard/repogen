@@ -6,8 +6,8 @@ trustworthy as the key that signs it and the metadata it publishes.
 
 ## Supported versions
 
-Only the latest `v0.x` release gets fixes. Today that is `v0.7.2`
-([releases](https://github.com/frostyard/repogen/releases)).
+Only the latest `v0.x` release gets fixes: the release that the
+[releases page](https://github.com/frostyard/repogen/releases) marks **Latest**.
 
 `main` between releases gets no fixes. Older releases get no fixes.
 

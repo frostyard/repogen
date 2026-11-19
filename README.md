@@ -50,7 +50,7 @@ script checks the SHA-256 and the version that the binary embeds:
 
 ```sh
 git clone https://github.com/frostyard/repogen && cd repogen
-sudo scripts/install-release.sh --github-release v0.7.2 b5dccc7fe10f40d55d34b092cf7ed92dd1473c26 amd64 /usr/local/bin/repogen
+sudo scripts/install-release.sh --github-release v0.7.4 c2f9f54931520d7801c8339db8b9931d8737f395 amd64 /usr/local/bin/repogen
 ```
 
 Take the newest tag from the

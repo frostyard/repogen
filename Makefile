@@ -1,4 +1,4 @@
-.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump site site-serve
+.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump-main-check bump bump-tag site site-serve
 
 GO ?= go
 GOFMT ?= gofmt
@@ -50,10 +50,10 @@ test-integration: test-packages
 	@echo "Running integration tests..."
 	@go test -v -timeout 15m ./test
 
-# Quick integration test (skip if Docker not available)
+# Integration tests without the package rebuild: uses the packages already in test/fixtures (requires Docker)
 test-integration-quick:
-	@echo "Running integration tests (quick)..."
-	@go test -v -timeout 10m -short ./test || echo "Integration tests skipped"
+	@echo "Running integration tests (quick: no package rebuild)..."
+	@$(GO) test -v -timeout 15m ./test
 
 # Clean build artifacts and test outputs
 clean:
@@ -193,8 +193,30 @@ svu-version-check:
 	@installed="$$($(SVU) --version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*//p' | head -1)"; \
 	if [ "$$installed" != "$(SVU_VERSION)" ]; then echo "expected svu $(SVU_VERSION), found $${installed:-unknown} (run: mise install)"; exit 1; fi
 
-# bump: create the next annotated release tag with svu (.svu.yml); a maintainer pushes it
-bump: svu-version-check
+# bump-main-check: fail unless HEAD is the main branch and equals origin/main (core ADR-0012)
+bump-main-check:
+	@branch="$$(git symbolic-ref --quiet --short HEAD)" || branch="detached HEAD"; \
+	if [ "$$branch" != "main" ]; then \
+		echo "make bump must run on main (core ADR-0012); found $$branch, not main: check out main and update it first"; \
+		exit 1; \
+	fi; \
+	if ! git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main; then \
+		echo "make bump cannot fetch origin main; check the remote and your network access, then retry"; \
+		exit 1; \
+	fi; \
+	head="$$(git rev-parse HEAD)" && remote="$$(git rev-parse refs/remotes/origin/main)" || exit 1; \
+	if [ "$$head" != "$$remote" ]; then \
+		echo "HEAD ($$(git rev-parse --short HEAD)) is not origin/main ($$(git rev-parse --short refs/remotes/origin/main)); pull or push first so the tag lands on the released commit"; \
+		exit 1; \
+	fi
+
+# bump: run the gate on main, then create the next annotated release tag with svu (.svu.yml); a maintainer pushes it
+bump: svu-version-check bump-main-check
+	@$(MAKE) --no-print-directory verify
+	@$(MAKE) --no-print-directory bump-tag
+
+# bump-tag: the tag step of make bump, after the gate; run make bump, not this target
+bump-tag: svu-version-check bump-main-check
 	@set -e; \
 	test -z "$$(git status --porcelain)" || { echo "the working tree is not clean"; exit 1; }; \
 	version="$$($(SVU) next)"; \
@@ -223,7 +245,7 @@ help:
 	@echo "  make test                  - Run all tests"
 	@echo "  make test-unit             - Run unit tests only"
 	@echo "  make test-integration      - Run Docker-based integration tests"
-	@echo "  make test-integration-quick - Run integration tests in short mode"
+	@echo "  make test-integration-quick - Run the integration tests without the package rebuild (needs Docker)"
 	@echo "  make test-packages         - Build test packages for integration tests"
 	@echo "  make test-packages-docker  - Build test packages using Docker"
 	@echo "  make test-race             - Unit tests with the race detector and coverage.txt"
@@ -247,7 +269,7 @@ help:
 	@echo "  make build-cross           - Build the linux amd64 and arm64 release binaries"
 	@echo "  make ci                    - What CI runs (needs Docker)"
 	@echo "  make svu-version-check     - Check svu matches the mise.toml pin"
-	@echo "  make bump                  - Create the next annotated release tag (maintainers only)"
+	@echo "  make bump                  - Run the gate on main, then create the next release tag (maintainers only)"
 	@echo "  make fmt                   - Format code"
 	@echo "  make deps                  - Update dependencies"
 	@echo "  make help                  - Show this help message"

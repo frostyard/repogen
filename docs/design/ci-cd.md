@@ -319,7 +319,7 @@ automatically, providing CI validation before merge.
 | `make test` | Run unit + integration tests |
 | `make test-unit` | Unit tests only (`go test -short`) |
 | `make test-integration` | Build test packages, then run integration tests |
-| `make test-integration-quick` | Integration tests in short mode, skipped when unavailable |
+| `make test-integration-quick` | Integration tests without the package rebuild, on the packages committed in `test/fixtures/` (needs Docker) |
 | `make test-packages` | Build test packages locally |
 | `make test-packages-docker` | Build test fixtures in Docker containers |
 | `make test-race` | Unit tests with the race detector and `coverage.txt` |
@@ -340,7 +340,8 @@ automatically, providing CI validation before merge.
 | `make build-cross` | The linux amd64 and arm64 release builds |
 | `make ci` | What CI runs: verify, corrections-base, vuln, test-race, test-packages-docker, test-integration, build-cross |
 | `make svu-version-check` | Fail unless `svu` matches the `mise.toml` pin |
-| `make bump` | Create the next annotated release tag with `svu`; a maintainer pushes it |
+| `make bump-main-check` | Fail unless `HEAD` is `main` and equals `origin/main` (core ADR-0012) |
+| `make bump` | Run `bump-main-check` and `make verify`, then create the next annotated release tag with `svu`; a maintainer pushes it |
 | `make fmt` | Format code |
 | `make install` | Install to `/usr/local/bin` |
 | `make uninstall` | Remove from `/usr/local/bin` |
@@ -350,13 +351,12 @@ automatically, providing CI validation before merge.
 
 ## Test Fixtures
 
-`test/fixtures/` contains pre-built packages for unit tests:
+`test/fixtures/` contains committed packages for the integration tests:
 - `debs/` — 3 .deb files (including a gzip-compressed variant)
 - `apks/` — 2 .apk files
-- `pacman/` — 1 .pkg.tar.zst file
+- `pacman/` — 1 .pkg.tar.zst file (`nano`, committed; `build-test-packages.sh` does not build it)
 - `bottles/` — 2 Homebrew bottles
 - `gpg-keys/` — Test GPG keypair
-- `sysext/` — (placeholder, see README)
 
 Integration tests (`test/integration_test.go`) run the full pipeline with
 these fixtures and verify the output structure.

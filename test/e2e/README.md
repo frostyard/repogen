@@ -11,7 +11,7 @@ Run it with:
 
 ```bash
 make test-integration          # builds test packages, then runs the suite
-make test-integration-quick    # skips the package rebuild
+make test-integration-quick    # no package rebuild: uses the packages committed in test/fixtures/
 ```
 
 This directory exists as the discoverable e2e entry point

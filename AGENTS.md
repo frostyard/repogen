@@ -95,8 +95,7 @@ release process is in [RELEASING.md](RELEASING.md).
 - **Trap: the highest semver tag is not the latest release.** Tags `v1.0.0`
   to `v1.0.4` come from the upstream fork `ralt/repogen` (2026-01-06 to
   2026-01-22) and have no GitHub release; `v1.0.4` is not on `main`. The real
-  series is `v0.x`, from `v0.1.0` (2026-01-14); the latest release when this
-  was written is `v0.7.2` (2026-11-03). So `git tag --sort=-v:refname | head -1`
+  series is `v0.x`, from `v0.1.0` (2026-01-14). So `git tag --sort=-v:refname | head -1`
   and the skill's "highest stable semver tag" fallback give a wrong answer here. Find the latest
   release with `gh release list --repo frostyard/repogen`, never from the tags,
   and count unreleased commits from that tag.
@@ -110,13 +109,16 @@ release process is in [RELEASING.md](RELEASING.md).
   `tag.pattern: "v0.*"`, and `svu next` reads the Conventional Commit
   subjects since the latest release (core ADR-0012, ADR-0053). Without the
   pattern `svu next` answers `v2.0.0`, because the upstream fork's `v1.x`
-  tags exist. On `v0.x` a breaking change gives a minor. `make bump` creates
-  the annotated tag locally; a maintainer pushes it.
+  tags exist. On `v0.x` a breaking change gives a minor. `make bump` runs
+  `bump-main-check` (`HEAD` is `main` and equals `origin/main`) and
+  `make verify`, then creates the annotated tag locally (core ADR-0012);
+  a maintainer pushes it.
 - Internal dependencies: none (`go.mod` has no frostyard or bketelsen module).
 - Who uses this repository: `frostyard/snosi` `.github/workflows/build.yml`
   publishes sysexts with `frostyard/repogen/.github/actions/publish-to-r2`,
-  pinned by SHA `b5dccc7` (`v0.7.2`), with `repogen-version: v0.7.2` and
-  `repogen-commit` naming that same commit. A newer repogen release is not a
+  pinned by the full commit SHA of a repogen release, with `repogen-version`
+  and `repogen-commit` naming that same release and commit; read snosi's
+  `build.yml` for the current pin. A newer repogen release is not a
   bump to open in snosi on your own; ask its owner (Murbella) first. `frostyard/chairlift` and
   `frostyard/pilothouse` only name the action in pin-check test fixtures, not
   in a workflow. Sysext publishers of one bucket must run one at a time
@@ -155,8 +157,9 @@ release process is in [RELEASING.md](RELEASING.md).
   packages built in Docker, the integration suite and the release builds.
   `node scripts/check-docs.mjs` checks that every doc is indexed, every
   relative link resolves and every symlink is intact — thresholds in
-  `.coverage-thresholds.json`, `never_relax`. Run `make check` locally before
-  pushing.
+  `.coverage-thresholds.json`, `never_relax`. Run `make ci` locally before the first push of a branch
+  ([core ADR-0083](https://github.com/frostyard/core/blob/main/docs/adr/0083-run-the-ci-gate-locally-as-make-ci.md));
+  `make check` is the quick loop while you work.
 - Corrections go to 1 file under `.memory/corrections/` (five-field
   schema, canonical form — see [.memory/README.md](.memory/README.md)); promote into this
   file, docs, or skills — never duplicate without setting `promoted_to`.
@@ -180,7 +183,7 @@ make check   # formats, then runs the verify gate: tidy, vet, gofmt, lint
              # at the mise pin, docs integrity, corrections, unit tests
 ```
 
-`make ci` runs the full CI gate when Docker is available.
+Before the first push of a branch, run `make ci`: the full CI gate (it needs Docker).
 
 Fix any linting errors before considering the task complete. Common issues:
 unused imports or variables, missing error checks, ineffective assignments,
@@ -211,6 +214,8 @@ formatting.
 - `make test` — run all tests including integration
 - `make test-integration` — build test packages, then run the e2e suite in
   `test/` (see [test/e2e/README.md](test/e2e/README.md))
+- `make test-integration-quick` — the e2e suite without the package rebuild:
+  it uses the packages committed in `test/fixtures/` (needs Docker)
 - `make fmt` — format code with go fmt
 - `make lint` — run golangci-lint at the `mise.toml` pin
 - `make verify` — the non-mutating gate: tidy, vet, gofmt check, lint, docs
@@ -224,8 +229,9 @@ formatting.
 - `make vuln` — `govulncheck` at the pinned version
 - `make test-race` — unit tests with the race detector and `coverage.txt`
 - `make build-cross` — the linux amd64 and arm64 release builds
-- `make bump` — create the annotated release tag locally (maintainers only;
-  agents never run it and never push a tag)
+- `make bump` — run `bump-main-check` and `make verify`, then create the
+  annotated release tag locally (maintainers only; agents never run it and
+  never push a tag)
 - `make site` — build the documentation site (strict) into `site/dist`
 - `make site-serve` — preview the site at http://127.0.0.1:8000/repogen/
 - `make install` — install to /usr/local/bin
@@ -282,5 +288,6 @@ decision rationale rather than user-facing guides.
 
 - [ ] Code compiles (`make build`)
 - [ ] `make check` passes (format, then the verify gate)
+- [ ] `make ci` passes before the first push (needs Docker)
 - [ ] Documentation updated if needed
 - [ ] New features have tests
