@@ -73,8 +73,10 @@ tag. `.svu.yml` sets `tag.prefix: "v"` and `tag.pattern: "v0.*"`, so
 from the upstream fork and are not releases; without the pattern `svu next`
 answers `v2.0.0`).
 
-`make bump` checks the `svu` pin, requires a clean working tree, and creates
-the annotated tag locally. A maintainer pushes it; agents never tag:
+`make bump` checks the `svu` pin, checks that `HEAD` is `main` and equals
+`origin/main` (`make bump-main-check`), runs `make verify`, requires a clean
+working tree, checks `main` again, and creates the annotated tag locally.
+A maintainer pushes it; agents never tag:
 
 ```bash
 git tag -a v1.2.3 -m "Release version 1.2.3"

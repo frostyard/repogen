@@ -38,7 +38,7 @@ same pull request as a user-visible behavior change.
 | `make vuln` | `govulncheck` at a pinned version; a reachable known vulnerability fails it |
 | `make test-race` | The unit tests with the race detector and a `coverage.txt` profile |
 | `make build-cross` | The release builds: linux amd64 and linux arm64 |
-| `make bump` | Creates the next annotated release tag with `svu` (`.svu.yml`). A maintainer runs it and pushes the tag; agents never tag |
+| `make bump` | Checks that `HEAD` is `main` and equals `origin/main`, runs `make verify`, then creates the next annotated release tag with `svu` (`.svu.yml`). A maintainer runs it and pushes the tag; agents never tag |
 
 ## Testing
 
@@ -75,9 +75,16 @@ make test-packages-docker
 This creates:
 
 - `test/fixtures/debs/repogen-test_1.0.0_amd64.deb`
+- `test/fixtures/debs/repogen-utils_2.0.0_amd64.deb`
+- `test/fixtures/debs/repogen-gzipped_3.0.0_amd64.deb`
 - `test/fixtures/apks/repogen-test-1.0.0-r0.apk`
-- `test/fixtures/pacman/repogen-test-1.0.0-1-x86_64.pkg.tar.zst`
+- `test/fixtures/apks/repogen-utils-2.0.0-r0.apk`
 - `test/fixtures/bottles/repogen-test--1.0.0.x86_64_linux.bottle.tar.gz`
+- `test/fixtures/bottles/repogen-utils--2.0.0.x86_64_linux.bottle.tar.gz`
+
+The pacman fixture `test/fixtures/pacman/nano-8.3-1-x86_64.pkg.tar.zst` is
+committed; the script does not build it. All fixtures are committed, so
+`make test-integration-quick` runs the suite without a rebuild.
 
 ### Integration tests
 
@@ -89,10 +96,12 @@ Integration tests use Docker to:
 4. Install test packages
 5. Verify successful installation
 
+The Alpine and Homebrew tests check the generated files only.
+
 **Tested Distributions:**
 
 - **Debian**: Debian Bookworm and Trixie containers
-- **Alpine**: Alpine latest container
+- **Alpine**: structure check of the generated `APKINDEX` (no container, no install)
 - **Pacman**: Arch Linux latest container
 - **Homebrew**: Formula validation (local)
 
@@ -101,6 +110,9 @@ Integration tests use Docker to:
 ```bash
 # Requires Docker
 make test-integration
+
+# Without the package rebuild (uses the committed fixtures)
+make test-integration-quick
 
 # Or run directly with Go
 go test -v -timeout 15m ./test

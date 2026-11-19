@@ -49,14 +49,14 @@ Run `scripts/install-release.sh` from a clone. It needs the exact tag and its
 full 40-character commit:
 
 ```bash
-scripts/install-release.sh --github-release v0.7.0 c3c9f63c0f9b04106cfdb84318f5ec935566ab89 amd64 /usr/local/bin/repogen
+sudo scripts/install-release.sh --github-release v0.7.4 c2f9f54931520d7801c8339db8b9931d8737f395 amd64 /usr/local/bin/repogen
 ```
 
 The destination must be writable; use `sudo` for `/usr/local/bin`. The run
 prints:
 
 ```
-installed 0.7.0 c3c9f63c0f9b04106cfdb84318f5ec935566ab89 from repogen-linux-amd64
+installed 0.7.4 c2f9f54931520d7801c8339db8b9931d8737f395 from repogen-linux-amd64
 ```
 
 The architecture is `amd64` or `arm64`; `x86_64` and `aarch64` are also
