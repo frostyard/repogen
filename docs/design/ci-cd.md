@@ -298,14 +298,18 @@ not make the pair atomic
   opens at most 1 version-update PR for each entry and run. The group has no
   `applies-to`, so security updates stay 1 PR each
   ([core ADR-0075](https://github.com/frostyard/core/blob/main/docs/adr/0075-batch-routine-pull-requests.md)).
-- **Schedule**: Weekly checks.
+- **Schedule**: monthly, on the 1st at a time GitHub picks; the schedule
+  holds only `interval: monthly`, and each ecosystem has 1 entry
+  ([core ADR-0089](https://github.com/frostyard/core/blob/main/docs/adr/0089-run-dependabot-version-updates-monthly-in-one-entry-per-ecosystem.md)).
+  Security updates do not follow the schedule.
 - **Commit prefix**: `deps:` — follows the conventional-commit style used in
   this repo (e.g., `perf:`, `fix:`, `docs:`).
 - **Labels**: PRs are labeled `dependencies`.
 - **Ecosystem**: `github-actions` — keeps the SHA-pinned `uses:` lines current
   (it updates the SHA and the `# vX.Y.Z` comment together). It scans
-  `/` (the workflows) and `/.github/actions/*` (the composite actions), weekly,
-  with commit prefix `ci:` and the `dependencies` label.
+  `/` (the workflows) and `/.github/actions/*` (the composite actions) from
+  1 entry with a `directories` list, so they come in 1 PR, monthly, with
+  commit prefix `ci:` and the `dependencies` label.
 
 Dependabot respects the `go` directive in `go.mod` and will not propose updates
 requiring a newer Go version. Dependabot PRs trigger the `CI` workflow
