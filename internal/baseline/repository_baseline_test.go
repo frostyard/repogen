@@ -903,15 +903,22 @@ var (
 	versionComment = regexp.MustCompile(`^# v\d+\.\d+(\.\d+)?$`)
 )
 
+// actionPinReport is what 1 walk of the workflow and action metadata files
+// found: the files read (workflows among them), the OWNER/REPO@SHA pins, the
+// SHAs of each action and the problems.
 type actionPinReport struct {
+	files     int
 	workflows int
 	pins      int
 	shas      map[string]map[string]string
 	problems  []string
 }
 
-// actionPinFileProblems records pins and checks their value's line comment.
+// actionPinFileProblems checks every uses: value of 1 file: an external ref
+// is OWNER/REPO[/PATH]@SHA (core ADR-0021), and its line comment is a version
+// (core ADR-0090). It records each pin's SHA for oneSHAProblems.
 func actionPinFileProblems(name string, data []byte, report *actionPinReport) {
+	report.files++
 	if strings.HasPrefix(name, ".github/workflows/") {
 		report.workflows++
 	}
@@ -928,16 +935,26 @@ func actionPinFileProblems(name string, data []byte, report *actionPinReport) {
 		if node.Kind == yaml.MappingNode {
 			for i := 0; i+1 < len(node.Content); i += 2 {
 				key, value := node.Content[i], node.Content[i+1]
-				if key.Value != "uses" || value.Kind != yaml.ScalarNode {
+				if key.Value != "uses" {
+					continue
+				}
+				where := fmt.Sprintf("%s:%d", name, value.Line)
+				if value.Kind != yaml.ScalarNode {
+					report.problems = append(report.problems, fmt.Sprintf("%s: the uses: value must be a string", where))
 					continue
 				}
 				match := actionPin.FindStringSubmatch(value.Value)
 				if match == nil {
+					// A composite action in .github/actions/ has no other
+					// ADR-0021 check, so an external ref that is not a full SHA
+					// fails here; ./local and docker:// refs are not action pins.
+					if !strings.HasPrefix(value.Value, "./") && !strings.HasPrefix(value.Value, "docker://") {
+						report.problems = append(report.problems, fmt.Sprintf("%s: uses: must name OWNER/REPO[/PATH]@<40-character commit SHA> (core ADR-0021), got %s", where, value.Value))
+					}
 					continue
 				}
 				report.pins++
 				action, sha := match[1], match[2]
-				where := fmt.Sprintf("%s:%d", name, value.Line)
 				if report.shas[action] == nil {
 					report.shas[action] = make(map[string]string)
 				}
@@ -978,8 +995,9 @@ func oneSHAProblems(shas map[string]map[string]string) []string {
 	return problems
 }
 
-// actionPinProblems runs the ADR-0090 check in deterministic file order.
-func actionPinProblems(files map[string][]byte) []string {
+// checkActionPins runs the ADR-0021 and ADR-0090 pin check over files (name
+// relative to the repository root -> content) in deterministic order.
+func checkActionPins(files map[string][]byte) *actionPinReport {
 	var names []string
 	for name := range files {
 		names = append(names, name)
@@ -996,7 +1014,7 @@ func actionPinProblems(files map[string][]byte) []string {
 	if report.pins == 0 {
 		report.problems = append(report.problems, "no OWNER/REPO@SHA action pin found: the ADR-0090 check would pass on nothing")
 	}
-	return report.problems
+	return report
 }
 
 func isActionPinFile(name string) bool {
@@ -1011,8 +1029,34 @@ func TestRepositoryBaselineB5ActionPins(t *testing.T) {
 			files[name] = []byte(readRepoFile(t, name))
 		}
 	}
-	for _, problem := range actionPinProblems(files) {
+	report := checkActionPins(files)
+	for _, problem := range report.problems {
 		t.Error(problem)
+	}
+	t.Logf("checked %d files (%d workflows, %d action metadata), %d pins of %d actions",
+		report.files, report.workflows, report.files-report.workflows, report.pins, len(report.shas))
+	if report.files != len(files) {
+		t.Errorf("checked %d files, want all %d selected", report.files, len(files))
+	}
+	if trackedSet(t)[".github/actions/publish-to-r2/action.yml"] && report.files == report.workflows {
+		t.Error("the check read no action metadata file, but .github/actions/publish-to-r2/action.yml is tracked")
+	}
+}
+
+// TestActionPinCounts pins the counts the repository test reports: every
+// selected file, workflows apart, and only OWNER/REPO@SHA refs as pins.
+func TestActionPinCounts(t *testing.T) {
+	report := checkActionPins(map[string][]byte{
+		".github/workflows/a.yml":      []byte("jobs:\n  j:\n    steps:\n      - uses: actions/checkout@" + fixtureSHA + " # v7.0.1\n      - uses: ./.github/actions/x\n"),
+		".github/workflows/b.yml":      []byte("jobs:\n  j:\n    steps:\n      - uses: actions/checkout@" + fixtureSHA + " # v7.0.1\n      - uses: docker://alpine@sha256:" + strings.Repeat("0", 64) + "\n"),
+		".github/actions/x/action.yml": []byte("runs:\n  using: composite\n  steps:\n    - uses: actions/setup-go@" + fixtureSHA2 + " # v5.6.0\n"),
+	})
+	if len(report.problems) != 0 {
+		t.Fatalf("problems = %q, want none", report.problems)
+	}
+	if report.files != 3 || report.workflows != 2 || report.pins != 3 || len(report.shas) != 2 {
+		t.Errorf("files, workflows, pins, actions = %d, %d, %d, %d; want 3, 2, 3, 2",
+			report.files, report.workflows, report.pins, len(report.shas))
 	}
 }
 
@@ -1073,6 +1117,9 @@ func TestActionPinProblems(t *testing.T) {
 		{name: "invalid YAML", files: map[string]string{".github/workflows/bad.yml": "jobs: [", ".github/workflows/ci.yml": step(pin + " # v7.0.1")}, want: []string{"parse"}},
 		{name: "empty map", files: map[string]string{}, want: []string{"no workflow file", "no OWNER/REPO@SHA action pin"}},
 		{name: "action only", files: map[string]string{".github/actions/x/action.yml": step(pin + " # v7.0.1")}, want: []string{"no workflow file"}},
+		{name: "tag ref in a composite action beside a valid workflow", files: map[string]string{".github/workflows/ci.yml": step(pin + " # v7.0.1"), ".github/actions/publish-to-r2/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/checkout@v7 # v7.0.1\n"}, want: []string{"must name OWNER/REPO[/PATH]@<40-character commit SHA> (core ADR-0021), got actions/checkout@v7"}},
+		{name: "short SHA in a composite action beside a valid workflow", files: map[string]string{".github/workflows/ci.yml": step(pin + " # v7.0.1"), ".github/actions/publish-to-r2/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/checkout@3d3c42e # v7.0.1\n"}, want: []string{"got actions/checkout@3d3c42e"}},
+		{name: "uses value that is not a string", files: workflow(step(pin+" # v7.0.1") + "      - uses: [a, b]\n"), want: []string{"the uses: value must be a string"}},
 		{name: "local only", files: workflow(step("./local")), want: []string{"no OWNER/REPO@SHA action pin"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1080,7 +1127,7 @@ func TestActionPinProblems(t *testing.T) {
 			for name, text := range tc.files {
 				files[name] = []byte(text)
 			}
-			got := actionPinProblems(files)
+			got := checkActionPins(files).problems
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d problems %q, want %d %q", len(got), got, len(tc.want), tc.want)
 			}

@@ -15,9 +15,12 @@ external action is pinned to a full 40-character commit SHA with a trailing
 ([core ADR-0021](https://github.com/frostyard/core/blob/main/docs/adr/0021-sha-pinned-actions-and-least-privilege-ci.md)).
 `release.yml` and `site.yml` follow the same rule. Baseline B5
 (`internal/baseline`) checks every `uses:` pin in `.github/workflows/` and
-`.github/actions/**/action.yml`: the comment is `# vX.Y.Z` or `# vX.Y` (a
-frostyard/core reusable workflow pin needs only a comment), and each
-`OWNER/REPO[/PATH]` has 1 SHA across all those files
+`.github/actions/**/action.yml`: each external ref is a full commit SHA (the
+only ADR-0021 check of a composite action), the comment is `# vX.Y.Z` or
+`# vX.Y` (a frostyard/core reusable workflow pin needs only a comment), and
+each `OWNER/REPO[/PATH]` has 1 SHA across all those files. The test logs the
+files and pins it checked and fails when it reads no workflow, no tracked
+action metadata file or no pin
 ([core ADR-0090](https://github.com/frostyard/core/blob/main/docs/adr/0090-scope-action-pins-and-check-them-repository-wide.md)).
 No test holds a live SHA: the release contract test reads the `release.yml`
 pins and asserts their form
