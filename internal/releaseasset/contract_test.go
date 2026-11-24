@@ -7,8 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -221,10 +224,20 @@ func TestRepositoryReleaseContractHasOnePinnedPublisherAndVerifiedConsumer(t *te
 	action := readContractFile(t, filepath.Join(root, ".github", "actions", "publish-to-r2", "action.yml"))
 	installer := readContractFile(t, filepath.Join(root, "scripts", "install-release.sh"))
 
+	for _, action := range []string{"actions/checkout", "actions/setup-go", "goreleaser/goreleaser-action"} {
+		pins := usesPins(t, filepath.Join(root, ".github", "workflows", "release.yml"), action)
+		if len(pins) != 1 {
+			t.Fatalf("release.yml has %d pins for %s, want 1", len(pins), action)
+		}
+		ref := strings.TrimPrefix(pins[0].Value, action+"@")
+		if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(ref) {
+			t.Errorf("%s ref %q must be a full lowercase SHA", action, ref)
+		}
+		if !regexp.MustCompile(`^# v\d+\.\d+(\.\d+)?$`).MatchString(pins[0].LineComment) {
+			t.Errorf("%s comment %q must be # vX.Y.Z or # vX.Y", action, pins[0].LineComment)
+		}
+	}
 	for _, required := range []string{
-		"actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
-		"actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
-		"goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a",
 		"version: v2.18.1",
 	} {
 		if !strings.Contains(release, required) {
@@ -341,4 +354,30 @@ func readContractFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// usesPins returns each uses value node naming action in the YAML file.
+func usesPins(t *testing.T, path, action string) []*yaml.Node {
+	t.Helper()
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(readContractFile(t, path)), &document); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	var pins []*yaml.Node
+	var walk func(*yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key, value := node.Content[i], node.Content[i+1]
+				if key.Value == "uses" && value.Kind == yaml.ScalarNode && strings.HasPrefix(value.Value, action+"@") {
+					pins = append(pins, value)
+				}
+			}
+		}
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(&document)
+	return pins
 }

@@ -9,8 +9,8 @@
 //	    the retired .memory/corrections.jsonl is absent
 //	B3  docs/README.md, docs/org-adrs.md and a TEMPLATE.md per category
 //	B4  one tool pin (mise.toml), the gate triad, no second linter pin
-//	B5  SHA-pinned actions, least-privilege permissions, no persisted
-//	    checkout credentials
+//	B5  SHA-pinned actions with a version comment and 1 SHA for each action
+//	    (core ADR-0021, ADR-0090), least-privilege permissions, no persisted checkout credentials
 //	B6  risk paths: the spec, the caller, and a glob matcher
 //	B7  the pull request template asks for a risk tier
 //	B8  .svu.yml names the tag pattern, and the bump recipe stops on a failure
@@ -27,7 +27,8 @@
 // B11 (Go version) is not checked here: it is a follow-up change that this
 // repository does not carry yet.
 //
-// This package is test-only. It uses the standard library only.
+// This package is test-only. It uses the standard library and gopkg.in/yaml.v3,
+// which keeps the line comment of a uses: value (core ADR-0090).
 package baseline
 
 import (
@@ -49,6 +50,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 )
 
 // repoRoot returns the absolute repository root.
@@ -888,6 +891,208 @@ func contains(list []string, want string) bool {
 
 // ---- B5: pinned actions, least privilege, no stored credentials. ----
 
+// Placeholder SHAs for synthetic fixtures (core ADR-0088), not live pins.
+const (
+	fixtureSHA    = "0123456789abcdef0123456789abcdef01234567"
+	fixtureSHA2   = "89abcdef0123456789abcdef0123456789abcdef"
+	corePinPrefix = "frostyard/core/.github/workflows/"
+)
+
+var (
+	actionPin      = regexp.MustCompile(`^([^@]+)@([0-9a-f]{40})$`)
+	versionComment = regexp.MustCompile(`^# v\d+\.\d+(\.\d+)?$`)
+)
+
+type actionPinReport struct {
+	workflows int
+	pins      int
+	shas      map[string]map[string]string
+	problems  []string
+}
+
+// actionPinFileProblems records pins and checks their value's line comment.
+func actionPinFileProblems(name string, data []byte, report *actionPinReport) {
+	if strings.HasPrefix(name, ".github/workflows/") {
+		report.workflows++
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		report.problems = append(report.problems, fmt.Sprintf("parse %s: %v", name, err))
+		return
+	}
+	if report.shas == nil {
+		report.shas = make(map[string]map[string]string)
+	}
+	var walk func(*yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key, value := node.Content[i], node.Content[i+1]
+				if key.Value != "uses" || value.Kind != yaml.ScalarNode {
+					continue
+				}
+				match := actionPin.FindStringSubmatch(value.Value)
+				if match == nil {
+					continue
+				}
+				report.pins++
+				action, sha := match[1], match[2]
+				where := fmt.Sprintf("%s:%d", name, value.Line)
+				if report.shas[action] == nil {
+					report.shas[action] = make(map[string]string)
+				}
+				if _, seen := report.shas[action][sha]; !seen {
+					report.shas[action][sha] = where
+				}
+				if strings.HasPrefix(action, corePinPrefix) {
+					if value.LineComment == "" {
+						report.problems = append(report.problems, fmt.Sprintf("%s: %s has no comment; name the core commit on main", where, action))
+					}
+				} else if !versionComment.MatchString(value.LineComment) {
+					report.problems = append(report.problems, fmt.Sprintf("%s: %s has comment %q, want # vX.Y.Z or # vX.Y", where, action, value.LineComment))
+				}
+			}
+		}
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(&document)
+}
+
+// oneSHAProblems checks that each action has 1 SHA across all selected files.
+func oneSHAProblems(shas map[string]map[string]string) []string {
+	var problems []string
+	for action, set := range shas {
+		if len(set) <= 1 {
+			continue
+		}
+		var pins []string
+		for sha, where := range set {
+			pins = append(pins, sha+" ("+where+")")
+		}
+		sort.Strings(pins)
+		problems = append(problems, fmt.Sprintf("%s has %d SHAs across the workflows and actions, want 1: %s", action, len(set), strings.Join(pins, ", ")))
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// actionPinProblems runs the ADR-0090 check in deterministic file order.
+func actionPinProblems(files map[string][]byte) []string {
+	var names []string
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	report := &actionPinReport{}
+	for _, name := range names {
+		actionPinFileProblems(name, files[name], report)
+	}
+	report.problems = append(report.problems, oneSHAProblems(report.shas)...)
+	if report.workflows == 0 {
+		report.problems = append(report.problems, "no workflow file under .github/workflows/")
+	}
+	if report.pins == 0 {
+		report.problems = append(report.problems, "no OWNER/REPO@SHA action pin found: the ADR-0090 check would pass on nothing")
+	}
+	return report.problems
+}
+
+func isActionPinFile(name string) bool {
+	return strings.HasPrefix(name, ".github/workflows/") && (strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")) ||
+		strings.HasPrefix(name, ".github/actions/") && (path.Base(name) == "action.yml" || path.Base(name) == "action.yaml")
+}
+
+func TestRepositoryBaselineB5ActionPins(t *testing.T) {
+	files := make(map[string][]byte)
+	for _, name := range trackedFiles(t) {
+		if isActionPinFile(name) {
+			files[name] = []byte(readRepoFile(t, name))
+		}
+	}
+	for _, problem := range actionPinProblems(files) {
+		t.Error(problem)
+	}
+}
+
+func TestIsActionPinFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{".github/workflows/ci.yml", true},
+		{".github/workflows/x.yaml", true},
+		{".github/actions/publish-to-r2/action.yml", true},
+		{".github/actions/a/b/action.yaml", true},
+		{".github/actions/publish-to-r2/README.md", false},
+		{".github/actions/publish-to-r2/other.yml", false},
+		{".github/dependabot.yml", false},
+		{"docs/x.yml", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isActionPinFile(tc.name); got != tc.want {
+				t.Errorf("isActionPinFile(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestActionPinProblems(t *testing.T) {
+	step := func(uses string) string { return "jobs:\n  j:\n    steps:\n      - uses: " + uses + "\n" }
+	workflow := func(text string) map[string]string { return map[string]string{".github/workflows/ci.yml": text} }
+	const pin = "actions/checkout@" + fixtureSHA
+	const pin2 = "actions/checkout@" + fixtureSHA2
+	const core = corePinPrefix + "pr-triage.yml@"
+	const twoSHAs = "has 2 SHAs across the workflows and actions, want 1:"
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+	}{
+		{name: "three-part comment", files: workflow(step(pin + " # v7.0.1"))},
+		{name: "two-part comment", files: workflow(step(pin + " # v3.5"))},
+		{name: "quoted value", files: workflow(step(`"` + pin + `" # v7.0.1`))},
+		{name: "nested path", files: workflow(step("frostyard/repogen/.github/actions/publish-to-r2@" + fixtureSHA + " # v1.2.3"))},
+		{name: "local action", files: workflow(step(pin+" # v7.0.1") + "      - uses: ./.github/actions/x\n")},
+		{name: "docker action", files: workflow(step(pin+" # v7.0.1") + "      - uses: docker://alpine:latest\n")},
+		{name: "core comment", files: workflow(step(core + fixtureSHA + " # frostyard/core main, 2026-11-22 (core#288)"))},
+		{name: "same SHA in 2 files", files: map[string]string{".github/workflows/a.yml": step(pin + " # v7.0.1"), ".github/workflows/b.yml": step(pin + " # v7.0.1")}},
+		{name: "different actions", files: workflow(step(pin+" # v7.0.1") + "      - uses: actions/setup-go@" + fixtureSHA2 + " # v3.5\n")},
+		{name: "no comment", files: workflow(step(pin)), want: []string{`has comment "", want # vX.Y.Z or # vX.Y`}},
+		{name: "major-only", files: workflow(step(pin + " # v7")), want: []string{`has comment "# v7"`}},
+		{name: "extra text", files: workflow(step(pin + " # v7.0.1 pinned")), want: []string{`has comment "# v7.0.1 pinned"`}},
+		{name: "non-core main", files: workflow(step(pin + " # main 2026-11-14")), want: []string{`has comment "# main 2026-11-14"`}},
+		{name: "no v", files: workflow(step(pin + " # 7.0.1")), want: []string{`has comment "# 7.0.1"`}},
+		{name: "core missing comment", files: workflow(step(core + fixtureSHA)), want: []string{"has no comment; name the core commit on main"}},
+		{name: "head comment only", files: workflow("jobs:\n  j:\n    steps:\n      # v7.0.1\n      - uses: " + pin + "\n"), want: []string{`has comment ""`}},
+		{name: "2 SHAs in 2 jobs", files: workflow("jobs:\n  a:\n    uses: " + pin + " # v7.0.1\n  b:\n    uses: " + pin2 + " # v7.0.2\n"), want: []string{twoSHAs}},
+		{name: "2 SHAs in 2 files", files: map[string]string{".github/workflows/a.yml": step(pin + " # v7.0.1"), ".github/workflows/b.yml": step(pin2 + " # v7.0.2")}, want: []string{twoSHAs}},
+		{name: "2 SHAs across workflow and composite", files: map[string]string{".github/workflows/ci.yml": step(pin + " # v7.0.1"), ".github/actions/publish-to-r2/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: " + pin2 + " # v7.0.2\n"}, want: []string{twoSHAs}},
+		{name: "2 core SHAs", files: workflow(step(core+fixtureSHA+" # main") + "      - uses: " + core + fixtureSHA2 + " # another main commit\n"), want: []string{twoSHAs}},
+		{name: "invalid YAML", files: map[string]string{".github/workflows/bad.yml": "jobs: [", ".github/workflows/ci.yml": step(pin + " # v7.0.1")}, want: []string{"parse"}},
+		{name: "empty map", files: map[string]string{}, want: []string{"no workflow file", "no OWNER/REPO@SHA action pin"}},
+		{name: "action only", files: map[string]string{".github/actions/x/action.yml": step(pin + " # v7.0.1")}, want: []string{"no workflow file"}},
+		{name: "local only", files: workflow(step("./local")), want: []string{"no OWNER/REPO@SHA action pin"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := make(map[string][]byte)
+			for name, text := range tc.files {
+				files[name] = []byte(text)
+			}
+			got := actionPinProblems(files)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d problems %q, want %d %q", len(got), got, len(tc.want), tc.want)
+			}
+			for i, want := range tc.want {
+				if !strings.Contains(got[i], want) {
+					t.Errorf("problem %d = %q, want substring %q", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
 var pinnedActionRef = regexp.MustCompile(`^[^@\s]+@[0-9a-f]{40}$`)
 
 func TestRepositoryBaselineB5WorkflowHardening(t *testing.T) {
@@ -1107,7 +1312,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
 `,
@@ -1125,7 +1330,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
 `,
@@ -1141,7 +1346,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
 `,
@@ -1160,7 +1365,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
 `,
@@ -1179,7 +1384,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
 `,
@@ -1224,7 +1429,7 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
 `
@@ -1232,7 +1437,7 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           fetch-depth: 0
 `
@@ -1240,7 +1445,7 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           # persist-credentials: false
           fetch-depth: 0
@@ -1248,7 +1453,7 @@ func TestCheckoutPersistCredentials(t *testing.T) {
 	const setToTrue = `jobs:
   ci:
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: true
 `
@@ -1256,7 +1461,7 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           fetch-depth: 0
         env:
@@ -1266,18 +1471,18 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         persist-credentials: false
 `
 	const twoStepsOnlyFirst = `jobs:
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
       - name: Checkout the other tree
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           fetch-depth: 0
 `
@@ -1285,11 +1490,11 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           persist-credentials: false
       - name: Checkout the other tree
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@` + fixtureSHA + ` # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1298,7 +1503,7 @@ func TestCheckoutPersistCredentials(t *testing.T) {
   ci:
     steps:
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@` + fixtureSHA2 + ` # v5.6.0
         with:
           go-version-file: go.mod
 `
@@ -1605,7 +1810,7 @@ func TestRiskPathsProblems(t *testing.T) {
 		{"glob": ".github/workflows/risk-paths.yml", "level": "L2", "why": "governance: the caller"},
 		{"glob": "signing/**", "level": "L1", "why": "signing and keys"}
 	]}`
-	const callerPin = "frostyard/core/.github/workflows/pr-triage.yml@c996ea3fb54bcf1a3c621113522213702a7673e2"
+	const callerPin = "frostyard/core/.github/workflows/pr-triage.yml@" + fixtureSHA
 	const validCaller = `name: PR triage
 on:
   pull_request_target:
