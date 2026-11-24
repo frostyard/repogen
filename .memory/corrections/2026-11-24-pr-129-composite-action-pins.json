@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-24",
+  "scope": "baseline B5 action pins",
+  "correction": "A pin check over .github/actions/**/action.yml must itself fail an external uses: ref that is not OWNER/REPO[/PATH]@<40-hex SHA>, because no other ADR-0021 check reads composite actions; and a repository-wide check reports the counts of files and pins it checked, so that a walk that reads nothing cannot pass",
+  "evidence": "frostyard/repogen#129, cross-review at e893fb6",
+  "promoted_to": "internal/baseline/repository_baseline_test.go"
+}

@@ -10,10 +10,23 @@ Runs on pull requests, pushes to `main` and merge-queue entries
 (`merge_group`), as one job (`ci`, named `make ci`, timeout 45 minutes). The
 workflow sets top-level `permissions: contents: read` (least privilege). Every
 external action is pinned to a full 40-character commit SHA with a trailing
-`# vX.Y.Z` comment: `actions/checkout` v4.4.0, `actions/setup-go` v5.6.0,
+`# vX.Y.Z` comment: `actions/checkout` v7.0.1, `actions/setup-go` v5.6.0,
 `jdx/mise-action` v5.2.6, `codecov/codecov-action` v4.6.0
 ([core ADR-0021](https://github.com/frostyard/core/blob/main/docs/adr/0021-sha-pinned-actions-and-least-privilege-ci.md)).
-`release.yml` follows the same rule. The job runs these steps in order:
+`release.yml` and `site.yml` follow the same rule. Baseline B5
+(`internal/baseline`) checks every `uses:` pin in `.github/workflows/` and
+`.github/actions/**/action.yml`: each external ref is a full commit SHA (the
+only ADR-0021 check of a composite action), the comment is `# vX.Y.Z` or
+`# vX.Y` (a frostyard/core reusable workflow pin needs only a comment), and
+each `OWNER/REPO[/PATH]` has 1 SHA across all those files. The test logs the
+files and pins it checked and fails when it reads no workflow, no tracked
+action metadata file or no pin
+([core ADR-0090](https://github.com/frostyard/core/blob/main/docs/adr/0090-scope-action-pins-and-check-them-repository-wide.md)).
+No test holds a live SHA: the release contract test reads the `release.yml`
+pins and asserts their form
+([core ADR-0088](https://github.com/frostyard/core/blob/main/docs/adr/0088-read-the-action-pin-in-workflow-tests-never-hard-code-it.md)),
+so a Dependabot bump that keeps each action on 1 SHA with its comment passes
+`make ci`. The job runs these steps in order:
 
 1. Checkout with `persist-credentials: false`, so the job cannot push with
    the workflow token, and `fetch-depth: 0`, so the base commit of the pull
