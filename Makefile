@@ -1,4 +1,4 @@
-.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump-main-check bump bump-tag site site-serve
+.PHONY: all build test test-unit test-integration test-integration-quick test-packages test-packages-docker clean install uninstall fmt deps help lint lint-version-check tidy-check vet fmt-check docs-check corrections-check corrections-base verify-static verify check vuln test-race build-cross ci svu-version-check bump-main-check bump site site-serve
 
 GO ?= go
 GOFMT ?= gofmt
@@ -195,30 +195,38 @@ svu-version-check:
 
 # bump-main-check: fail unless HEAD is the main branch and equals origin/main (core ADR-0012)
 bump-main-check:
-	@branch="$$(git symbolic-ref --quiet --short HEAD)" || branch="detached HEAD"; \
+	@git rev-parse --git-dir >/dev/null 2>&1 || { echo "make bump must run in a git repository (core ADR-0012); $(CURDIR) is not in one: clone frostyard/repogen and run it there"; exit 1; }; \
+	branch="$$(git symbolic-ref --quiet --short HEAD)" || branch="detached HEAD"; \
 	if [ "$$branch" != "main" ]; then \
 		echo "make bump must run on main (core ADR-0012); found $$branch, not main: check out main and update it first"; \
 		exit 1; \
 	fi; \
+	url="$$(git remote get-url origin 2>/dev/null)" || { echo "make bump cannot fetch origin main: this repository has no remote named origin"; exit 1; }; \
+	echo "fetching main from origin ($$url)"; \
 	if ! git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main; then \
-		echo "make bump cannot fetch origin main; check the remote and your network access, then retry"; \
+		echo "make bump cannot fetch origin main from $$url; check the remote and your network access, then retry"; \
 		exit 1; \
 	fi; \
 	head="$$(git rev-parse HEAD)" && remote="$$(git rev-parse refs/remotes/origin/main)" || exit 1; \
 	if [ "$$head" != "$$remote" ]; then \
-		echo "HEAD ($$(git rev-parse --short HEAD)) is not origin/main ($$(git rev-parse --short refs/remotes/origin/main)); pull or push first so the tag lands on the released commit"; \
+		echo "HEAD ($$(git rev-parse --short HEAD)) is not origin/main ($$(git rev-parse --short refs/remotes/origin/main)) at $$url; pull or push first so the tag lands on the released commit"; \
 		exit 1; \
 	fi
 
-# bump: run the gate on main, then create the next annotated release tag with svu (.svu.yml); a maintainer pushes it
+# bump: the only tagging path (core ADR-0012). It creates the next annotated
+# release tag with svu (.svu.yml); a maintainer pushes it. The gate and the tag
+# are one shell line under set -e, with no separate tag target, so neither
+# make -i nor a direct call can tag past a failed step. The line refuses the
+# flags that ignore or skip a failure (-i, -n, -t, -q), requires a clean tree
+# before the gate (so the gate checks the tagged commit), runs make verify,
+# checks main again, and tags.
 bump: svu-version-check bump-main-check
-	@$(MAKE) --no-print-directory verify
-	@$(MAKE) --no-print-directory bump-tag
-
-# bump-tag: the tag step of make bump, after the gate; run make bump, not this target
-bump-tag: svu-version-check bump-main-check
 	@set -e; \
-	test -z "$$(git status --porcelain)" || { echo "the working tree is not clean"; exit 1; }; \
+	case "$(firstword -$(MAKEFLAGS))" in *[intq]*) echo "make bump refuses make -i, -n, -t and -q, which ignore or skip the gate: run plain make bump"; exit 1;; esac; \
+	test -z "$$(git status --porcelain)" || { echo "the working tree is not clean: commit or stash first, so the gate checks the tagged commit"; exit 1; }; \
+	$(MAKE) --no-print-directory verify; \
+	$(MAKE) --no-print-directory bump-main-check; \
+	test -z "$$(git status --porcelain)" || { echo "the working tree changed during the gate: clean it, then run make bump again"; exit 1; }; \
 	version="$$($(SVU) next)"; \
 	case "$$version" in v0.*) ;; *) echo "svu next gave '$$version', not v0.x: check tag.pattern in .svu.yml"; exit 1;; esac; \
 	git tag -a "$$version" -m "Release version $${version#v}"; \

@@ -13,7 +13,7 @@
 //	    (core ADR-0021, ADR-0090), least-privilege permissions, no persisted checkout credentials
 //	B6  risk paths: the spec, the caller, and a glob matcher
 //	B7  the pull request template asks for a risk tier
-//	B8  .svu.yml names the tag pattern, and the bump recipe stops on a failure
+//	B8  .svu.yml names the tag pattern; only a clean, gated main can be tagged
 //	B9  the docs site: site/, a hash-locked Python lock, the site targets and
 //	    workflow, the README link, and no docs/guides/
 //	B10 the LICENSE is present and holds the MIT text
@@ -2228,8 +2228,7 @@ func TestRepositoryBaselineB8SvuConfig(t *testing.T) {
 	makefile := readRepoFile(t, "Makefile")
 	rules := rulePrerequisites(makefile)
 	for target, prerequisites := range map[string][]string{
-		"bump":     {"svu-version-check", "bump-main-check"},
-		"bump-tag": {"bump-main-check"},
+		"bump": {"svu-version-check", "bump-main-check"},
 	} {
 		for _, prerequisite := range prerequisites {
 			if !slices.Contains(rules[target], prerequisite) {
@@ -2237,11 +2236,31 @@ func TestRepositoryBaselineB8SvuConfig(t *testing.T) {
 			}
 		}
 	}
-	body := strings.Join(makefileBodies(makefile)["bump"], "\n")
+	if _, ok := rules["bump-tag"]; ok {
+		t.Error("bump-tag must not exist: bump is the only tagging path")
+	}
+	if slices.Contains(rules[".PHONY"], "bump-tag") {
+		t.Error(".PHONY must not name bump-tag")
+	}
+	lines := makefileBodies(makefile)["bump"]
+	if len(lines) == 0 {
+		t.Fatal("bump must have a recipe")
+	}
+	for _, line := range lines[:len(lines)-1] {
+		if !strings.HasSuffix(line, `\`) {
+			t.Errorf("bump must use one shell line: %s", line)
+		}
+	}
+	body := strings.Join(lines, "\n")
+	for _, required := range []string{"set -e", "*[intq]*"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("bump must contain %q", required)
+		}
+	}
 	verify := strings.Index(body, "$(MAKE) --no-print-directory verify")
-	tag := strings.Index(body, "$(MAKE) --no-print-directory bump-tag")
+	tag := strings.Index(body, "git tag -a")
 	if verify < 0 || tag < 0 || verify >= tag {
-		t.Error("bump must run $(MAKE) --no-print-directory verify before bump-tag")
+		t.Error("bump must run $(MAKE) --no-print-directory verify before git tag -a")
 	}
 	recipe := false
 	for _, line := range strings.Split(makefile, "\n") {
@@ -2305,7 +2324,7 @@ func TestRepositoryBaselineB8BumpMainCheck(t *testing.T) {
 			setup: func(t *testing.T, dir string, env []string) {
 				mustRun(t, dir, env, "git", "remote", "remove", "origin")
 			},
-			message: "make bump cannot fetch origin main",
+			message: "this repository has no remote named origin",
 		},
 	}
 	for _, tc := range cases {
@@ -2319,6 +2338,10 @@ func TestRepositoryBaselineB8BumpMainCheck(t *testing.T) {
 				if err != nil {
 					t.Fatalf("bump-main-check must pass on current main: %v\n%s", err, out)
 				}
+				remote := mustCapture(t, dir, env, "git", "-C", dir, "remote", "get-url", "origin")
+				if !strings.Contains(out, "fetching main from origin ("+remote+")") {
+					t.Errorf("bump-main-check must identify the fetched remote:\n%s", out)
+				}
 				return
 			}
 			if err == nil {
@@ -2331,53 +2354,136 @@ func TestRepositoryBaselineB8BumpMainCheck(t *testing.T) {
 	}
 }
 
-// TestRepositoryBaselineB8BumpRunsTheGate checks that a failed gate prevents tagging.
-func TestRepositoryBaselineB8BumpRunsTheGate(t *testing.T) {
-	if _, err := exec.LookPath("make"); err != nil {
-		t.Skip("make is not on PATH")
+// TestRepositoryBaselineB8BumpMainCheckOutsideAGitRepository checks the diagnostic outside git.
+func TestRepositoryBaselineB8BumpMainCheckOutsideAGitRepository(t *testing.T) {
+	requireBumpTools(t)
+	dir := t.TempDir()
+	for _, name := range []string{"Makefile", "mise.toml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(readRepoFile(t, name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not on PATH")
+	env := baselineEnv(t, t.TempDir(), filepath.Dir(dir))
+	out, err := runMakeBump(t, dir, env, newFakeSVU(t), "bump-main-check")
+	if err == nil || !strings.Contains(out, "make bump must run in a git repository") || strings.Contains(out, "detached HEAD") {
+		t.Fatalf("expected a non-repository diagnostic, got %v:\n%s", err, out)
 	}
-	testBumpTagsNothing(t, false)
 }
 
-// TestRepositoryBaselineB8BumpOnBranchTagsNothing checks that a feature branch cannot tag.
-func TestRepositoryBaselineB8BumpOnBranchTagsNothing(t *testing.T) {
-	if _, err := exec.LookPath("make"); err != nil {
-		t.Skip("make is not on PATH")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not on PATH")
-	}
-	testBumpTagsNothing(t, true)
-}
-
-// testBumpTagsNothing checks that a failed gate or branch check prevents tags.
-func testBumpTagsNothing(t *testing.T, feature bool) {
+// requireBumpTools skips the test when make or git is missing.
+func requireBumpTools(t *testing.T) {
 	t.Helper()
-	root := repoRoot(t)
-	dir, dirEnv := newBumpFixture(t, root, t.TempDir())
-	if feature {
-		mustRun(t, dir, dirEnv, "git", "checkout", "-q", "-b", "feature")
+	for _, tool := range []string{"make", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not on PATH")
+		}
 	}
-	env := append(append([]string{}, dirEnv...),
-		"FAKE_SVU_VERSION="+svuPinFromMise(t, root),
-		"FAKE_SVU_NEXT=v0.0.1",
-		"FAKE_SVU_FAIL=",
-	)
-	out, err := runMakeBump(t, dir, env, newFakeSVU(t), "bump")
-	if err == nil {
-		t.Errorf("make bump must fail before tagging:\n%s", out)
+}
+
+// bumpGateEnv adds the fake svu settings (next: v0.0.1) and the fake gate
+// result to env: fail "1" makes the stubbed verify fail, "" makes it pass.
+func bumpGateEnv(t *testing.T, env []string, fail string) []string {
+	t.Helper()
+	return append(append([]string{}, env...),
+		"FAKE_SVU_VERSION="+svuPinFromMise(t, repoRoot(t)),
+		"FAKE_SVU_NEXT=v0.0.1", "FAKE_SVU_FAIL=", "FAKE_GATE_FAIL="+fail)
+}
+
+// TestRepositoryBaselineB8BumpTagsWhenTheGatePasses checks that make bump runs
+// the gate and tags after it passes.
+func TestRepositoryBaselineB8BumpTagsWhenTheGatePasses(t *testing.T) {
+	requireBumpTools(t)
+	dir, env := newBumpFixture(t, repoRoot(t), t.TempDir())
+	out, err := runMakeBump(t, dir, bumpGateEnv(t, env, ""), newFakeSVU(t), "bump")
+	gate, tag := strings.Index(out, "fake gate: verify ran"), strings.Index(out, "tagged v0.0.1")
+	if err != nil || gate < 0 || tag <= gate || !tagExists(t, dir, env, "v0.0.1") {
+		t.Fatalf("passing gate must precede tagging: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "tagged") {
-		t.Errorf("a blocked bump must not report tagged:\n%s", out)
+}
+
+// TestRepositoryBaselineB8BumpRefusesAFailedGate checks that a failed verify
+// stops make bump before the tag.
+func TestRepositoryBaselineB8BumpRefusesAFailedGate(t *testing.T) {
+	requireBumpTools(t)
+	dir, env := newBumpFixture(t, repoRoot(t), t.TempDir())
+	out, err := runMakeBump(t, dir, bumpGateEnv(t, env, "1"), newFakeSVU(t), "bump")
+	if err == nil || !strings.Contains(out, "fake gate: verify ran") || strings.Contains(out, "tagged") || tagExists(t, dir, env, "v0.0.1") {
+		t.Fatalf("failed gate must prevent tagging: %v\n%s", err, out)
 	}
-	if tagExists(t, dir, dirEnv, "v0.0.1") {
-		t.Error("a blocked bump must not create tag v0.0.1")
+}
+
+// TestRepositoryBaselineB8BumpOnBranchTagsNothing checks that a feature branch
+// stops make bump before the gate runs.
+func TestRepositoryBaselineB8BumpOnBranchTagsNothing(t *testing.T) {
+	requireBumpTools(t)
+	dir, env := newBumpFixture(t, repoRoot(t), t.TempDir())
+	mustRun(t, dir, env, "git", "checkout", "-q", "-b", "feature")
+	out, err := runMakeBump(t, dir, bumpGateEnv(t, env, ""), newFakeSVU(t), "bump")
+	if err == nil || !strings.Contains(out, "found feature, not main") || strings.Contains(out, "fake gate: verify ran") || strings.Contains(out, "tagged") || tagExists(t, dir, env, "v0.0.1") {
+		t.Fatalf("feature branch must stop before the gate: %v\n%s", err, out)
 	}
-	if feature && !strings.Contains(out, "found feature, not main") {
-		t.Errorf("make bump must reject feature before running the gate:\n%s", out)
+}
+
+// TestRepositoryBaselineB8BumpBypassesTagNothing checks that no separate tag
+// target exists and that make -i, -n, -t, -q or an inherited MAKEFLAGS=i
+// cannot tag past a failed or skipped step (issue #124).
+func TestRepositoryBaselineB8BumpBypassesTagNothing(t *testing.T) {
+	requireBumpTools(t)
+	const refusal = "make bump refuses make -i, -n, -t and -q, which ignore or skip the gate: run plain make bump"
+	cases := []struct {
+		name                                             string
+		args                                             []string
+		feature, failGate, inherited, refused, wantError bool
+	}{
+		{name: "removed target", args: []string{"bump-tag"}, wantError: true},
+		{name: "ignored removed target", args: []string{"-i", "bump-tag"}},
+		{name: "ignored failed gate", args: []string{"-i", "bump"}, failGate: true, refused: true},
+		{name: "ignored feature branch", args: []string{"-i", "bump"}, feature: true, refused: true},
+		{name: "ignored passing gate", args: []string{"-i", "bump"}, refused: true},
+		{name: "dry run", args: []string{"-n", "bump"}, refused: true},
+		{name: "touch", args: []string{"-t", "bump"}},
+		{name: "question", args: []string{"-q", "bump"}},
+		{name: "inherited ignore", args: []string{"bump"}, inherited: true, failGate: true, refused: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, env := newBumpFixture(t, repoRoot(t), t.TempDir())
+			if tc.feature {
+				mustRun(t, dir, env, "git", "checkout", "-q", "-b", "feature")
+			}
+			fail := ""
+			if tc.failGate {
+				fail = "1"
+			}
+			runEnv := bumpGateEnv(t, env, fail)
+			if tc.inherited {
+				runEnv = append(runEnv, "MAKEFLAGS=i")
+			}
+			out, err := runMake(t, dir, runEnv, newFakeSVU(t), tc.args...)
+			if tc.wantError && err == nil {
+				t.Errorf("removed target must fail:\n%s", out)
+			}
+			if tc.refused && !strings.Contains(out, refusal) {
+				t.Errorf("unsafe flags must be refused:\n%s", out)
+			}
+			if strings.Contains(out, "tagged v0.0.1") || tagExists(t, dir, env, "v0.0.1") {
+				t.Errorf("bypass must not tag:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestRepositoryBaselineB8BumpRefusesADirtyTreeBeforeTheGate checks that a
+// dirty tree stops make bump before the gate, so the gate checks the tagged commit.
+func TestRepositoryBaselineB8BumpRefusesADirtyTreeBeforeTheGate(t *testing.T) {
+	requireBumpTools(t)
+	dir, env := newBumpFixture(t, repoRoot(t), t.TempDir())
+	if err := os.WriteFile(filepath.Join(dir, "untracked"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runMakeBump(t, dir, bumpGateEnv(t, env, ""), newFakeSVU(t), "bump")
+	if err == nil || !strings.Contains(out, "the working tree is not clean") || strings.Contains(out, "fake gate: verify ran") || tagExists(t, dir, env, "v0.0.1") {
+		t.Fatalf("dirty tree must stop before the gate: %v\n%s", err, out)
 	}
 }
 
@@ -2420,8 +2526,9 @@ func TestRepositoryBaselineB8BumpStopsOnFailure(t *testing.T) {
 				"FAKE_SVU_VERSION="+svuPin,
 				"FAKE_SVU_NEXT="+tc.next,
 				"FAKE_SVU_FAIL="+tc.fail,
+				"FAKE_GATE_FAIL=",
 			)
-			out, err := runMakeBump(t, dir, env, fakeSVU, "bump-tag")
+			out, err := runMakeBump(t, dir, env, fakeSVU, "bump")
 			if tc.wantOK {
 				if err != nil {
 					t.Fatalf("make bump failed: %v\n%s", err, out)
@@ -2489,8 +2596,9 @@ func TestBumpFixtureIgnoresInheritedGitEnvironment(t *testing.T) {
 		"FAKE_SVU_VERSION="+svuPin,
 		"FAKE_SVU_NEXT=v0.0.1",
 		"FAKE_SVU_FAIL=",
+		"FAKE_GATE_FAIL=",
 	)
-	out, err := runMakeBump(t, dir, env, newFakeSVU(t), "bump-tag")
+	out, err := runMakeBump(t, dir, env, newFakeSVU(t), "bump")
 	if err != nil {
 		t.Fatalf("make bump failed: %v\n%s", err, out)
 	}
@@ -2624,7 +2732,7 @@ func TestBumpFixtureIgnoresInheritedMakefiles(t *testing.T) {
 	outside := t.TempDir()
 	marker := filepath.Join(outside, "marker")
 	injected := filepath.Join(outside, "injected.mk")
-	rule := "bump-tag: injected-step\ninjected-step:\n\ttouch " + marker + "\n"
+	rule := "bump: injected-step\ninjected-step:\n\ttouch " + marker + "\n"
 	if err := os.WriteFile(injected, []byte(rule), 0o644); err != nil {
 		t.Fatalf("write the injected makefile: %v", err)
 	}
@@ -2635,8 +2743,9 @@ func TestBumpFixtureIgnoresInheritedMakefiles(t *testing.T) {
 		"FAKE_SVU_VERSION="+svuPin,
 		"FAKE_SVU_NEXT=v0.0.1",
 		"FAKE_SVU_FAIL=",
+		"FAKE_GATE_FAIL=",
 	)
-	out, err := runMakeBump(t, dir, env, newFakeSVU(t), "bump-tag")
+	out, err := runMakeBump(t, dir, env, newFakeSVU(t), "bump")
 	if err != nil {
 		t.Fatalf("make bump failed: %v\n%s", err, out)
 	}
@@ -2665,7 +2774,9 @@ func svuPinFromMise(t *testing.T, root string) string {
 }
 
 // newBumpFixture makes a git repository that holds a copy of the real Makefile
-// and mise.toml, committed, with a clean working tree.
+// and mise.toml, committed, with a clean working tree. The real gate cannot pass
+// in a fixture, so it stubs only the verify rule and keeps every other line
+// of the real Makefile.
 func newBumpFixture(t *testing.T, root, home string) (string, []string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -2674,6 +2785,13 @@ func newBumpFixture(t *testing.T, root, home string) (string, []string) {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
+		}
+		if name == "Makefile" {
+			const rule = "verify: verify-static test-unit\n"
+			if strings.Count(string(data), rule) != 1 {
+				t.Fatalf("expected exactly one %q rule in Makefile", rule)
+			}
+			data = []byte(strings.Replace(string(data), rule, "verify:\n\t@echo \"fake gate: verify ran\"; test \"$$FAKE_GATE_FAIL\" != 1\n", 1))
 		}
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
@@ -2708,7 +2826,15 @@ func mustRun(t *testing.T, dir string, env []string, name string, args ...string
 // runMakeBump runs the selected make target against the fake svu.
 func runMakeBump(t *testing.T, dir string, env []string, svu, target string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("make", "-C", dir, target, "SVU="+svu)
+	return runMake(t, dir, env, svu, target)
+}
+
+// runMake runs make only in the fixture, with the selected arguments and fake svu.
+func runMake(t *testing.T, dir string, env []string, svu string, args ...string) (string, error) {
+	t.Helper()
+	makeArgs := append([]string{"-C", dir}, args...)
+	makeArgs = append(makeArgs, "SVU="+svu)
+	cmd := exec.Command("make", makeArgs...)
 	cmd.Dir = dir
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()

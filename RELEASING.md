@@ -74,8 +74,11 @@ from the upstream fork and are not releases; without the pattern `svu next`
 answers `v2.0.0`).
 
 `make bump` checks the `svu` pin, checks that `HEAD` is `main` and equals
-`origin/main` (`make bump-main-check`), runs `make verify`, requires a clean
-working tree, checks `main` again, and creates the annotated tag locally.
+`origin/main` (`make bump-main-check`, which prints the URL of `origin` it
+fetches), requires a clean working tree, runs `make verify`, checks `main`
+again, and creates the annotated tag locally. The gate and the tag are one
+recipe line with no separate tag target, and `make bump` refuses `make -i`,
+`-n`, `-t` and `-q`: no flag or target tags past a failed step.
 A maintainer pushes it; agents never tag:
 
 ```bash

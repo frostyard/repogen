@@ -38,7 +38,7 @@ same pull request as a user-visible behavior change.
 | `make vuln` | `govulncheck` at a pinned version; a reachable known vulnerability fails it |
 | `make test-race` | The unit tests with the race detector and a `coverage.txt` profile |
 | `make build-cross` | The release builds: linux amd64 and linux arm64 |
-| `make bump` | Checks that `HEAD` is `main` and equals `origin/main`, runs `make verify`, then creates the next annotated release tag with `svu` (`.svu.yml`). A maintainer runs it and pushes the tag; agents never tag |
+| `make bump` | Checks that `HEAD` is `main` and equals `origin/main`, requires a clean tree, runs `make verify`, checks `main` again, then creates the next annotated release tag with `svu` (`.svu.yml`). A maintainer runs it and pushes the tag; agents never tag |
 
 ## Testing
 
