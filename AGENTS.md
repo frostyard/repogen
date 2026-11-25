@@ -110,9 +110,12 @@ release process is in [RELEASING.md](RELEASING.md).
   subjects since the latest release (core ADR-0012, ADR-0053). Without the
   pattern `svu next` answers `v2.0.0`, because the upstream fork's `v1.x`
   tags exist. On `v0.x` a breaking change gives a minor. `make bump` runs
-  `bump-main-check` (`HEAD` is `main` and equals `origin/main`) and
-  `make verify`, then creates the annotated tag locally (core ADR-0012);
-  a maintainer pushes it.
+  `bump-main-check` (`HEAD` is `main` and equals `origin/main`), requires a
+  clean tree, runs `make verify`, checks `main` again, then creates the
+  annotated tag locally (core ADR-0012); a maintainer pushes it. The gate and
+  the tag are one recipe line with no separate tag target, and `make bump`
+  refuses `-i`, `-n`, `-t` and `-q`, so no flag or target tags past a failed
+  step.
 - Internal dependencies: none (`go.mod` has no frostyard or bketelsen module).
 - Who uses this repository: `frostyard/snosi` `.github/workflows/build.yml`
   publishes sysexts with `frostyard/repogen/.github/actions/publish-to-r2`,
@@ -229,8 +232,9 @@ formatting.
 - `make vuln` — `govulncheck` at the pinned version
 - `make test-race` — unit tests with the race detector and `coverage.txt`
 - `make build-cross` — the linux amd64 and arm64 release builds
-- `make bump` — run `bump-main-check` and `make verify`, then create the
-  annotated release tag locally (maintainers only; agents never run it and
+- `make bump` — run `bump-main-check`, require a clean tree, run
+  `make verify`, check `main` again, then create the annotated release tag
+  locally; it refuses `make -i`, `-n`, `-t` and `-q` (maintainers only; agents never run it and
   never push a tag)
 - `make site` — build the documentation site (strict) into `site/dist`
 - `make site-serve` — preview the site at http://127.0.0.1:8000/repogen/

@@ -357,8 +357,8 @@ automatically, providing CI validation before merge.
 | `make build-cross` | The linux amd64 and arm64 release builds |
 | `make ci` | What CI runs: verify, corrections-base, vuln, test-race, test-packages-docker, test-integration, build-cross |
 | `make svu-version-check` | Fail unless `svu` matches the `mise.toml` pin |
-| `make bump-main-check` | Fail unless `HEAD` is `main` and equals `origin/main` (core ADR-0012) |
-| `make bump` | Run `bump-main-check` and `make verify`, then create the next annotated release tag with `svu`; a maintainer pushes it |
+| `make bump-main-check` | Fail unless the directory is a git repository, `HEAD` is `main`, and `HEAD` equals `origin/main` (core ADR-0012); prints the URL of `origin` it fetches |
+| `make bump` | Run `bump-main-check`, require a clean tree, run `make verify`, check `main` again, then create the next annotated release tag with `svu`; a maintainer pushes it. The gate and the tag are one recipe line (no separate tag target), and it refuses `make -i`, `-n`, `-t` and `-q` |
 | `make fmt` | Format code |
 | `make install` | Install to `/usr/local/bin` |
 | `make uninstall` | Remove from `/usr/local/bin` |
